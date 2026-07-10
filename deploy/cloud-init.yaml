@@ -1,0 +1,55 @@
+#cloud-config
+# Claude Messenger — unattended host provisioning (Oracle/any cloud).
+#
+# Paste this whole file into the instance-creation form's user-data box
+# (Oracle: Advanced options -> Management -> Cloud-init script). On first
+# boot it installs, with NO terminal work: Node 22, Tailscale, the Beeper
+# CLI, Claude Messenger (cloned + built), and Claude Code — turning the VM
+# into a machine Claude itself can operate.
+#
+# It deliberately stops short of the three logins that are yours by nature
+# (Claude account, Tailscale, Beeper email-code + recovery key). Those
+# happen in the FIRST Claude session on the box, which then runs
+# deploy/bootstrap.sh's remaining steps for you.
+#
+# After first boot, connect once (ssh or the cloud console) and run:
+#   claude
+# Sign in, then say: "Finish setting up Claude Messenger on this machine."
+
+package_update: true
+packages:
+  - git
+  - curl
+  - ca-certificates
+  - openssl
+  - jq
+  - tmux
+
+runcmd:
+  # Node 22 (nodesource)
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y nodejs
+  # Tailscale (installed, not yet joined — joining needs your account)
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  # Beeper CLI (headless Beeper Server installer/manager)
+  - npm install -g beeper-cli
+  # Claude Code — the hands on this box
+  - npm install -g @anthropic-ai/claude-code
+  # Claude Messenger, cloned and built for the default user
+  - sudo -u ubuntu git clone https://github.com/michaeltingley/Claude-Messenger.git /home/ubuntu/claude-messenger
+  - sudo -u ubuntu bash -c 'cd /home/ubuntu/claude-messenger && npm ci --no-audit --no-fund && npm run build'
+  # User services must survive logout/reboot
+  - loginctl enable-linger ubuntu
+  # Leave a signpost for the first login
+  - |
+    cat > /etc/motd <<'EOF'
+    ── Claude Messenger host ───────────────────────────────────────
+    Provisioned by cloud-init. Everything is installed; nothing is
+    logged in yet. To finish: run `claude`, sign in, and tell it:
+      "Finish setting up Claude Messenger on this machine."
+    (It will join Tailscale, log Beeper in — you'll relay the email
+    code and recovery key — and start the MCP service.)
+    ────────────────────────────────────────────────────────────────
+    EOF
+
+final_message: "Claude Messenger host provisioned after $UPTIME seconds. Run 'claude' to finish setup."
