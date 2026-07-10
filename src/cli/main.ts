@@ -186,6 +186,13 @@ program
           'It is the bearer token remote MCP clients must present.',
       );
     }
+    // Warn BEFORE binding: once listen() returns, the endpoint is live.
+    if (opts.host !== '127.0.0.1' && opts.host !== 'localhost' && opts.host !== '::1') {
+      console.error(
+        `⚠ binding to ${opts.host} — every interface this address reaches can attempt the bearer token.\n` +
+          '  Intended setup: bind 127.0.0.1 and expose via `tailscale serve` (see docs/DEPLOY.md).',
+      );
+    }
     const running = await startHttpMcpServer({
       createMcpServer: () => createMcpServer(messenger, packageVersion()),
       authToken: config.mcpToken,
@@ -193,11 +200,6 @@ program
       host: opts.host,
     });
     console.log(`claude-messenger MCP server listening on http://${running.host}:${running.port}/mcp`);
-    if (running.host !== '127.0.0.1' && running.host !== 'localhost') {
-      console.log(
-        `⚠ bound to ${running.host} — make sure this is only reachable via your tailnet/tunnel, never the open internet`,
-      );
-    }
   });
 
 // Single error boundary: every command failure — config, policy file,

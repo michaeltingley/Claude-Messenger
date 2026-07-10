@@ -3,16 +3,21 @@
 #   systemctl --user enable --now claude-messenger-mcp
 [Unit]
 Description=Claude Messenger MCP server (HTTP)
-After=network-online.target
 
 [Service]
 WorkingDirectory=__INSTALL_DIR__
-ExecStart=/usr/bin/node dist/cli/main.js serve --http --port __PORT__ --host 127.0.0.1
+ExecStart=__NODE__ dist/cli/main.js serve --http --port __PORT__ --host 127.0.0.1
 Restart=on-failure
 RestartSec=5
-# Hardening: no new privileges, private tmp, read-only home except workdir
 NoNewPrivileges=true
 PrivateTmp=true
+# Writable surface is exactly the audit trail + rate-window state; the rest
+# of $HOME (SSH keys, dotfiles) stays read-only to a compromised process.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state
+# Backstop for leaks on small hosts; normal footprint is well under this.
+MemoryMax=512M
 
 [Install]
 WantedBy=default.target

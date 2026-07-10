@@ -99,6 +99,31 @@ describe('HTTP MCP transport', () => {
     await client.close();
   });
 
+  it('rejects non-POST methods on /mcp so stateless mode cannot leak SSE sockets', async () => {
+    const headers = { authorization: `Bearer ${AUTH_TOKEN}`, accept: 'text/event-stream' };
+    const get = await fetch(url(), { method: 'GET', headers });
+    expect(get.status).toBe(405);
+    const del = await fetch(url(), { method: 'DELETE', headers });
+    expect(del.status).toBe(405);
+  });
+
+  it('rejects oversized bodies with 413 instead of buffering them', async () => {
+    const res = await fetch(url(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'ping', id: 1, params: { pad: 'x'.repeat(5 * 1024 * 1024) } }),
+    }).catch(() => null);
+    // Either a clean 413 or a destroyed socket mid-upload — both mean rejected.
+    if (res) expect(res.status).toBe(413);
+
+    const malformed = await fetch(url(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${AUTH_TOKEN}` },
+      body: '{ not json',
+    });
+    expect(malformed.status).toBe(400);
+  });
+
   it('refuses to start with a weak auth token', async () => {
     await expect(
       startHttpMcpServer({

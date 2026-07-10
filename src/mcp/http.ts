@@ -38,6 +38,36 @@ export interface RunningHttpServer {
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest();
 
+/** Bound on a single JSON-RPC request body; past auth is not past DoS. */
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+/** Sockets held at once; stateless per-request servers make each one cheap but not free. */
+const MAX_CONNECTIONS = 128;
+
+/** Read at most MAX_BODY_BYTES; null means the cap was hit (caller sends 413). */
+function readBody(req: IncomingMessage): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    const declared = Number(req.headers['content-length'] ?? Number.NaN);
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+      resolve(null);
+      return;
+    }
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        req.removeAllListeners('data');
+        req.removeAllListeners('end');
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
 export async function startHttpMcpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
   if (options.authToken.length < 16) {
     throw new Error(
@@ -71,6 +101,28 @@ export async function startHttpMcpServer(options: HttpServerOptions): Promise<Ru
         .end(JSON.stringify({ error: 'unauthorized' }));
       return;
     }
+    // Stateless mode has no sessions to resume or delete: GET's SSE stream
+    // would just pin a socket + McpServer forever (resource-exhaustion
+    // vector), so only POST is served. The spec permits 405 for both.
+    if (req.method !== 'POST') {
+      res
+        .writeHead(405, { 'content-type': 'application/json', allow: 'POST' })
+        .end(JSON.stringify({ error: 'method_not_allowed' }));
+      return;
+    }
+    const body = await readBody(req);
+    if (body === null) {
+      res.writeHead(413, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'payload_too_large' }));
+      res.socket?.destroy(); // remaining unread bytes: drop, don't drain
+      return;
+    }
+    let parsedBody: unknown;
+    try {
+      parsedBody = JSON.parse(body);
+    } catch {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'invalid_json' }));
+      return;
+    }
 
     const server = options.createMcpServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -79,7 +131,7 @@ export async function startHttpMcpServer(options: HttpServerOptions): Promise<Ru
       void server.close();
     });
     await server.connect(transport);
-    await transport.handleRequest(req, res);
+    await transport.handleRequest(req, res, parsedBody);
   };
 
   const httpServer: Server = createServer((req, res) => {
@@ -90,6 +142,7 @@ export async function startHttpMcpServer(options: HttpServerOptions): Promise<Ru
       res.end(JSON.stringify({ error: 'internal_error' }));
     });
   });
+  httpServer.maxConnections = MAX_CONNECTIONS;
 
   await new Promise<void>((resolve, reject) => {
     httpServer.once('error', reject);

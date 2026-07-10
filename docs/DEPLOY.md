@@ -28,8 +28,12 @@ public internet; the Beeper token never leaves the host.
 SSH into the fresh machine and run:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/michaeltingley/Claude-Messenger/main/deploy/bootstrap.sh | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/michaeltingley/Claude-Messenger/main/deploy/bootstrap.sh)"
 ```
+
+(This form keeps stdin attached to your terminal — the script prompts for
+the Beeper login code and recovery key. A plain `curl | bash` also works;
+the script rebinds stdin to the tty itself.)
 
 It installs Node 22, Tailscale, and the Beeper CLI; stands up headless
 Beeper Server (email-code login + recovery-key E2EE unlock — the two
@@ -66,11 +70,17 @@ cd ~/claude-messenger && git pull && npm ci && npm run build \
 
 ## Known caveats
 
-- **Beeper Server is beta** (mid-2026: staging/nightly artifacts, no
-  published requirements). If it misbehaves, the GA fallback is regular
-  **Beeper Desktop with Remote Access** on any always-on machine — Claude
-  Messenger doesn't care which one serves port 23373 (`docs/SETUP.md`,
-  Option C).
+- **Beeper Server is beta, and the CLI currently installs the NIGHTLY
+  channel** (the released `beeper-cli` still hardcodes staging/nightly for
+  server installs even though stable server artifacts started appearing on
+  the production endpoint in July 2026). Nightly has real blast radius —
+  [beeper/cli#21](https://github.com/beeper/cli/issues/21) reports a nightly
+  migration that wiped cloud-bridge connections account-wide. If that risk
+  is unacceptable, use the GA fallback: regular **Beeper Desktop with Remote
+  Access** on any always-on machine — Claude Messenger doesn't care which
+  one serves port 23373 (`docs/SETUP.md`, Option C).
+- Plan for ~2 GB RAM. Idle footprint is a few hundred MB, but 1 GB hosts
+  are marginal without swap.
 - The exact Beeper CLI subcommand for minting an access token may differ
   across CLI versions (it's evolving); the script prompts you to paste the
   token and `doctor` verifies it immediately.

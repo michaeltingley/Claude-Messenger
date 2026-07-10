@@ -18,6 +18,19 @@
 # Re-running is safe: each step skips work that is already done.
 set -euo pipefail
 
+# Under `curl ... | bash`, stdin is the script itself — every interactive
+# prompt (ours and beeper's) would eat script text. Rebind stdin to the
+# terminal, or stop early with a clear message instead of corrupting midway.
+if ! [ -t 0 ]; then
+  if [ -e /dev/tty ]; then
+    exec </dev/tty
+  else
+    printf 'This script is interactive (Beeper login code, recovery key). Run it with a terminal:\n' >&2
+    printf '  bash -c "$(curl -fsSL https://raw.githubusercontent.com/michaeltingley/Claude-Messenger/main/deploy/bootstrap.sh)"\n' >&2
+    exit 1
+  fi
+fi
+
 REPO_URL="${CLAUDE_MESSENGER_REPO:-https://github.com/michaeltingley/Claude-Messenger.git}"
 INSTALL_DIR="${CLAUDE_MESSENGER_HOME:-$HOME/claude-messenger}"
 MCP_PORT="${CLAUDE_MESSENGER_MCP_PORT:-8484}"
@@ -89,7 +102,10 @@ if [ ! -f .env ]; then
   echo "the subcommand differs on your version."
   read -rsp "Paste Beeper access token: " BEEPER_TOKEN; echo
   MCP_TOKEN="$(openssl rand -hex 32)"
-  cat > .env <<EOF
+  # umask first: the file must never exist world-readable, even briefly.
+  (
+    umask 077
+    cat > .env <<EOF
 BEEPER_ACCESS_TOKEN=${BEEPER_TOKEN}
 BEEPER_BASE_URL=http://127.0.0.1:23373
 CLAUDE_MESSENGER_POLICY=${INSTALL_DIR}/policy.json
@@ -97,7 +113,7 @@ CLAUDE_MESSENGER_AUDIT_DIR=${INSTALL_DIR}/audit
 CLAUDE_MESSENGER_STATE_DIR=${INSTALL_DIR}/state
 CLAUDE_MESSENGER_MCP_TOKEN=${MCP_TOKEN}
 EOF
-  chmod 600 .env
+  )
 fi
 [ -f policy.json ] || node dist/cli/main.js policy-init
 node dist/cli/main.js doctor || die "doctor failed — fix the reported link and re-run this script"
@@ -105,17 +121,23 @@ ok "doctor green (policy: read-only until you edit policy.json)"
 
 say "7/7 systemd service + tailnet exposure"
 mkdir -p "$HOME/.config/systemd/user"
-sed "s|__INSTALL_DIR__|$INSTALL_DIR|g; s|__PORT__|$MCP_PORT|g" \
+# __NODE__ must be the RESOLVED interpreter: /usr/bin/node only exists on
+# apt installs; nvm/asdf setups would 203/EXEC with a hardcoded path.
+sed "s|__INSTALL_DIR__|$INSTALL_DIR|g; s|__PORT__|$MCP_PORT|g; s|__NODE__|$(command -v node)|g" \
   "$INSTALL_DIR/deploy/claude-messenger-mcp.service" > "$HOME/.config/systemd/user/claude-messenger-mcp.service"
 systemctl --user daemon-reload
-systemctl --user enable --now claude-messenger-mcp.service
+systemctl --user enable claude-messenger-mcp.service
+# restart, not enable --now: re-runs are upgrades and must swap the process.
+systemctl --user restart claude-messenger-mcp.service
 sleep 1
 curl -fsS "http://127.0.0.1:${MCP_PORT}/healthz" >/dev/null || die "MCP service failed to start — check: journalctl --user -u claude-messenger-mcp"
 # HTTPS on the tailnet only; the MCP port itself stays on loopback.
 sudo tailscale serve --bg "http://127.0.0.1:${MCP_PORT}" || warn "tailscale serve failed — you can still use http://<tailscale-ip>:${MCP_PORT} inside the tailnet via an SSH tunnel"
 ok "claude-messenger-mcp.service running"
 
-MAGICDNS="$(tailscale status --json 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).Self.DNSName.replace(/\.$/,""))}catch{console.log("<this-host>")}})')"
+# `|| true` inside the substitution: a tailscaled hiccup at the very end
+# must not (via pipefail) kill an otherwise-successful install.
+MAGICDNS="$({ tailscale status --json 2>/dev/null || true; } | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const n=JSON.parse(d).Self.DNSName.replace(/\.$/,"");console.log(n||"<this-host>")}catch{console.log("<this-host>")}})')"
 cat <<EOF
 
 ════════════════════════════════════════════════════════════════════
@@ -123,11 +145,12 @@ cat <<EOF
  on your tailnet:
 
    URL:    https://${MAGICDNS}/mcp
-   Header: Authorization: Bearer $(grep CLAUDE_MESSENGER_MCP_TOKEN "$INSTALL_DIR/.env" | cut -d= -f2)
+   Token:  in ${INSTALL_DIR}/.env — print it with:
+             grep CLAUDE_MESSENGER_MCP_TOKEN ${INSTALL_DIR}/.env
 
    Claude Code:
      claude mcp add claude-messenger --transport http https://${MAGICDNS}/mcp \\
-       --header "Authorization: Bearer <token above>"
+       --header "Authorization: Bearer \$(grep CLAUDE_MESSENGER_MCP_TOKEN ${INSTALL_DIR}/.env | cut -d= -f2)"
 
  Policy is READ-ONLY until you edit ${INSTALL_DIR}/policy.json.
  Audit trail: ${INSTALL_DIR}/audit/
