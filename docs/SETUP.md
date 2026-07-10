@@ -111,6 +111,8 @@ claude mcp add claude-messenger -s user \
 
 Ask Claude: *"Use check_connection then search_chats to show my unread chats."*
 
+**Hosted / remote clients**: run `claude-messenger serve --http` (requires `CLAUDE_MESSENGER_MCP_TOKEN`) and connect with `claude mcp add claude-messenger --transport http https://<host>/mcp --header "Authorization: Bearer <mcp-token>"`. The full 24/7 host recipe is **[DEPLOY.md](DEPLOY.md)**.
+
 ### Token hygiene
 
 - Revoke any token instantly: Beeper → Settings → Integrations → Approved connections.

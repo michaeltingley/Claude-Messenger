@@ -10,7 +10,7 @@ Consequence: Claude Messenger is a *client* of a Beeper endpoint that must run s
 
 ```
 Claude (Claude Code / Desktop / claude.ai)
-   │  MCP (stdio)
+   │  MCP (stdio locally, or Streamable HTTP + bearer token when hosted)
 ┌──▼──────────────────────────────┐
 │ mcp/    curated tools           │   deliberately narrow: no delete/archive
 ├─────────────────────────────────┤

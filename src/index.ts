@@ -10,6 +10,8 @@ export { MemoryRateWindow, FileRateWindow, RateWindowUnavailableError } from './
 export type { RateWindow } from './policy/rate.js';
 export { BeeperMessenger } from './providers/beeper/index.js';
 export { createMcpServer } from './mcp/server.js';
+export { startHttpMcpServer } from './mcp/http.js';
+export type { HttpServerOptions, RunningHttpServer } from './mcp/http.js';
 export { loadConfig } from './config.js';
 export type { Config } from './config.js';
 export { createApp, loadPolicyFile, PolicyFileError } from './app.js';

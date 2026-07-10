@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from '../config.js';
 import { createApp } from '../app.js';
 import { createMcpServer } from '../mcp/server.js';
+import { startHttpMcpServer } from '../mcp/http.js';
 import { DEFAULT_POLICY } from '../policy/policy.js';
 import { ConnectionError, MessengerError, PolicyDeniedError } from '../core/errors.js';
 import { packageVersion } from '../version.js';
@@ -159,13 +160,44 @@ program
 
 program
   .command('serve')
-  .description('Run the MCP server on stdio (for Claude Code / Claude Desktop)')
-  .action(async () => {
-    const { messenger } = await app();
-    const server = createMcpServer(messenger, packageVersion());
-    await server.connect(new StdioServerTransport());
-    // stdio transport: stdout belongs to the protocol; log to stderr only.
-    console.error('claude-messenger MCP server running on stdio');
+  .description('Run the MCP server: stdio by default, or --http for hosted/remote use')
+  .option('--http', 'serve Streamable HTTP MCP instead of stdio')
+  .option('--port <n>', 'HTTP port', (v: string) => Number(v), 8484)
+  .option(
+    '--host <addr>',
+    'HTTP bind address; keep 127.0.0.1 and expose via Tailscale/cloudflared',
+    '127.0.0.1',
+  )
+  .action(async (opts: { http?: boolean; port: number; host: string }) => {
+    const config = loadConfig();
+    const { messenger } = await createApp(config);
+
+    if (!opts.http) {
+      const server = createMcpServer(messenger, packageVersion());
+      await server.connect(new StdioServerTransport());
+      // stdio transport: stdout belongs to the protocol; log to stderr only.
+      console.error('claude-messenger MCP server running on stdio');
+      return;
+    }
+
+    if (!config.mcpToken) {
+      throw new Error(
+        'serve --http requires CLAUDE_MESSENGER_MCP_TOKEN (generate one: openssl rand -hex 32). ' +
+          'It is the bearer token remote MCP clients must present.',
+      );
+    }
+    const running = await startHttpMcpServer({
+      createMcpServer: () => createMcpServer(messenger, packageVersion()),
+      authToken: config.mcpToken,
+      port: opts.port,
+      host: opts.host,
+    });
+    console.log(`claude-messenger MCP server listening on http://${running.host}:${running.port}/mcp`);
+    if (running.host !== '127.0.0.1' && running.host !== 'localhost') {
+      console.log(
+        `⚠ bound to ${running.host} — make sure this is only reachable via your tailnet/tunnel, never the open internet`,
+      );
+    }
   });
 
 // Single error boundary: every command failure — config, policy file,

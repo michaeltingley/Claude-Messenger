@@ -1,0 +1,18 @@
+# systemd user unit for the hosted Claude Messenger MCP endpoint.
+# Installed by deploy/bootstrap.sh (placeholders substituted); enable with:
+#   systemctl --user enable --now claude-messenger-mcp
+[Unit]
+Description=Claude Messenger MCP server (HTTP)
+After=network-online.target
+
+[Service]
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=/usr/bin/node dist/cli/main.js serve --http --port __PORT__ --host 127.0.0.1
+Restart=on-failure
+RestartSec=5
+# Hardening: no new privileges, private tmp, read-only home except workdir
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

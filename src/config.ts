@@ -18,6 +18,12 @@ const ConfigSchema = z.object({
    * audit dir, whose contract is an append-only trail the user may prune.
    */
   CLAUDE_MESSENGER_STATE_DIR: z.string().default('./state'),
+  /**
+   * Bearer token protecting the HTTP MCP endpoint (`serve --http`).
+   * Deliberately distinct from the Beeper token: revoking Claude's access
+   * must not require rotating the Beeper credential.
+   */
+  CLAUDE_MESSENGER_MCP_TOKEN: z.string().optional(),
 });
 
 export interface Config {
@@ -26,6 +32,7 @@ export interface Config {
   policyPath: string;
   auditDir: string;
   stateDir: string;
+  mcpToken?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -42,5 +49,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     policyPath: parsed.data.CLAUDE_MESSENGER_POLICY,
     auditDir: parsed.data.CLAUDE_MESSENGER_AUDIT_DIR,
     stateDir: parsed.data.CLAUDE_MESSENGER_STATE_DIR,
+    ...(parsed.data.CLAUDE_MESSENGER_MCP_TOKEN !== undefined && {
+      mcpToken: parsed.data.CLAUDE_MESSENGER_MCP_TOKEN,
+    }),
   };
 }

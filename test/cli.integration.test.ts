@@ -132,6 +132,12 @@ describe('CLI (subprocess integration)', () => {
     ).toBe(true);
   }, 30_000);
 
+  it('serve --http refuses to start without an MCP auth token', async () => {
+    const { stderr, code } = await cli(['serve', '--http'], { CLAUDE_MESSENGER_MCP_TOKEN: '' });
+    expect(code).toBe(1);
+    expect(stderr).toContain('CLAUDE_MESSENGER_MCP_TOKEN');
+  }, 30_000);
+
   it('send succeeds once policy allows the chat, and the rate window persists across processes', async () => {
     await writeFile(
       join(stateDir, 'policy.json'),
