@@ -14,6 +14,12 @@ export interface AuditEntry {
   decision: 'allowed' | 'denied';
   /** Policy rule that denied the action, when denied. */
   rule?: string;
+  /**
+   * Mutations write two entries: 'intent' before dispatch (mandatory — no
+   * side effect happens without it) and 'outcome' after (best-effort).
+   * Reads write a single entry with no stage.
+   */
+  stage?: 'intent' | 'outcome';
   outcome?: 'ok' | 'error';
   error?: string;
   /** Redacted parameters: chat/account IDs, queries, sent text. */

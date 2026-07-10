@@ -13,7 +13,7 @@ import type {
   ServerInfo,
 } from '../../core/types.js';
 import { AuthError, ConnectionError, NotFoundError, ProviderError } from '../../core/errors.js';
-import { toAccount, toChat, toMessage } from './mapper.js';
+import { toAccount, toChat, toMessage, toPage } from './mapper.js';
 
 export interface BeeperMessengerOptions {
   accessToken: string;
@@ -30,9 +30,11 @@ export interface BeeperMessengerOptions {
 export class BeeperMessenger implements Messenger {
   private readonly client: BeeperDesktop;
   private readonly baseUrl: string;
+  private readonly accessToken: string;
 
   constructor(options: BeeperMessengerOptions) {
     this.baseUrl = options.baseUrl ?? 'http://localhost:23373';
+    this.accessToken = options.accessToken;
     this.client = new BeeperDesktop({
       accessToken: options.accessToken,
       baseURL: this.baseUrl,
@@ -40,95 +42,95 @@ export class BeeperMessenger implements Messenger {
     });
   }
 
-  async whoami(): Promise<ServerInfo> {
-    const info = await this.wrap(() => this.client.info.retrieve());
-    return {
-      appName: info.app.name,
-      appVersion: info.app.version,
-      baseUrl: this.baseUrl,
-      remoteAccess: info.server.remote_access,
-    };
+  whoami(): Promise<ServerInfo> {
+    return this.wrap(async () => {
+      const info = await this.client.info.retrieve();
+      return {
+        appName: info.app.name,
+        appVersion: info.app.version,
+        baseUrl: this.baseUrl,
+        remoteAccess: info.server.remote_access,
+      };
+    });
   }
 
-  async listAccounts(): Promise<Account[]> {
-    const accounts = await this.wrap(() => this.client.accounts.list());
-    return accounts.map(toAccount);
+  listAccounts(): Promise<Account[]> {
+    return this.wrap(async () => (await this.client.accounts.list()).map(toAccount));
   }
 
-  async searchChats(query?: ChatQuery): Promise<Page<Chat>> {
-    const page = await this.wrap(() =>
-      this.client.chats.search({
-        ...(query?.query !== undefined && { query: query.query }),
-        ...(query?.type !== undefined && { type: query.type }),
-        ...(query?.accountIds !== undefined && { accountIDs: query.accountIds }),
-        ...(query?.unreadOnly !== undefined && { unreadOnly: query.unreadOnly }),
-        ...(query?.includeMuted !== undefined && { includeMuted: query.includeMuted }),
-        ...(query?.inbox !== undefined && { inbox: query.inbox }),
-        ...(query?.lastActivityAfter !== undefined && { lastActivityAfter: query.lastActivityAfter }),
-        ...(query?.lastActivityBefore !== undefined && { lastActivityBefore: query.lastActivityBefore }),
-        limit: query?.limit ?? 20,
-        ...(query?.cursor !== undefined && { cursor: query.cursor }),
-      }),
+  searchChats(query?: ChatQuery): Promise<Page<Chat>> {
+    return this.wrap(async () =>
+      toPage(
+        await this.client.chats.search({
+          query: query?.query,
+          type: query?.type,
+          accountIDs: query?.accountIds,
+          unreadOnly: query?.unreadOnly,
+          includeMuted: query?.includeMuted,
+          inbox: query?.inbox,
+          lastActivityAfter: query?.lastActivityAfter,
+          lastActivityBefore: query?.lastActivityBefore,
+          limit: query?.limit ?? 20,
+          cursor: query?.cursor,
+        }),
+        toChat,
+      ),
     );
-    return {
-      items: page.items.map(toChat),
-      hasMore: page.hasMore,
-      ...(page.oldestCursor !== null && { nextCursor: page.oldestCursor }),
-    };
   }
 
-  async getChat(chatId: string): Promise<Chat> {
-    const chat = await this.wrap(() => this.client.chats.retrieve(chatId));
-    return toChat(chat);
+  getChat(chatId: string): Promise<Chat> {
+    return this.wrap(async () => toChat(await this.client.chats.retrieve(chatId)));
   }
 
-  async listMessages(chatId: string, query?: MessageListQuery): Promise<Page<Message>> {
-    const page = await this.wrap(() =>
-      this.client.messages.list(chatId, {
-        ...(query?.cursor !== undefined && { cursor: query.cursor }),
-      }),
+  listMessages(chatId: string, query?: MessageListQuery): Promise<Page<Message>> {
+    return this.wrap(async () => {
+      const page = toPage(await this.client.messages.list(chatId, { cursor: query?.cursor }), toMessage);
+      // The wire contract says only "sorted by timestamp", not which way.
+      // Pin the domain contract — newest first within a page — locally.
+      page.items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+      return page;
+    });
+  }
+
+  searchMessages(query: MessageSearchQuery): Promise<Page<Message>> {
+    return this.wrap(async () =>
+      toPage(
+        await this.client.messages.search({
+          query: query.query,
+          chatIDs: query.chatIds,
+          accountIDs: query.accountIds,
+          chatType: query.chatType,
+          dateAfter: query.dateAfter,
+          dateBefore: query.dateBefore,
+          mediaTypes: query.mediaTypes,
+          includeMuted: query.includeMuted,
+          limit: query.limit ?? 20,
+          cursor: query.cursor,
+        }),
+        toMessage,
+      ),
     );
-    return {
-      items: page.items.map(toMessage),
-      hasMore: page.hasMore,
-      ...(page.oldestCursor !== null && { nextCursor: page.oldestCursor }),
-    };
   }
 
-  async searchMessages(query: MessageSearchQuery): Promise<Page<Message>> {
-    const page = await this.wrap(() =>
-      this.client.messages.search({
-        ...(query.query !== undefined && { query: query.query }),
-        ...(query.chatIds !== undefined && { chatIDs: query.chatIds }),
-        ...(query.accountIds !== undefined && { accountIDs: query.accountIds }),
-        ...(query.chatType !== undefined && { chatType: query.chatType }),
-        ...(query.dateAfter !== undefined && { dateAfter: query.dateAfter }),
-        ...(query.dateBefore !== undefined && { dateBefore: query.dateBefore }),
-        ...(query.mediaTypes !== undefined && { mediaTypes: query.mediaTypes }),
-        ...(query.includeMuted !== undefined && { includeMuted: query.includeMuted }),
-        limit: query.limit ?? 20,
-        ...(query.cursor !== undefined && { cursor: query.cursor }),
-      }),
-    );
-    return {
-      items: page.items.map(toMessage),
-      hasMore: page.hasMore,
-      ...(page.oldestCursor !== null && { nextCursor: page.oldestCursor }),
-    };
-  }
-
-  async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
-    const result = await this.wrap(() =>
-      this.client.messages.send(input.chatId, {
+  sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
+    return this.wrap(async () => {
+      const result = await this.client.messages.send(input.chatId, {
         text: input.text,
-        ...(input.replyToMessageId !== undefined && { replyToMessageID: input.replyToMessageId }),
-      }),
-    );
-    return { chatId: result.chatID, pendingMessageId: result.pendingMessageID };
+        replyToMessageID: input.replyToMessageId,
+      });
+      return { chatId: result.chatID, pendingMessageId: result.pendingMessageID };
+    });
   }
 
-  async markChatRead(chatId: string): Promise<void> {
-    await this.wrap(() => this.client.chats.markRead(chatId));
+  markChatRead(chatId: string): Promise<void> {
+    return this.wrap(async () => {
+      await this.client.chats.markRead(chatId);
+    });
+  }
+
+  /** Upstream error text can echo request details; never let the token through. */
+  private redact(text: string): string {
+    return this.accessToken.length > 0 ? text.split(this.accessToken).join('[redacted]') : text;
   }
 
   private async wrap<T>(run: () => Promise<T>): Promise<T> {
@@ -150,11 +152,13 @@ export class BeeperMessenger implements Messenger {
           );
         }
         if (err.status === 404) {
-          throw new NotFoundError(err.message, { cause: err });
+          throw new NotFoundError(this.redact(err.message), { cause: err });
         }
-        throw new ProviderError(`Beeper API error (${err.status}): ${err.message}`, { cause: err });
+        throw new ProviderError(`Beeper API error (${err.status}): ${this.redact(err.message)}`, {
+          cause: err,
+        });
       }
-      throw new ProviderError(err instanceof Error ? err.message : String(err), { cause: err });
+      throw new ProviderError(this.redact(err instanceof Error ? err.message : String(err)), { cause: err });
     }
   }
 }

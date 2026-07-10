@@ -9,7 +9,7 @@ import { FakeMessenger, makeChat, makeMessage } from './fake-messenger.js';
 
 async function connect(fake: FakeMessenger) {
   const guarded = new GuardedMessenger(fake, new PolicyEngine(DEFAULT_POLICY), new MemoryAuditLogger());
-  const server = createMcpServer(guarded);
+  const server = createMcpServer(guarded, '0.0.0-test');
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);

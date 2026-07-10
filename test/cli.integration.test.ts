@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MockBeeperServer, wireChat, wireMessage } from './mock-beeper.js';
 
 const exec = promisify(execFile);
@@ -11,7 +11,8 @@ const exec = promisify(execFile);
 /**
  * CLI integration: the real claude-messenger binary as a subprocess against
  * a live mock endpoint — config loading, exit codes, output, policy files,
- * and the audit/rate-limit files it leaves behind.
+ * and the audit/rate-limit files it leaves behind. Each test gets its own
+ * state dir so no test depends on another's leftovers.
  */
 describe('CLI (subprocess integration)', () => {
   let mock: MockBeeperServer;
@@ -46,8 +47,12 @@ describe('CLI (subprocess integration)', () => {
     baseUrl = await mock.start();
     mock.chats = [wireChat()];
     mock.messages = [wireMessage()];
-    stateDir = await mkdtemp(join(tmpdir(), 'claude-messenger-cli-'));
   }, 30_000);
+
+  beforeEach(async () => {
+    stateDir = await mkdtemp(join(tmpdir(), 'claude-messenger-cli-'));
+    mock.requests = [];
+  });
 
   afterAll(async () => {
     await mock.stop();
@@ -58,7 +63,7 @@ describe('CLI (subprocess integration)', () => {
     expect(code).toBe(0);
     expect(stdout).toContain('✓ Config OK');
     expect(stdout).toContain('✓ Connected: MockBeeper 9.9.9');
-    expect(stdout).toContain('✓ Auth OK — 1 connected account(s)');
+    expect(stdout).toContain('✓ Auth OK — 1 account(s) visible under the current policy');
     expect(stdout).toContain('built-in default (read-only)');
     expect(stdout).toContain('All checks passed');
   }, 30_000);
@@ -70,11 +75,27 @@ describe('CLI (subprocess integration)', () => {
     expect(stderr).toContain('BEEPER_BASE_URL');
   }, 30_000);
 
+  it('doctor names the policy file when it is malformed instead of dumping a stack trace', async () => {
+    await writeFile(join(stateDir, 'policy.json'), '{ not json');
+    const { stderr, code } = await cli(['doctor']);
+    expect(code).toBe(1);
+    expect(stderr).toContain('policy_file_invalid');
+    expect(stderr).toContain(join(stateDir, 'policy.json'));
+    expect(stderr).not.toContain('at JSON.parse'); // no raw stack trace
+  }, 30_000);
+
   it('fails with guidance when the token is missing', async () => {
     const { stderr, code } = await cli(['chats'], { BEEPER_ACCESS_TOKEN: '' });
     expect(code).toBe(1);
     expect(stderr).toContain('BEEPER_ACCESS_TOKEN');
     expect(stderr).toContain('docs/SETUP.md');
+  }, 30_000);
+
+  it('rejects a non-numeric -n with a usage error instead of forwarding NaN to the provider', async () => {
+    const { stderr, code } = await cli(['chats', '-n', 'ten']);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain('integer between 1 and 50');
+    expect(mock.requests).toHaveLength(0);
   }, 30_000);
 
   it('chats lists chats with IDs and unread counts', async () => {
@@ -84,12 +105,12 @@ describe('CLI (subprocess integration)', () => {
     expect(stdout).toContain('whatsapp · single · Alice  [2 unread]');
   }, 30_000);
 
-  it('send is denied read-only by default, audited, and never reaches the wire', async () => {
-    const before = mock.requests.filter((r) => r.method === 'POST').length;
+  it('send is denied by capabilities.send under the default read-only policy, audited, never reaching the wire', async () => {
     const { stderr, code } = await cli(['send', '!chat1:beeper.com', 'hello']);
     expect(code).toBe(1);
     expect(stderr).toContain('policy_denied');
-    expect(mock.requests.filter((r) => r.method === 'POST').length).toBe(before);
+    expect(stderr).toContain('capabilities.send'); // the precise rule, not just any denial
+    expect(mock.requests.filter((r) => r.method === 'POST')).toHaveLength(0);
 
     const auditFiles = await readdir(join(stateDir, 'audit'));
     const entries = (
@@ -103,10 +124,14 @@ describe('CLI (subprocess integration)', () => {
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(entries.some((e) => e.action === 'sendMessage' && e.decision === 'denied')).toBe(true);
+    expect(
+      entries.some(
+        (e) => e.action === 'sendMessage' && e.decision === 'denied' && e.rule === 'capabilities.send',
+      ),
+    ).toBe(true);
   }, 30_000);
 
-  it('send succeeds once policy allows the chat, and the rate window file persists across processes', async () => {
+  it('send succeeds once policy allows the chat, and the rate window persists across processes', async () => {
     await writeFile(
       join(stateDir, 'policy.json'),
       JSON.stringify({
@@ -122,6 +147,6 @@ describe('CLI (subprocess integration)', () => {
     // Fresh process, same state dir: the file-backed window must enforce the cap.
     const second = await cli(['send', '!chat1:beeper.com', 'hello again']);
     expect(second.code).toBe(1);
-    expect(second.stderr).toContain('maxMessagesPerHour');
+    expect(second.stderr).toContain('send.maxMessagesPerHour');
   }, 60_000);
 });

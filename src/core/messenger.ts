@@ -44,19 +44,8 @@ export interface Messenger {
   markChatRead(chatId: string): Promise<void>;
 }
 
-/**
- * Optional streaming extension: backends that can push new/updated messages
- * in real time (Beeper's WebSocket events, Matrix /sync) implement this too.
- * Automation triggers are built on it; polling is the fallback.
- */
-export interface MessageStream {
-  /**
-   * Subscribe to message upserts. Returns an unsubscribe function.
-   * `chatIds` of `['*']` (default) means all chats.
-   */
-  onMessage(handler: (message: Message) => void, chatIds?: string[]): Promise<() => void>;
-}
-
-export function supportsStreaming(m: Messenger): m is Messenger & MessageStream {
-  return typeof (m as Partial<MessageStream>).onMessage === 'function';
-}
+// Streaming (Beeper's WebSocket events, Matrix /sync) is a planned extension.
+// It will be added to this port together with its first provider
+// implementation AND a guarded wrapper, so pushed events pass through the
+// same visibility filtering and audit as pulled reads — never as a raw
+// provider capability reachable around the policy layer.

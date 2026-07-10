@@ -13,14 +13,22 @@ import type {
 } from '../core/types.js';
 import { PolicyDeniedError } from '../core/errors.js';
 import type { AuditLogger } from './audit.js';
-import type { PolicyAction, PolicyEngine } from './policy.js';
+import type { Decision, PolicyEngine, PolicyRule } from './policy.js';
 
 /**
  * The only Messenger the tool layer (MCP, CLI, automations) is ever handed.
  *
- * Every call is checked against the policy engine and written to the audit
- * log; read results are additionally filtered so denylisted chats and
- * non-allowlisted accounts never reach Claude's context at all.
+ * Invariants this class owns:
+ * - Every action is policy-checked before the provider is called, and every
+ *   decision (allowed or denied, wherever it is made) lands in the audit log
+ *   with its true rule name.
+ * - Read results are filtered so denylisted chats and non-allowlisted
+ *   accounts never reach Claude's context at all.
+ * - Mutations are audited as INTENT before dispatch — if the audit log
+ *   cannot be written, the mutation does not happen (no unaudited sends).
+ *   The post-dispatch OUTCOME entry is best-effort: its failure must not
+ *   turn an already-delivered send into a reported error, or a retry would
+ *   message a real person twice.
  */
 export class GuardedMessenger implements Messenger {
   constructor(
@@ -30,77 +38,178 @@ export class GuardedMessenger implements Messenger {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  private async guard<T>(
-    action: PolicyAction,
+  private async recordDenied(
+    action: string,
+    rule: PolicyRule,
+    context: Record<string, unknown>,
+    reason: string,
+  ): Promise<never> {
+    try {
+      await this.audit.record({
+        ts: this.now().toISOString(),
+        action,
+        decision: 'denied',
+        rule,
+        context,
+      });
+    } catch {
+      // A failing audit log must not mask the denial itself.
+    }
+    throw new PolicyDeniedError(reason, rule);
+  }
+
+  /** Reads: one audit entry after completion; audit failure fails the read. */
+  private async guardRead<T>(
+    decision: Decision,
     name: string,
     context: Record<string, unknown>,
     run: () => Promise<T>,
   ): Promise<T> {
-    const decision = this.engine.check(action);
-    const ts = this.now().toISOString();
     if (!decision.allowed) {
-      await this.audit.record({ ts, action: name, decision: 'denied', rule: decision.rule, context });
-      throw new PolicyDeniedError(decision.reason, decision.rule);
+      return this.recordDenied(name, decision.rule, context, decision.reason);
     }
     try {
       const result = await run();
-      await this.audit.record({ ts, action: name, decision: 'allowed', outcome: 'ok', context });
-      return result;
-    } catch (err) {
       await this.audit.record({
-        ts,
+        ts: this.now().toISOString(),
         action: name,
         decision: 'allowed',
-        outcome: 'error',
-        error: err instanceof Error ? err.message : String(err),
+        outcome: 'ok',
         context,
       });
+      return result;
+    } catch (err) {
+      await this.audit
+        .record({
+          ts: this.now().toISOString(),
+          action: name,
+          decision: 'allowed',
+          outcome: 'error',
+          error: err instanceof Error ? err.message : String(err),
+          context,
+        })
+        .catch(() => undefined);
       throw err;
     }
   }
 
+  /**
+   * Mutations: intent entry BEFORE dispatch (mandatory — abort if it cannot
+   * be written), outcome entry after (best-effort).
+   */
+  private async guardMutation<T>(
+    decision: Decision,
+    name: string,
+    context: Record<string, unknown>,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    if (!decision.allowed) {
+      return this.recordDenied(name, decision.rule, context, decision.reason);
+    }
+    await this.audit.record({
+      ts: this.now().toISOString(),
+      action: name,
+      decision: 'allowed',
+      stage: 'intent',
+      context,
+    });
+    let result: T;
+    try {
+      result = await run();
+    } catch (err) {
+      await this.audit
+        .record({
+          ts: this.now().toISOString(),
+          action: name,
+          decision: 'allowed',
+          stage: 'outcome',
+          outcome: 'error',
+          error: err instanceof Error ? err.message : String(err),
+          context,
+        })
+        .catch(() => undefined);
+      throw err;
+    }
+    await this.audit
+      .record({
+        ts: this.now().toISOString(),
+        action: name,
+        decision: 'allowed',
+        stage: 'outcome',
+        outcome: 'ok',
+        context,
+      })
+      .catch(() => undefined); // the send happened; intent is on record
+    return result;
+  }
+
   whoami(): Promise<ServerInfo> {
-    return this.guard({ kind: 'whoami' }, 'whoami', {}, () => this.inner.whoami());
+    return this.guardRead(this.engine.check({ kind: 'whoami' }), 'whoami', {}, () => this.inner.whoami());
   }
 
   listAccounts(): Promise<Account[]> {
-    return this.guard({ kind: 'listAccounts' }, 'listAccounts', {}, async () => {
+    return this.guardRead(this.engine.check({ kind: 'listAccounts' }), 'listAccounts', {}, async () => {
       const accounts = await this.inner.listAccounts();
       return accounts.filter((a) => this.engine.accountVisible(a.id));
     });
   }
 
   searchChats(query?: ChatQuery): Promise<Page<Chat>> {
-    return this.guard({ kind: 'read' }, 'searchChats', { query: query?.query, type: query?.type }, async () => {
-      const page = await this.inner.searchChats(query);
-      return { ...page, items: page.items.filter((c) => this.engine.chatVisible(c)) };
-    });
+    return this.guardRead(
+      this.engine.check({ kind: 'read' }),
+      'searchChats',
+      { query: query?.query, type: query?.type },
+      async () => {
+        const page = await this.inner.searchChats(query);
+        return { ...page, items: page.items.filter((c) => this.engine.chatVisible(c)) };
+      },
+    );
   }
 
-  getChat(chatId: string): Promise<Chat> {
-    return this.guard({ kind: 'read', chatId }, 'getChat', { chatId }, async () => {
-      const chat = await this.inner.getChat(chatId);
-      if (!this.engine.chatVisible(chat)) {
-        throw new PolicyDeniedError(`Chat ${chatId} is not visible under the current policy.`, 'read');
-      }
-      return chat;
-    });
+  async getChat(chatId: string): Promise<Chat> {
+    const context = { chatId };
+    const chat = await this.guardRead(
+      this.engine.check({ kind: 'read', chatId }),
+      'getChat',
+      context,
+      () => this.inner.getChat(chatId),
+    );
+    // Account-level visibility is only knowable after the fetch; record the
+    // denial with its true rule rather than leaking the chat.
+    const post = this.engine.check({ kind: 'read', chatId: chat.id, accountId: chat.accountId });
+    if (!post.allowed) {
+      return this.recordDenied('getChat', post.rule, context, post.reason);
+    }
+    return chat;
   }
 
-  listMessages(chatId: string, query?: MessageListQuery): Promise<Page<Message>> {
-    return this.guard({ kind: 'read', chatId }, 'listMessages', { chatId }, async () => {
-      // Resolve the chat first so account-level read rules apply too.
-      const chat = await this.inner.getChat(chatId);
-      if (!this.engine.chatVisible(chat)) {
-        throw new PolicyDeniedError(`Chat ${chatId} is not visible under the current policy.`, 'read');
+  async listMessages(chatId: string, query?: MessageListQuery): Promise<Page<Message>> {
+    const context = { chatId };
+    const page = await this.guardRead(
+      this.engine.check({ kind: 'read', chatId }),
+      'listMessages',
+      context,
+      () => this.inner.listMessages(chatId, query),
+    );
+    const visible = page.items.filter((m) =>
+      this.engine.chatVisible({ id: m.chatId, accountId: m.accountId }),
+    );
+    // All messages in a chat share an account; if filtering emptied a
+    // non-empty page the account is hidden — deny explicitly instead of
+    // returning a silent empty page.
+    if (visible.length === 0 && page.items.length > 0) {
+      const sample = page.items[0]!;
+      const post = this.engine.check({ kind: 'read', chatId: sample.chatId, accountId: sample.accountId });
+      if (!post.allowed) {
+        return this.recordDenied('listMessages', post.rule, context, post.reason);
       }
-      return this.inner.listMessages(chatId, query);
-    });
+    }
+    return { ...page, items: visible };
   }
 
   searchMessages(query: MessageSearchQuery): Promise<Page<Message>> {
-    return this.guard(
-      { kind: 'read' },
+    return this.guardRead(
+      this.engine.check({ kind: 'read' }),
       'searchMessages',
       { query: query.query, chatIds: query.chatIds, accountIds: query.accountIds },
       async () => {
@@ -114,21 +223,19 @@ export class GuardedMessenger implements Messenger {
   }
 
   sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
-    return this.guard(
-      { kind: 'send', chatId: input.chatId, textLength: input.text.length },
+    // reserveSend consumes the rate slot at decision time, synchronously —
+    // concurrent in-flight sends cannot all observe the pre-send count.
+    return this.guardMutation(
+      this.engine.reserveSend({ chatId: input.chatId, textLength: input.text.length }),
       'sendMessage',
       // Outbound text is intentionally recorded — see audit.ts content policy.
       { chatId: input.chatId, text: input.text, replyToMessageId: input.replyToMessageId },
-      async () => {
-        const result = await this.inner.sendMessage(input);
-        this.engine.recordSend();
-        return result;
-      },
+      () => this.inner.sendMessage(input),
     );
   }
 
   markChatRead(chatId: string): Promise<void> {
-    return this.guard({ kind: 'markRead', chatId }, 'markChatRead', { chatId }, () =>
+    return this.guardMutation(this.engine.check({ kind: 'markRead', chatId }), 'markChatRead', { chatId }, () =>
       this.inner.markChatRead(chatId),
     );
   }

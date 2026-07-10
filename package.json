@@ -5,7 +5,7 @@
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12"
   },
   "bin": {
     "claude-messenger": "dist/cli/main.js"
@@ -18,6 +18,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test",
     "dev": "tsx src/cli/main.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -28,7 +30,7 @@
     "@beeper/desktop-api": "^5.0.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "commander": "^13.1.0",
-    "zod": "^3.24.0"
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

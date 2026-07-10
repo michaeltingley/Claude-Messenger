@@ -87,6 +87,16 @@ describe('BeeperMessenger (HTTP integration)', () => {
     });
   });
 
+  it('listMessages returns newest first regardless of wire order', async () => {
+    mock.messages = [
+      wireMessage({ id: 'old', timestamp: '2026-07-01T00:00:00.000Z' }),
+      wireMessage({ id: 'new', timestamp: '2026-07-09T00:00:00.000Z' }),
+      wireMessage({ id: 'mid', timestamp: '2026-07-05T00:00:00.000Z' }),
+    ];
+    const page = await messenger.listMessages('!chat1:beeper.com');
+    expect(page.items.map((m) => m.id)).toEqual(['new', 'mid', 'old']);
+  });
+
   it('searchMessages filters by word query over the wire', async () => {
     const page = await messenger.searchMessages({ query: 'different' });
     expect(page.items.map((m) => m.id)).toEqual(['msg-2']);
@@ -116,6 +126,11 @@ describe('BeeperMessenger (HTTP integration)', () => {
       const wrongToken = new BeeperMessenger({ accessToken: 'wrong-token', baseUrl, maxRetries: 0 });
       await expect(wrongToken.listAccounts()).rejects.toThrow(AuthError);
       await expect(wrongToken.listAccounts()).rejects.toThrow(/Approved connections/);
+    });
+
+    it('403 → AuthError as well', async () => {
+      mock.forcedError = { status: 403 };
+      await expect(messenger.listAccounts()).rejects.toThrow(AuthError);
     });
 
     it('404 → NotFoundError', async () => {

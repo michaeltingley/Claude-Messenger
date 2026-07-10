@@ -9,6 +9,8 @@ dist/
 *.local.json
 audit/
 *.log
+# contains your private chat IDs (allowlists/denylists)
+policy.json
 
 # editor/os noise
 .DS_Store

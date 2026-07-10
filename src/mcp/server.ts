@@ -12,7 +12,7 @@ import { MessengerError, PolicyDeniedError } from '../core/errors.js';
  * a GuardedMessenger, so policy denials surface as tool errors that explain
  * which rule blocked the call.
  */
-export function createMcpServer(messenger: Messenger, version = '0.1.0'): McpServer {
+export function createMcpServer(messenger: Messenger, version: string): McpServer {
   const server = new McpServer({ name: 'claude-messenger', version });
 
   const asResult = (data: unknown) => ({

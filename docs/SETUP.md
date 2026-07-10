@@ -61,23 +61,31 @@ npx claude-messenger policy-init   # writes read-only policy.json
 npx claude-messenger chats         # find chat IDs
 ```
 
-To allow sending to a specific chat, edit `policy.json`:
+To allow sending to a specific chat, edit `policy.json` (the `version` field is required):
 
 ```json
 {
+  "version": 1,
   "capabilities": { "read": true, "send": true, "markRead": false },
   "send": { "chatAllowlist": ["<chat-id-from-chats-command>"], "maxMessagesPerHour": 10 }
 }
 ```
 
+`policy.json` is gitignored on purpose — it contains your private chat IDs. The audit log keeps every action (including full text of anything sent as you) indefinitely; prune old `audit/audit-*.jsonl` files whenever you like, they're one file per day.
+
 Test the guardrails: `claude-messenger send <allowed-chat> "test"` should work; sending anywhere else must be denied. Check `audit/` for the trail.
 
 ## 3. Connect Claude
 
-**Claude Code** (machine that can reach the endpoint):
+**Claude Code** (machine that can reach the endpoint). The server is spawned from whatever directory Claude Code happens to run in, so pass explicit env vars with **absolute paths** — do not rely on `.env` or relative defaults:
 
 ```sh
-claude mcp add claude-messenger -s user -- node /path/to/Claude-Messenger/dist/cli/main.js serve
+claude mcp add claude-messenger -s user \
+  --env BEEPER_ACCESS_TOKEN=... \
+  --env BEEPER_BASE_URL=http://localhost:23373 \
+  --env CLAUDE_MESSENGER_POLICY=/path/to/Claude-Messenger/policy.json \
+  --env CLAUDE_MESSENGER_AUDIT_DIR=/path/to/Claude-Messenger/audit \
+  -- node /path/to/Claude-Messenger/dist/cli/main.js serve
 ```
 
 **Claude Desktop** — add to MCP settings:

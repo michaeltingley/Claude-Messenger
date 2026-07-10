@@ -9,8 +9,9 @@ import { MemoryRateWindow, type RateWindow } from './rate.js';
  * The policy layer narrows that down to what the user has actually granted
  * Claude, enforced in-process before any provider call is made.
  *
- * Defaults are deliberately conservative: read-only, no sends, no state
- * changes. Sending requires opting in AND allowlisting specific chats.
+ * Defaults are deliberately conservative about actions: no sends, no state
+ * changes. Reads default to everything (accountAllowlist '*') — narrowing
+ * reads is opt-in via the allowlist/denylist.
  */
 
 const starOrList = z.union([z.literal('*'), z.array(z.string())]);
@@ -56,6 +57,21 @@ export function parsePolicy(raw: unknown): Policy {
   return PolicySchema.parse(raw);
 }
 
+/**
+ * Every rule that can deny an action. These IDs are user-facing contract:
+ * MCP errors, CLI output, and audit entries all name them so the user knows
+ * which policy.json knob to change.
+ */
+export type PolicyRule =
+  | 'capabilities.read'
+  | 'capabilities.send'
+  | 'capabilities.markRead'
+  | 'read.accountAllowlist'
+  | 'read.chatDenylist'
+  | 'send.chatAllowlist'
+  | 'send.maxCharsPerMessage'
+  | 'send.maxMessagesPerHour';
+
 export type PolicyAction =
   | { kind: 'whoami' }
   | { kind: 'listAccounts' }
@@ -63,9 +79,9 @@ export type PolicyAction =
   | { kind: 'send'; chatId: string; textLength: number }
   | { kind: 'markRead'; chatId: string };
 
-export type Decision = { allowed: true } | { allowed: false; rule: string; reason: string };
+export type Decision = { allowed: true } | { allowed: false; rule: PolicyRule; reason: string };
 
-const deny = (rule: string, reason: string): Decision => ({ allowed: false, rule, reason });
+const deny = (rule: PolicyRule, reason: string): Decision => ({ allowed: false, rule, reason });
 const ALLOW: Decision = { allowed: true };
 
 function inList(list: '*' | string[], value: string | undefined): boolean {
@@ -100,14 +116,29 @@ export class PolicyEngine {
     }
   }
 
+  /**
+   * Check a send AND consume a rate-limit slot in one synchronous step.
+   * Check-then-record-later would let concurrent in-flight sends all pass
+   * the gate; reserving at decision time closes that window (a failed
+   * dispatch still consumes its slot — the limiter fails closed).
+   */
+  reserveSend(action: { chatId: string; textLength: number }): Decision {
+    const decision = this.checkSend(action);
+    if (decision.allowed) {
+      const now = this.now();
+      this.sendWindow.record(now, now - 3_600_000);
+    }
+    return decision;
+  }
+
   private checkRead(action: { chatId?: string; accountId?: string }): Decision {
     if (!this.policy.capabilities.read) {
       return deny('capabilities.read', 'Reading is disabled by policy.');
     }
-    if (action.chatId && this.policy.read.chatDenylist.includes(action.chatId)) {
+    if (action.chatId !== undefined && this.policy.read.chatDenylist.includes(action.chatId)) {
       return deny('read.chatDenylist', `Chat ${action.chatId} is denylisted.`);
     }
-    if (action.accountId && !inList(this.policy.read.accountAllowlist, action.accountId)) {
+    if (action.accountId !== undefined && !inList(this.policy.read.accountAllowlist, action.accountId)) {
       return deny('read.accountAllowlist', `Account ${action.accountId} is not allowlisted for reading.`);
     }
     return ALLOW;
@@ -152,19 +183,17 @@ export class PolicyEngine {
     return ALLOW;
   }
 
-  /** Record a successful send for rate-limit accounting. */
-  recordSend(): void {
-    const now = this.now();
-    this.sendWindow.record(now, now - 3_600_000);
+  /**
+   * Canonical visibility predicate — defined as "would a read of this
+   * chat/account be allowed", so pre-call checks and post-fetch filtering
+   * can never disagree.
+   */
+  chatVisible(chat: { id: string; accountId: string }): boolean {
+    return this.check({ kind: 'read', chatId: chat.id, accountId: chat.accountId }).allowed;
   }
 
   /** True when the account may be shown to Claude at all. */
   accountVisible(accountId: string): boolean {
-    return this.policy.capabilities.read && inList(this.policy.read.accountAllowlist, accountId);
-  }
-
-  /** True when the chat may be shown to Claude at all. */
-  chatVisible(chat: { id: string; accountId: string }): boolean {
-    return !this.policy.read.chatDenylist.includes(chat.id) && this.accountVisible(chat.accountId);
+    return this.check({ kind: 'read', accountId }).allowed;
   }
 }

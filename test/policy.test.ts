@@ -40,18 +40,35 @@ describe('PolicyEngine', () => {
     });
   });
 
-  it('rate limits sends per hour with a sliding window', () => {
+  it('rate limits sends per hour with a sliding window, reserving at decision time', () => {
     let now = 0;
     const engine = new PolicyEngine(sendPolicy(), () => now);
-    const send = { kind: 'send', chatId: 'chat-ok', textLength: 1 } as const;
+    const send = { chatId: 'chat-ok', textLength: 1 };
 
-    expect(engine.check(send).allowed).toBe(true);
-    engine.recordSend();
-    engine.recordSend();
-    expect(engine.check(send)).toMatchObject({ allowed: false, rule: 'send.maxMessagesPerHour' });
+    expect(engine.reserveSend(send).allowed).toBe(true);
+    expect(engine.reserveSend(send).allowed).toBe(true);
+    expect(engine.reserveSend(send)).toMatchObject({ allowed: false, rule: 'send.maxMessagesPerHour' });
 
     now = 3_600_001; // window slides
-    expect(engine.check(send).allowed).toBe(true);
+    expect(engine.reserveSend(send).allowed).toBe(true);
+  });
+
+  it('allows a message exactly at maxCharsPerMessage and denies one char over', () => {
+    const engine = new PolicyEngine(sendPolicy());
+    expect(engine.check({ kind: 'send', chatId: 'chat-ok', textLength: 10 }).allowed).toBe(true);
+    expect(engine.check({ kind: 'send', chatId: 'chat-ok', textLength: 11 })).toMatchObject({
+      allowed: false,
+      rule: 'send.maxCharsPerMessage',
+    });
+  });
+
+  it("chatAllowlist '*' permits sending to any non-denylisted chat", () => {
+    const engine = new PolicyEngine(
+      sendPolicy({
+        send: { chatAllowlist: '*', maxMessagesPerHour: 10, maxCharsPerMessage: 100 },
+      }),
+    );
+    expect(engine.check({ kind: 'send', chatId: 'never-seen-before', textLength: 1 }).allowed).toBe(true);
   });
 
   it('denylisted chats are blocked for read, send, and markRead', () => {

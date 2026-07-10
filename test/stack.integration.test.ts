@@ -46,7 +46,7 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     );
     client = new Client({ name: 'test-client', version: '0.0.0' });
     const [ct, st] = InMemoryTransport.createLinkedPair();
-    await Promise.all([createMcpServer(messenger).connect(st), client.connect(ct)]);
+    await Promise.all([createMcpServer(messenger, '0.0.0-test').connect(st), client.connect(ct)]);
   });
 
   afterEach(async () => {
