@@ -32,6 +32,7 @@ describe('CLI (subprocess integration)', () => {
           BEEPER_BASE_URL: baseUrl,
           CLAUDE_MESSENGER_POLICY: join(stateDir, 'policy.json'),
           CLAUDE_MESSENGER_AUDIT_DIR: join(stateDir, 'audit'),
+          CLAUDE_MESSENGER_STATE_DIR: join(stateDir, 'state'),
           ...envOverrides,
         },
       });

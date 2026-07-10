@@ -49,7 +49,7 @@ Beeper Desktop's *Remote Access* setting (Settings → Integrations → Advanced
 
 - **Streaming/triggers**: the Client API has an experimental WebSocket (`/v1/ws`, `message.upserted` etc.). Streaming will be added to the `Messenger` port together with its first provider implementation *and* a guarded wrapper in the same change, so pushed events pass through the same visibility filtering and audit as pulled reads. Until then, poll `searchChats({unreadOnly: true})`.
 - **New providers**: implement `Messenger`, add a branch in `app.ts`.
-- **Automations**: build on `GuardedMessenger` only, so every automated action inherits policy + audit for free. Diagnostics get a deliberately narrow `ConnectivityProbe` (whoami only) — the unguarded provider is never handed out of the composition root.
+- **Automations**: build on `GuardedMessenger` only, so every automated action inherits policy + audit for free. Diagnostics get a deliberately narrow `ConnectivityProbe` (checkConnection only) — the unguarded provider is never handed out of the composition root.
 
 ## Security notes
 

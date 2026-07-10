@@ -8,6 +8,7 @@ dist/
 !.env.example
 *.local.json
 audit/
+state/
 *.log
 # contains your private chat IDs (allowlists/denylists)
 policy.json

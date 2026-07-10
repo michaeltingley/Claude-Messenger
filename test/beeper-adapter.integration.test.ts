@@ -31,8 +31,8 @@ describe('BeeperMessenger (HTTP integration)', () => {
     await mock.stop();
   });
 
-  it('whoami maps server info', async () => {
-    const info = await messenger.whoami();
+  it('checkConnection maps server info', async () => {
+    const info = await messenger.checkConnection();
     expect(info).toMatchObject({ appName: 'MockBeeper', appVersion: '9.9.9', remoteAccess: false });
   });
 
@@ -139,7 +139,7 @@ describe('BeeperMessenger (HTTP integration)', () => {
 
     it('5xx → ProviderError carrying status', async () => {
       mock.forcedError = { status: 500 };
-      await expect(messenger.whoami()).rejects.toThrow(ProviderError);
+      await expect(messenger.checkConnection()).rejects.toThrow(ProviderError);
     });
 
     it('unreachable endpoint → ConnectionError with actionable message', async () => {
@@ -148,8 +148,8 @@ describe('BeeperMessenger (HTTP integration)', () => {
         baseUrl: 'http://127.0.0.1:1',
         maxRetries: 0,
       });
-      await expect(dead.whoami()).rejects.toThrow(ConnectionError);
-      await expect(dead.whoami()).rejects.toThrow(/Beeper Desktop \(or your Beeper Server\)/);
+      await expect(dead.checkConnection()).rejects.toThrow(ConnectionError);
+      await expect(dead.checkConnection()).rejects.toThrow(/Beeper Desktop \(or your Beeper Server\)/);
     });
   });
 });

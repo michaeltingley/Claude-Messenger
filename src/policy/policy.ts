@@ -72,11 +72,16 @@ export type PolicyRule =
   | 'send.maxCharsPerMessage'
   | 'send.maxMessagesPerHour';
 
+/**
+ * Send is deliberately absent: a send decision is only obtainable via
+ * reserveSend(), which consumes a rate slot atomically. A pure send check
+ * would invite check-then-dispatch code whose rate accounting never
+ * increments.
+ */
 export type PolicyAction =
-  | { kind: 'whoami' }
+  | { kind: 'checkConnection' }
   | { kind: 'listAccounts' }
   | { kind: 'read'; chatId?: string; accountId?: string }
-  | { kind: 'send'; chatId: string; textLength: number }
   | { kind: 'markRead'; chatId: string };
 
 export type Decision = { allowed: true } | { allowed: false; rule: PolicyRule; reason: string };
@@ -104,13 +109,11 @@ export class PolicyEngine {
 
   check(action: PolicyAction): Decision {
     switch (action.kind) {
-      case 'whoami':
+      case 'checkConnection':
       case 'listAccounts':
         return ALLOW;
       case 'read':
         return this.checkRead(action);
-      case 'send':
-        return this.checkSend(action);
       case 'markRead':
         return this.checkMarkRead(action);
     }
@@ -122,11 +125,13 @@ export class PolicyEngine {
    * the gate; reserving at decision time closes that window (a failed
    * dispatch still consumes its slot — the limiter fails closed).
    */
+  private static readonly SEND_WINDOW_MS = 3_600_000;
+
   reserveSend(action: { chatId: string; textLength: number }): Decision {
     const decision = this.checkSend(action);
     if (decision.allowed) {
       const now = this.now();
-      this.sendWindow.record(now, now - 3_600_000);
+      this.sendWindow.record(now, now - PolicyEngine.SEND_WINDOW_MS);
     }
     return decision;
   }
@@ -163,7 +168,7 @@ export class PolicyEngine {
         `Message is ${action.textLength} chars; limit is ${this.policy.send.maxCharsPerMessage}.`,
       );
     }
-    const hourAgo = this.now() - 3_600_000;
+    const hourAgo = this.now() - PolicyEngine.SEND_WINDOW_MS;
     if (this.sendWindow.countSince(hourAgo) >= this.policy.send.maxMessagesPerHour) {
       return deny(
         'send.maxMessagesPerHour',

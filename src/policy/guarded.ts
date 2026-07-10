@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Messenger } from '../core/messenger.js';
 import type {
   Account,
@@ -95,22 +96,28 @@ export class GuardedMessenger implements Messenger {
 
   /**
    * Mutations: intent entry BEFORE dispatch (mandatory — abort if it cannot
-   * be written), outcome entry after (best-effort).
+   * be written), outcome entry after (best-effort). Both entries share an
+   * opId so concurrent mutations can be paired forensically, and the
+   * outcome carries provider result fields (e.g. pendingMessageId) so the
+   * audit trail joins to the delivered message.
    */
   private async guardMutation<T>(
     decision: Decision,
     name: string,
     context: Record<string, unknown>,
     run: () => Promise<T>,
+    outcomeContext?: (result: T) => Record<string, unknown>,
   ): Promise<T> {
     if (!decision.allowed) {
       return this.recordDenied(name, decision.rule, context, decision.reason);
     }
+    const opId = randomUUID();
     await this.audit.record({
       ts: this.now().toISOString(),
       action: name,
       decision: 'allowed',
       stage: 'intent',
+      opId,
       context,
     });
     let result: T;
@@ -123,6 +130,7 @@ export class GuardedMessenger implements Messenger {
           action: name,
           decision: 'allowed',
           stage: 'outcome',
+          opId,
           outcome: 'error',
           error: err instanceof Error ? err.message : String(err),
           context,
@@ -136,15 +144,18 @@ export class GuardedMessenger implements Messenger {
         action: name,
         decision: 'allowed',
         stage: 'outcome',
+        opId,
         outcome: 'ok',
-        context,
+        context: { ...context, ...outcomeContext?.(result) },
       })
       .catch(() => undefined); // the send happened; intent is on record
     return result;
   }
 
-  whoami(): Promise<ServerInfo> {
-    return this.guardRead(this.engine.check({ kind: 'whoami' }), 'whoami', {}, () => this.inner.whoami());
+  checkConnection(): Promise<ServerInfo> {
+    return this.guardRead(this.engine.check({ kind: 'checkConnection' }), 'checkConnection', {}, () =>
+      this.inner.checkConnection(),
+    );
   }
 
   listAccounts(): Promise<Account[]> {
@@ -231,6 +242,7 @@ export class GuardedMessenger implements Messenger {
       // Outbound text is intentionally recorded — see audit.ts content policy.
       { chatId: input.chatId, text: input.text, replyToMessageId: input.replyToMessageId },
       () => this.inner.sendMessage(input),
+      (result) => ({ pendingMessageId: result.pendingMessageId }),
     );
   }
 

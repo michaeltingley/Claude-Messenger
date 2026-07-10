@@ -24,7 +24,7 @@ import { FileRateWindow } from './policy/rate.js';
  * code, where a one-word `raw` destructure would bypass policy and audit.
  */
 export interface ConnectivityProbe {
-  whoami(): Promise<ServerInfo>;
+  checkConnection(): Promise<ServerInfo>;
 }
 
 export interface App {
@@ -77,11 +77,12 @@ export async function createApp(config: Config): Promise<App> {
     baseUrl: config.beeperBaseUrl,
   });
   // File-backed send window: rate limits hold across process restarts
-  // (every CLI invocation is a fresh process).
-  const engine = new PolicyEngine(policy, Date.now, new FileRateWindow(join(config.auditDir, 'send-window.jsonl')));
+  // (every CLI invocation is a fresh process). Lives in stateDir, not
+  // auditDir — pruning audit logs must never reset the rate limit.
+  const engine = new PolicyEngine(policy, Date.now, new FileRateWindow(join(config.stateDir, 'send-window.jsonl')));
   return {
     messenger: new GuardedMessenger(provider, engine, new JsonlAuditLogger(config.auditDir)),
-    probe: { whoami: () => provider.whoami() },
+    probe: { checkConnection: () => provider.checkConnection() },
     policy,
     policySource: filePolicy ? 'file' : 'default',
   };

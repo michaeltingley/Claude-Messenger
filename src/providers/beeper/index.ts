@@ -42,7 +42,7 @@ export class BeeperMessenger implements Messenger {
     });
   }
 
-  whoami(): Promise<ServerInfo> {
+  checkConnection(): Promise<ServerInfo> {
     return this.wrap(async () => {
       const info = await this.client.info.retrieve();
       return {

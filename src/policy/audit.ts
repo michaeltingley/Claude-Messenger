@@ -20,6 +20,8 @@ export interface AuditEntry {
    * Reads write a single entry with no stage.
    */
   stage?: 'intent' | 'outcome';
+  /** Pairs a mutation's intent and outcome entries under concurrency. */
+  opId?: string;
   outcome?: 'ok' | 'error';
   error?: string;
   /** Redacted parameters: chat/account IDs, queries, sent text. */

@@ -13,6 +13,11 @@ const ConfigSchema = z.object({
   BEEPER_BASE_URL: z.string().url().default('http://localhost:23373'),
   CLAUDE_MESSENGER_POLICY: z.string().default('./policy.json'),
   CLAUDE_MESSENGER_AUDIT_DIR: z.string().default('./audit'),
+  /**
+   * Mutable runtime state (e.g. the send rate window) — kept apart from the
+   * audit dir, whose contract is an append-only trail the user may prune.
+   */
+  CLAUDE_MESSENGER_STATE_DIR: z.string().default('./state'),
 });
 
 export interface Config {
@@ -20,6 +25,7 @@ export interface Config {
   beeperBaseUrl: string;
   policyPath: string;
   auditDir: string;
+  stateDir: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -35,5 +41,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     beeperBaseUrl: parsed.data.BEEPER_BASE_URL,
     policyPath: parsed.data.CLAUDE_MESSENGER_POLICY,
     auditDir: parsed.data.CLAUDE_MESSENGER_AUDIT_DIR,
+    stateDir: parsed.data.CLAUDE_MESSENGER_STATE_DIR,
   };
 }

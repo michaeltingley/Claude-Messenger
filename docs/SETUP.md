@@ -85,6 +85,7 @@ claude mcp add claude-messenger -s user \
   --env BEEPER_BASE_URL=http://localhost:23373 \
   --env CLAUDE_MESSENGER_POLICY=/path/to/Claude-Messenger/policy.json \
   --env CLAUDE_MESSENGER_AUDIT_DIR=/path/to/Claude-Messenger/audit \
+  --env CLAUDE_MESSENGER_STATE_DIR=/path/to/Claude-Messenger/state \
   -- node /path/to/Claude-Messenger/dist/cli/main.js serve
 ```
 
@@ -100,14 +101,15 @@ claude mcp add claude-messenger -s user \
         "BEEPER_ACCESS_TOKEN": "…",
         "BEEPER_BASE_URL": "http://localhost:23373",
         "CLAUDE_MESSENGER_POLICY": "/path/to/policy.json",
-        "CLAUDE_MESSENGER_AUDIT_DIR": "/path/to/audit"
+        "CLAUDE_MESSENGER_AUDIT_DIR": "/path/to/audit",
+        "CLAUDE_MESSENGER_STATE_DIR": "/path/to/state"
       }
     }
   }
 }
 ```
 
-Ask Claude: *"Use whoami then search_chats to show my unread chats."*
+Ask Claude: *"Use check_connection then search_chats to show my unread chats."*
 
 ### Token hygiene
 

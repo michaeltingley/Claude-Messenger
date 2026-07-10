@@ -56,8 +56,8 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
   const text = (result: Awaited<ReturnType<Client['callTool']>>) =>
     (result.content as Array<{ text: string }>)[0]!.text;
 
-  it('whoami round-trips to the wire', async () => {
-    const result = await client.callTool({ name: 'whoami', arguments: {} });
+  it('check_connection round-trips to the wire', async () => {
+    const result = await client.callTool({ name: 'check_connection', arguments: {} });
     expect(JSON.parse(text(result))).toMatchObject({ appName: 'MockBeeper' });
   });
 

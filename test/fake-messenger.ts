@@ -49,7 +49,7 @@ export class FakeMessenger implements Messenger {
   sent: SendMessageInput[] = [];
   markedRead: string[] = [];
 
-  async whoami(): Promise<ServerInfo> {
+  async checkConnection(): Promise<ServerInfo> {
     return { appName: 'FakeMessenger', appVersion: '0.0.0', baseUrl: 'fake://' };
   }
 

@@ -21,6 +21,7 @@ describe('MCP server', () => {
     const client = await connect(new FakeMessenger());
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      'check_connection',
       'get_chat',
       'list_accounts',
       'list_messages',
@@ -28,7 +29,6 @@ describe('MCP server', () => {
       'search_chats',
       'search_messages',
       'send_message',
-      'whoami',
     ]);
   });
 

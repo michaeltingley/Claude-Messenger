@@ -34,7 +34,15 @@ describe('GuardedMessenger mutations', () => {
     const stages = audit.entries.filter((e) => e.action === 'sendMessage').map((e) => e.stage);
     expect(stages).toEqual(['intent', 'outcome']);
     expect(audit.entries[0]).toMatchObject({ stage: 'intent', context: { chatId: 'chat-1', text: 'hi' } });
-    expect(audit.entries[1]).toMatchObject({ stage: 'outcome', outcome: 'ok' });
+    expect(audit.entries[1]).toMatchObject({
+      stage: 'outcome',
+      outcome: 'ok',
+      // the outcome joins the audit trail to the delivered message
+      context: { chatId: 'chat-1', pendingMessageId: 'pending-1' },
+    });
+    // intent and outcome are pairable under concurrency via a shared opId
+    expect(audit.entries[0]!.opId).toBeDefined();
+    expect(audit.entries[1]!.opId).toBe(audit.entries[0]!.opId);
     expect(fake.sent).toHaveLength(1);
   });
 

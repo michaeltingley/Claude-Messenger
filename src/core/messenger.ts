@@ -21,7 +21,7 @@ import type {
  */
 export interface Messenger {
   /** Identify the backend and confirm the connection + credentials work. */
-  whoami(): Promise<ServerInfo>;
+  checkConnection(): Promise<ServerInfo>;
 
   /** Connected chat-network accounts (WhatsApp, Signal, ...). */
   listAccounts(): Promise<Account[]>;

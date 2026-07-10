@@ -57,7 +57,7 @@ program
     console.log(`✓ Config OK (base URL: ${config.beeperBaseUrl})`);
     const { messenger, probe, policy, policySource } = await createApp(config);
 
-    const info = await probe.whoami();
+    const info = await probe.checkConnection();
     console.log(`✓ Connected: ${info.appName} ${info.appVersion} at ${info.baseUrl}`);
     console.log(`  remote access: ${info.remoteAccess ? 'enabled' : 'disabled (localhost only)'}`);
 

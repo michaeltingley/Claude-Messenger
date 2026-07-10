@@ -40,14 +40,14 @@ export function createMcpServer(messenger: Messenger, version: string): McpServe
   };
 
   server.registerTool(
-    'whoami',
+    'check_connection',
     {
       title: 'Check connection',
       description:
         'Verify the connection to the message backend and return app/server info. Use this first if other tools fail.',
       inputSchema: {},
     },
-    () => run(() => messenger.whoami()),
+    () => run(() => messenger.checkConnection()),
   );
 
   server.registerTool(
