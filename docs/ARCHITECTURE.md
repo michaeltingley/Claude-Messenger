@@ -40,7 +40,8 @@ Beeper cloud bridges ⇄ WhatsApp / Signal / Telegram / iMessage / ...
 |---|---|---|
 | Local | `http://localhost:23373` | Claude Code/Desktop on the same machine as Beeper Desktop |
 | Tunnel | `https://<tunnel-host>` | Remote Claude (web sessions, automations) reaching your desktop via Tailscale/cloudflared |
-| Headless server | `http://<vps>:23373` (behind tunnel/VPN) | 24/7 always-on: official Beeper Server on a small VPS |
+| Headless server | `http://<vps>:23373` (behind tunnel/VPN) | 24/7 always-on: official Beeper Server on a small VPS (beta as of mid-2026) |
+| Always-on desktop | `https://<tunnel-host>` | 24/7 GA fallback: Beeper Desktop + Remote Access on a machine that stays awake |
 
 Beeper Desktop's *Remote Access* setting (Settings → Integrations → Advanced) binds the API to all interfaces and is designed for tunnels; auth stays bearer-token. Beeper ships no TLS — never expose the port raw.
 

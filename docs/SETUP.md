@@ -13,16 +13,27 @@ Three steps: get a Beeper endpoint + token, point Claude Messenger at it, connec
 
 ### Option B — Headless Beeper Server on a VPS (24/7, no GUI)
 
-Official headless server, same API. On an always-on Linux box (2 GB RAM is plenty):
+Official headless server, same Client API on the same port — SDK/MCP clients point at it unchanged. **Beta caveat (July 2026):** `beeper-server` artifacts currently ship only from Beeper's staging environment on the nightly channel (verified in the CLI installer source), with no published system requirements and little community track record. Expect churn; if that's unacceptable, use Option C.
+
+On an always-on Linux box or Mac mini (1–2 GB RAM expected):
 
 ```sh
-npm install -g beeper-cli
-beeper setup --server --install   # installs + starts server on http://127.0.0.1:23373
-beeper targets enable             # start on boot
-beeper accounts add               # log in (email code) and connect networks
+npm install -g beeper-cli               # CLI is MIT; the server binary is proprietary
+beeper setup --server --install --email you@example.com
+                                        # installs + starts server on http://127.0.0.1:23373
+                                        # prompts for the login code Beeper emails you
+beeper verify recovery-key              # unlock E2EE (or SAS/QR verify from your phone)
+beeper doctor                           # must report the target encrypted-ready
+beeper accounts add                     # connect networks (WhatsApp QR, Telegram code, ...)
+beeper targets enable                   # persist across reboots (systemd --user unit)
+loginctl enable-linger "$USER"          # Linux: let the user unit run without a login session
 ```
 
 Mint a token for Claude Messenger via the CLI/OAuth flow, then treat `http://127.0.0.1:23373` on that machine as your endpoint. Note: iMessage bridging requires macOS, so an iMessage-heavy setup may prefer a Mac mini as the always-on host.
+
+### Option C — Beeper Desktop on an always-on machine (24/7, GA path)
+
+The officially supported route since Sept 2025: run regular Beeper Desktop on any machine that stays awake (spare desktop, Mac mini, home server), enable **Settings → Integrations → Advanced → Remote Access**, and reach it through a tunnel. Same API, boring and stable; costs you a GUI machine that must stay logged in.
 
 ### Making either reachable from elsewhere (tunnels)
 
