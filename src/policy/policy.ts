@@ -1,0 +1,167 @@
+import { z } from 'zod';
+
+/**
+ * Local permission layer.
+ *
+ * Backend tokens (Beeper access tokens, Matrix access tokens) are
+ * all-or-nothing: anyone holding one can read everything and message anyone.
+ * The policy layer narrows that down to what the user has actually granted
+ * Claude, enforced in-process before any provider call is made.
+ *
+ * Defaults are deliberately conservative: read-only, no sends, no state
+ * changes. Sending requires opting in AND allowlisting specific chats.
+ */
+
+const starOrList = z.union([z.literal('*'), z.array(z.string())]);
+
+export const PolicySchema = z.object({
+  version: z.literal(1),
+  capabilities: z
+    .object({
+      /** List/search chats and messages. */
+      read: z.boolean().default(true),
+      /** Send messages as the user. */
+      send: z.boolean().default(false),
+      /** Mark chats read (visible to other people via read receipts). */
+      markRead: z.boolean().default(false),
+    })
+    .default({}),
+  read: z
+    .object({
+      /** Accounts Claude may read, '*' for all. */
+      accountAllowlist: starOrList.default('*'),
+      /** Chats Claude must never see, regardless of allowlists. */
+      chatDenylist: z.array(z.string()).default([]),
+    })
+    .default({}),
+  send: z
+    .object({
+      /**
+       * Chats Claude may send to. '*' is allowed but discouraged; the
+       * intended shape is an explicit list of chat IDs.
+       */
+      chatAllowlist: starOrList.default([]),
+      maxMessagesPerHour: z.number().int().positive().default(10),
+      maxCharsPerMessage: z.number().int().positive().default(2000),
+    })
+    .default({}),
+});
+
+export type Policy = z.infer<typeof PolicySchema>;
+
+export const DEFAULT_POLICY: Policy = PolicySchema.parse({ version: 1 });
+
+export function parsePolicy(raw: unknown): Policy {
+  return PolicySchema.parse(raw);
+}
+
+export type PolicyAction =
+  | { kind: 'whoami' }
+  | { kind: 'listAccounts' }
+  | { kind: 'read'; chatId?: string; accountId?: string }
+  | { kind: 'send'; chatId: string; textLength: number }
+  | { kind: 'markRead'; chatId: string };
+
+export type Decision = { allowed: true } | { allowed: false; rule: string; reason: string };
+
+const deny = (rule: string, reason: string): Decision => ({ allowed: false, rule, reason });
+const ALLOW: Decision = { allowed: true };
+
+function inList(list: '*' | string[], value: string | undefined): boolean {
+  if (list === '*') return true;
+  return value !== undefined && list.includes(value);
+}
+
+/**
+ * Pure decision engine: no I/O, no provider knowledge. Send rate limiting
+ * uses an injected clock so tests can control time.
+ */
+export class PolicyEngine {
+  private sendTimestamps: number[] = [];
+
+  constructor(
+    readonly policy: Policy,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  check(action: PolicyAction): Decision {
+    switch (action.kind) {
+      case 'whoami':
+      case 'listAccounts':
+        return ALLOW;
+      case 'read':
+        return this.checkRead(action);
+      case 'send':
+        return this.checkSend(action);
+      case 'markRead':
+        return this.checkMarkRead(action);
+    }
+  }
+
+  private checkRead(action: { chatId?: string; accountId?: string }): Decision {
+    if (!this.policy.capabilities.read) {
+      return deny('capabilities.read', 'Reading is disabled by policy.');
+    }
+    if (action.chatId && this.policy.read.chatDenylist.includes(action.chatId)) {
+      return deny('read.chatDenylist', `Chat ${action.chatId} is denylisted.`);
+    }
+    if (action.accountId && !inList(this.policy.read.accountAllowlist, action.accountId)) {
+      return deny('read.accountAllowlist', `Account ${action.accountId} is not allowlisted for reading.`);
+    }
+    return ALLOW;
+  }
+
+  private checkSend(action: { chatId: string; textLength: number }): Decision {
+    if (!this.policy.capabilities.send) {
+      return deny(
+        'capabilities.send',
+        'Sending is disabled by policy. Enable capabilities.send and allowlist the chat to permit it.',
+      );
+    }
+    if (this.policy.read.chatDenylist.includes(action.chatId)) {
+      return deny('read.chatDenylist', `Chat ${action.chatId} is denylisted.`);
+    }
+    if (!inList(this.policy.send.chatAllowlist, action.chatId)) {
+      return deny('send.chatAllowlist', `Chat ${action.chatId} is not allowlisted for sending.`);
+    }
+    if (action.textLength > this.policy.send.maxCharsPerMessage) {
+      return deny(
+        'send.maxCharsPerMessage',
+        `Message is ${action.textLength} chars; limit is ${this.policy.send.maxCharsPerMessage}.`,
+      );
+    }
+    const hourAgo = this.now() - 3_600_000;
+    this.sendTimestamps = this.sendTimestamps.filter((t) => t > hourAgo);
+    if (this.sendTimestamps.length >= this.policy.send.maxMessagesPerHour) {
+      return deny(
+        'send.maxMessagesPerHour',
+        `Rate limit reached: ${this.policy.send.maxMessagesPerHour} sends/hour.`,
+      );
+    }
+    return ALLOW;
+  }
+
+  private checkMarkRead(action: { chatId: string }): Decision {
+    if (!this.policy.capabilities.markRead) {
+      return deny('capabilities.markRead', 'Marking chats read is disabled by policy.');
+    }
+    if (this.policy.read.chatDenylist.includes(action.chatId)) {
+      return deny('read.chatDenylist', `Chat ${action.chatId} is denylisted.`);
+    }
+    return ALLOW;
+  }
+
+  /** Record a successful send for rate-limit accounting. */
+  recordSend(): void {
+    this.sendTimestamps.push(this.now());
+  }
+
+  /** True when the chat may be shown to Claude at all. */
+  chatVisible(chat: { id: string; accountId: string }): boolean {
+    return (
+      this.policy.capabilities.read &&
+      !this.policy.read.chatDenylist.includes(chat.id) &&
+      inList(this.policy.read.accountAllowlist, chat.accountId)
+    );
+  }
+}
