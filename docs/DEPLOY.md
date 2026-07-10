@@ -23,7 +23,20 @@ public internet; the Beeper token never leaves the host.
 3. A free [Tailscale](https://tailscale.com) account (the script logs the
    host into your tailnet).
 
-## The one command
+## The zero-terminal path (recommended)
+
+Paste `deploy/cloud-init.yaml` into the VM-creation form's user-data box
+(Oracle: Advanced options → Management → Cloud-init script). First boot
+installs everything — Node, Tailscale, Beeper CLI, Claude Messenger
+(built), and **Claude Code**. Then connect once (SSH or the cloud
+console), run `claude`, sign in, and say *"Finish setting up Claude
+Messenger on this machine."* The on-box Claude session joins your
+tailnet, walks the Beeper login with you (you relay the emailed code and
+recovery key), and starts the service. From then on, all operations —
+upgrades, policy edits, diagnostics — are Claude sessions on the host,
+not terminal work.
+
+## The one command (manual alternative)
 
 SSH into the fresh machine and run:
 
