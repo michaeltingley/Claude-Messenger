@@ -1,0 +1,19 @@
+# dependencies / build
+node_modules/
+dist/
+
+# local state — never commit secrets or private message data
+.env
+.env.*
+!.env.example
+*.local.json
+audit/
+state/
+*.log
+# contains your private chat IDs (allowlists/denylists)
+policy.json
+
+# editor/os noise
+.DS_Store
+.idea/
+.vscode/
