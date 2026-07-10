@@ -1,10 +1,12 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Config } from './config.js';
 import type { Messenger } from './core/messenger.js';
 import { BeeperMessenger } from './providers/beeper/index.js';
 import { JsonlAuditLogger } from './policy/audit.js';
 import { GuardedMessenger } from './policy/guarded.js';
 import { DEFAULT_POLICY, parsePolicy, PolicyEngine, type Policy } from './policy/policy.js';
+import { FileRateWindow } from './policy/rate.js';
 
 /**
  * Composition root: config → provider → policy → guarded messenger.
@@ -36,10 +38,9 @@ export async function createApp(config: Config): Promise<App> {
     accessToken: config.beeperAccessToken,
     baseUrl: config.beeperBaseUrl,
   });
-  const messenger = new GuardedMessenger(
-    raw,
-    new PolicyEngine(policy),
-    new JsonlAuditLogger(config.auditDir),
-  );
+  // File-backed send window: rate limits hold across process restarts
+  // (every CLI invocation is a fresh process).
+  const engine = new PolicyEngine(policy, Date.now, new FileRateWindow(join(config.auditDir, 'send-window.json')));
+  const messenger = new GuardedMessenger(raw, engine, new JsonlAuditLogger(config.auditDir));
   return { messenger, raw, policy, policySource: filePolicy ? 'file' : 'default' };
 }

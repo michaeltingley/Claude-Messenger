@@ -31,7 +31,7 @@ Beeper cloud bridges ⇄ WhatsApp / Signal / Telegram / iMessage / ...
 
 1. **Nothing above `providers/` imports a provider SDK.** The `Messenger` interface (`core/messenger.ts`) is the seam. Tests run against `FakeMessenger`; a raw-Matrix provider (via Beeper's own `@beeper/pickle` / `@beeper/chat-adapter-matrix`) can be added without touching policy, MCP, or CLI.
 2. **The tool layer only ever sees the `GuardedMessenger`.** Policy checks happen in-process *before* any provider call; denials throw `PolicyDeniedError` naming the rule. Read results are filtered so denylisted chats never enter Claude's context.
-3. **`PolicyEngine` is pure** (no I/O, injectable clock) so every rule is unit-testable, including the sliding-window rate limit.
+3. **`PolicyEngine` owns decisions, not I/O.** The clock and the rate-limit store (`RateWindow`) are injected: tests control time with a memory window, while the composition root wires a file-backed window so send limits survive process restarts (each CLI `send` is a fresh process).
 4. **Audit content policy**: outbound text is recorded (you must be able to review what was said as you); read message content is never written to the audit log (your history doesn't belong in log files).
 
 ## Deployment topologies

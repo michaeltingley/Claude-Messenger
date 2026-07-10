@@ -66,7 +66,7 @@ export class GuardedMessenger implements Messenger {
   listAccounts(): Promise<Account[]> {
     return this.guard({ kind: 'listAccounts' }, 'listAccounts', {}, async () => {
       const accounts = await this.inner.listAccounts();
-      return accounts.filter((a) => this.engine.chatVisible({ id: '', accountId: a.id }));
+      return accounts.filter((a) => this.engine.accountVisible(a.id));
     });
   }
 

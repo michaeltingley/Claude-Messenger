@@ -6,6 +6,8 @@ export type { Policy, PolicyAction, Decision } from './policy/policy.js';
 export { GuardedMessenger } from './policy/guarded.js';
 export { JsonlAuditLogger, MemoryAuditLogger } from './policy/audit.js';
 export type { AuditEntry, AuditLogger } from './policy/audit.js';
+export { MemoryRateWindow, FileRateWindow } from './policy/rate.js';
+export type { RateWindow } from './policy/rate.js';
 export { BeeperMessenger } from './providers/beeper/index.js';
 export { createMcpServer } from './mcp/server.js';
 export { loadConfig } from './config.js';

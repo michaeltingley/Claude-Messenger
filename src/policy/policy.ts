@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MemoryRateWindow, type RateWindow } from './rate.js';
 
 /**
  * Local permission layer.
@@ -73,15 +74,16 @@ function inList(list: '*' | string[], value: string | undefined): boolean {
 }
 
 /**
- * Pure decision engine: no I/O, no provider knowledge. Send rate limiting
- * uses an injected clock so tests can control time.
+ * Decision engine: no provider knowledge, no direct I/O. The clock and the
+ * rate-limit store are injected — tests control time, and the composition
+ * root picks a persistent RateWindow so limits survive process restarts
+ * (each CLI `send` is a fresh process).
  */
 export class PolicyEngine {
-  private sendTimestamps: number[] = [];
-
   constructor(
     readonly policy: Policy,
     private readonly now: () => number = Date.now,
+    private readonly sendWindow: RateWindow = new MemoryRateWindow(),
   ) {}
 
   check(action: PolicyAction): Decision {
@@ -131,8 +133,7 @@ export class PolicyEngine {
       );
     }
     const hourAgo = this.now() - 3_600_000;
-    this.sendTimestamps = this.sendTimestamps.filter((t) => t > hourAgo);
-    if (this.sendTimestamps.length >= this.policy.send.maxMessagesPerHour) {
+    if (this.sendWindow.countSince(hourAgo) >= this.policy.send.maxMessagesPerHour) {
       return deny(
         'send.maxMessagesPerHour',
         `Rate limit reached: ${this.policy.send.maxMessagesPerHour} sends/hour.`,
@@ -153,15 +154,17 @@ export class PolicyEngine {
 
   /** Record a successful send for rate-limit accounting. */
   recordSend(): void {
-    this.sendTimestamps.push(this.now());
+    const now = this.now();
+    this.sendWindow.record(now, now - 3_600_000);
+  }
+
+  /** True when the account may be shown to Claude at all. */
+  accountVisible(accountId: string): boolean {
+    return this.policy.capabilities.read && inList(this.policy.read.accountAllowlist, accountId);
   }
 
   /** True when the chat may be shown to Claude at all. */
   chatVisible(chat: { id: string; accountId: string }): boolean {
-    return (
-      this.policy.capabilities.read &&
-      !this.policy.read.chatDenylist.includes(chat.id) &&
-      inList(this.policy.read.accountAllowlist, chat.accountId)
-    );
+    return !this.policy.read.chatDenylist.includes(chat.id) && this.accountVisible(chat.accountId);
   }
 }

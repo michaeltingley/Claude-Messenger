@@ -6,7 +6,7 @@ import { loadConfig } from '../config.js';
 import { createApp } from '../app.js';
 import { createMcpServer } from '../mcp/server.js';
 import { DEFAULT_POLICY } from '../policy/policy.js';
-import { ConnectionError, MessengerError } from '../core/errors.js';
+import { ConnectionError, MessengerError, PolicyDeniedError } from '../core/errors.js';
 
 // Best-effort .env loading; explicit env vars always win.
 try {
@@ -20,7 +20,9 @@ const program = new Command('claude-messenger').description(
 );
 
 function fail(err: unknown): never {
-  if (err instanceof MessengerError) {
+  if (err instanceof PolicyDeniedError) {
+    console.error(`✗ [${err.code}] Denied by policy rule ${err.rule}: ${err.message}`);
+  } else if (err instanceof MessengerError) {
     console.error(`✗ [${err.code}] ${err.message}`);
   } else {
     console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);

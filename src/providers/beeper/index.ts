@@ -22,6 +22,8 @@ export interface BeeperMessengerOptions {
    * headless Beeper Server all serve the same API — only this URL differs.
    */
   baseUrl?: string;
+  /** Transport-level retries for connection failures/5xx (default 2). */
+  maxRetries?: number;
 }
 
 /** Messenger adapter for the Beeper Client API (Desktop app or headless Server). */
@@ -34,7 +36,7 @@ export class BeeperMessenger implements Messenger {
     this.client = new BeeperDesktop({
       accessToken: options.accessToken,
       baseURL: this.baseUrl,
-      maxRetries: 2,
+      maxRetries: options.maxRetries ?? 2,
     });
   }
 
