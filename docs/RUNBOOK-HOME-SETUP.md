@@ -54,7 +54,8 @@ The user's kickoff prompt points here — treat this file as your task list.*
    accounts rarely hit this.
 5. Wait for RUNNING, fetch the public IP, then wait for cloud-init to
    finish (`ssh ubuntu@<ip> cloud-init status --wait`). First boot installs
-   Node 22, Tailscale, beeper-cli, this repo (built), and Claude Code.
+   Node 22, Tailscale, Beeper Desktop (headless under Xvfb), this repo
+   (built), and Claude Code.
 
 ## Phase 3 — Finish on the host (you drive over SSH)
 

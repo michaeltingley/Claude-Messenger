@@ -6,6 +6,8 @@ Beeper is Matrix under the hood with end-to-end encryption: **only a device logg
 
 Consequence: Claude Messenger is a *client* of a Beeper endpoint that must run somewhere logged into your account. Where that endpoint runs is pure configuration (`BEEPER_BASE_URL`); nothing else changes.
 
+> In practice we run **Beeper Desktop** for that endpoint, including on headless hosts (under Xvfb). The headless **Beeper Server** is deliberately unused: [beeper/cli#21](https://github.com/beeper/cli/issues/21) is open and unanswered, and reports it deleting a legacy account's bridge connections across every device. Because the endpoint is pure configuration, this choice touches nothing above `providers/` — which is the property this seam exists to provide.
+
 ## Layers
 
 ```

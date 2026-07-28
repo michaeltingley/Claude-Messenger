@@ -11,29 +11,29 @@ Three steps: get a Beeper endpoint + token, point Claude Messenger at it, connec
    (Newer builds: **Settings → Integrations** hosts the same controls.)
 3. The API is now at `http://localhost:23373` while the app runs.
 
-### Option B — Headless Beeper Server on a VPS (24/7, no GUI)
+### Option B — Headless Beeper Server on a VPS — ⚠️ DO NOT USE
 
-Official headless server, same Client API on the same port — SDK/MCP clients point at it unchanged. **Beta caveat (July 2026):** `beeper-server` artifacts currently ship only from Beeper's staging environment on the nightly channel (verified in the CLI installer source), with no published system requirements and little community track record. Expect churn; if that's unacceptable, use Option C.
+> **`beeper setup --server --install` can destroy your account's bridge
+> connections.** [beeper/cli#21](https://github.com/beeper/cli/issues/21) is
+> **open and unanswered**: running it on a legacy cloud-bridge account deleted
+> every bridge connection — WhatsApp, Telegram, Google Messages — **across all
+> devices, including the phone.** Separately, its chats API returned empty
+> results on a fresh account, so it is non-functional for automation even when
+> it doesn't destroy anything. `beeper-cli` is still **0.6.2 (2026-05-18)**, so
+> this is not quietly fixed.
+>
+> This option is kept documented only so nobody rediscovers it and assumes it
+> was an oversight. Use Option C, which serves the identical Client API on the
+> same port. Nothing in Claude Messenger changes between them — the endpoint's
+> location is pure configuration (`BEEPER_BASE_URL`, see `ARCHITECTURE.md`).
 
-On an always-on Linux box or Mac mini (1–2 GB RAM expected):
+### Option C — Beeper Desktop on an always-on machine (24/7, GA path, recommended)
 
-```sh
-npm install -g beeper-cli               # CLI is MIT; the server binary is proprietary
-beeper setup --server --install --email you@example.com
-                                        # installs + starts server on http://127.0.0.1:23373
-                                        # prompts for the login code Beeper emails you
-beeper verify recovery-key              # unlock E2EE (or SAS/QR verify from your phone)
-beeper doctor                           # must report the target encrypted-ready
-beeper accounts add                     # connect networks (WhatsApp QR, Telegram code, ...)
-beeper targets enable                   # persist across reboots (systemd --user unit)
-loginctl enable-linger "$USER"          # Linux: let the user unit run without a login session
-```
+The officially supported route since Sept 2025, and what `deploy/cloud-init.yaml` and `deploy/bootstrap.sh` now provision. Run regular Beeper Desktop on any machine that stays awake (spare desktop, Mac mini, home server, or a VPS running it headless under Xvfb), then reach it through a tunnel. Same API, boring and stable.
 
-Mint a token for Claude Messenger via the CLI/OAuth flow, then treat `http://127.0.0.1:23373` on that machine as your endpoint. Note: iMessage bridging requires macOS, so an iMessage-heavy setup may prefer a Mac mini as the always-on host.
+For a headless Linux host, the deploy scripts handle this for you: they install the Beeper Desktop AppImage matched to the host architecture, run it under Xvfb as a systemd user service, and expose noVNC over your tailnet just long enough for the one-time sign-in — so the emailed login code and your recovery key are typed straight into the app rather than relayed through a terminal or a chat transcript. Size for **4 GB RAM**; Electron plus Xvfb idles ~0.5–0.8 GB.
 
-### Option C — Beeper Desktop on an always-on machine (24/7, GA path)
-
-The officially supported route since Sept 2025: run regular Beeper Desktop on any machine that stays awake (spare desktop, Mac mini, home server), enable **Settings → Integrations → Advanced → Remote Access**, and reach it through a tunnel. Same API, boring and stable; costs you a GUI machine that must stay logged in.
+Then mint a token in the app: **Settings → Integrations → "+"** next to Approved connections, and treat `http://127.0.0.1:23373` on that machine as your endpoint. Note: iMessage bridging requires macOS, so an iMessage-heavy setup may prefer a Mac mini as the always-on host.
 
 ### Making either reachable from elsewhere (tunnels)
 
