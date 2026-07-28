@@ -1,25 +1,39 @@
 # Hosting Claude Messenger 24/7
 
-The end state: a small always-on Linux machine runs **Beeper Server**
-(headless, logged into your account, holding your E2EE keys) and **Claude
-Messenger** (policy + audit + HTTP MCP) side by side. Remote Claude clients
-reach the MCP endpoint over your private tailnet. Nothing listens on the
-public internet; the Beeper token never leaves the host.
+The end state: a small always-on Linux machine runs **Beeper Desktop**
+(headless under Xvfb, logged into your account, holding your E2EE keys) and
+**Claude Messenger** (policy + audit + HTTP MCP) side by side. Remote Claude
+clients reach the MCP endpoint over your private tailnet. Nothing listens on
+the public internet; the Beeper token never leaves the host.
 
 ```
 ┌─ always-on host ─────────────────────────────────────┐
-│ Beeper Server ◄─ localhost:23373 ─ Claude Messenger  │◄─ Tailscale ─ claude.ai /
-│ (your account, E2EE keys)          (MCP :8484, auth) │               Claude Code
+│ Beeper Desktop ◄ localhost:23373 ─ Claude Messenger  │◄─ Tailscale ─ claude.ai /
+│ (Xvfb, your account, E2EE keys)    (MCP :8484, auth) │               Claude Code
 └──────────────────────────────────────────────────────┘
 ```
 
+> **Beeper Server (`beeper setup --server --install`) is deliberately not
+> used.** [beeper/cli#21](https://github.com/beeper/cli/issues/21) is open and
+> unanswered: installing it on a legacy cloud-bridge account deleted every
+> bridge connection — WhatsApp, Telegram, Google Messages — **across all
+> devices, including the phone**, and its chats API returned empty results,
+> making it useless for automation regardless. `beeper-cli` is still 0.6.2
+> from 2026-05-18, so this is not quietly fixed. Beeper Desktop serves the
+> identical Client API on the same port, so nothing above the provider seam
+> changes (`docs/ARCHITECTURE.md`).
+
 ## What you need (the only human parts)
 
-1. **A machine that stays on.** Cheapest VPS on Hetzner/DigitalOcean
-   (1–2 GB RAM, Ubuntu 22.04/24.04, ~$5/mo) or any home box. iMessage
-   bridging needs macOS — use a Mac mini if that matters.
-2. **~10 minutes at a terminal** to type the login code Beeper emails you
-   and your Beeper recovery key.
+1. **A machine that stays on.** A small VPS (Ubuntu 24.04, ~$4–8/mo) or any
+   home box. Size for **4 GB RAM**: Beeper Desktop is Electron and idles
+   ~0.5–0.8 GB with Xvfb, so 2 GB hosts are tight. iMessage bridging needs
+   macOS — use a Mac mini if that matters.
+2. **A few minutes in a browser** to sign Beeper in. cloud-init leaves the
+   app running headless with noVNC on loopback; the host exposes it over
+   your tailnet just long enough for you to log in, so the emailed code and
+   your recovery key are typed straight into the app and never relayed
+   through a chat transcript.
 3. A free [Tailscale](https://tailscale.com) account (the script logs the
    host into your tailnet).
 
