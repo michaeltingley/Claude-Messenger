@@ -90,25 +90,32 @@ Desktop and claude.ai custom connectors.
 ```sh
 systemctl --user status claude-messenger-mcp     # service state
 journalctl --user -u claude-messenger-mcp -f     # logs
-beeper targets status && beeper doctor           # Beeper Server health
+systemctl --user status beeper-desktop xvfb      # Beeper Desktop health
+curl -fsS localhost:23373/v1/info                # Client API is answering
 cd ~/claude-messenger && git pull && npm ci && npm run build \
   && systemctl --user restart claude-messenger-mcp   # upgrade
 ```
 
+To re-authenticate Beeper later, bring the sign-in surface back up, log in
+through the browser, then take it down again:
+
+```sh
+systemctl --user enable --now x11vnc novnc
+sudo tailscale serve --bg --https 8443 http://127.0.0.1:6080
+# ... sign in at https://<host>.<tailnet>.ts.net:8443 ...
+sudo tailscale serve --https 8443 off
+systemctl --user disable --now novnc x11vnc
+```
+
 ## Known caveats
 
-- **Beeper Server is beta, and the CLI currently installs the NIGHTLY
-  channel** (the released `beeper-cli` still hardcodes staging/nightly for
-  server installs even though stable server artifacts started appearing on
-  the production endpoint in July 2026). Nightly has real blast radius —
-  [beeper/cli#21](https://github.com/beeper/cli/issues/21) reports a nightly
-  migration that wiped cloud-bridge connections account-wide. If that risk
-  is unacceptable, use the GA fallback: regular **Beeper Desktop with Remote
-  Access** on any always-on machine — Claude Messenger doesn't care which
-  one serves port 23373 (`docs/SETUP.md`, Option C).
-- Plan for ~2 GB RAM. Idle footprint is a few hundred MB, but 1 GB hosts
-  are marginal without swap.
-- The exact Beeper CLI subcommand for minting an access token may differ
-  across CLI versions (it's evolving); the script prompts you to paste the
-  token and `doctor` verifies it immediately.
+- **Plan for 4 GB RAM.** Beeper Desktop is an Electron app; with Xvfb it idles
+  around 0.5–0.8 GB, on top of Claude Messenger's own footprint. 2 GB hosts
+  are not viable for this topology.
+- **Beeper Desktop must stay signed in.** If the account is signed out or the
+  E2EE device is invalidated, the Client API keeps answering but returns no
+  decryptable history — `doctor` catches this, so run it after any incident.
+- The sign-in surface (x11vnc + noVNC) is loopback-bound and should stay
+  disabled outside of an actual login. A VNC view of a signed-in Beeper is
+  equivalent to holding the account.
 - One Beeper account per host.

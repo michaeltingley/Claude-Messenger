@@ -65,23 +65,108 @@ if ! tailscale status >/dev/null 2>&1; then
 fi
 ok "tailscale up ($(tailscale ip -4 2>/dev/null | head -1 || echo 'ip pending'))"
 
-say "4/7 Beeper Server (headless, official)"
-if ! command -v beeper >/dev/null; then
-  sudo npm install -g beeper-cli >/dev/null
-fi
+say "4/7 Beeper Desktop (headless, under Xvfb)"
+# Deliberately NOT `beeper setup --server --install`. beeper/cli#21 is open and
+# unanswered: on a legacy cloud-bridge account that path deleted every bridge
+# connection (WhatsApp, Telegram, Google Messages) across ALL devices, and its
+# chats API returned empty results. Beeper Desktop serves the identical Client
+# API on the same port, so nothing above the provider seam changes.
 if ! curl -fsS http://127.0.0.1:23373/v1/info >/dev/null 2>&1; then
-  echo "Logging into your Beeper account — you'll be emailed a code. NOTE: Beeper Server"
-  echo "is beta (staging/nightly artifacts); if this step misbehaves, see DEPLOY.md's"
-  echo "fallback (Beeper Desktop + Remote Access on an always-on machine)."
-  read -rp "Beeper account email: " BEEPER_EMAIL
-  beeper setup --server --install --email "$BEEPER_EMAIL"
-  echo "Unlock E2EE so the server can read your encrypted history:"
-  beeper verify recovery-key
-  beeper doctor || warn "beeper doctor reported issues — continuing; re-run it after setup"
-  beeper targets enable
+  case "$(uname -m)" in
+    aarch64|arm64) BEEPER_ARCH=arm64 ;;
+    x86_64|amd64)  BEEPER_ARCH=x64 ;;
+    *) die "unsupported architecture $(uname -m)" ;;
+  esac
+
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq xvfb x11vnc novnc websockify libfuse2t64 \
+    libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 \
+    libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libxcomposite1 \
+    libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation
+
+  # Extracted rather than run as an AppImage so systemd needs no FUSE.
+  sudo mkdir -p /opt/beeper && sudo chown "$USER" /opt/beeper
+  curl -fsSL -o /opt/beeper/Beeper.AppImage \
+    "https://api.beeper.com/desktop/download/linux/${BEEPER_ARCH}/stable/com.automattic.beeper.desktop"
+  chmod +x /opt/beeper/Beeper.AppImage
+  (cd /opt/beeper && ./Beeper.AppImage --appimage-extract >/dev/null)
+
+  mkdir -p "$HOME/.config/systemd/user"
+  cat > "$HOME/.config/systemd/user/xvfb.service" <<'UNIT'
+[Unit]
+Description=Virtual framebuffer for Beeper Desktop
+[Service]
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x900x24 -nolisten tcp
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=default.target
+UNIT
+  cat > "$HOME/.config/systemd/user/beeper-desktop.service" <<'UNIT'
+[Unit]
+Description=Beeper Desktop (headless) — serves the Client API on :23373
+Requires=xvfb.service
+After=xvfb.service
+[Service]
+Environment=DISPLAY=:99
+ExecStart=/opt/beeper/squashfs-root/AppRun --no-sandbox --disable-gpu
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target
+UNIT
+  # Loopback-only; `tailscale serve` is what makes it reachable, and only to
+  # the user's own tailnet. Disable both once sign-in is done.
+  cat > "$HOME/.config/systemd/user/x11vnc.service" <<'UNIT'
+[Unit]
+Description=x11vnc on loopback (one-time Beeper GUI sign-in)
+Requires=xvfb.service
+After=xvfb.service
+[Service]
+Environment=DISPLAY=:99
+ExecStart=/usr/bin/x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target
+UNIT
+  cat > "$HOME/.config/systemd/user/novnc.service" <<'UNIT'
+[Unit]
+Description=noVNC bridge so the sign-in works from a browser
+Requires=x11vnc.service
+After=x11vnc.service
+[Service]
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target
+UNIT
+
+  sudo loginctl enable-linger "$USER"
+  systemctl --user daemon-reload
+  systemctl --user enable --now xvfb.service beeper-desktop.service \
+    x11vnc.service novnc.service
+
+  sudo tailscale serve --bg --https 8443 http://127.0.0.1:6080 || \
+    warn "tailscale serve failed — sign in via an SSH tunnel to 127.0.0.1:6080 instead"
+
+  echo
+  echo "Open this on any device in your tailnet and sign in to Beeper there:"
+  tailscale status --json 2>/dev/null | grep -o '"DNSName":"[^"]*"' | head -1 |
+    sed 's/.*:"/  https:\/\//; s/\.$/:8443/' || echo "  https://<this-host>.<tailnet>.ts.net:8443"
+  echo "Your emailed login code and recovery key are typed into the app directly."
+  read -rp "Press Enter once Beeper has finished syncing your accounts... " _
+
+  # Waiting beats assuming: the API only answers once the app is actually up.
+  for _ in $(seq 1 30); do
+    curl -fsS http://127.0.0.1:23373/v1/info >/dev/null 2>&1 && break
+    sleep 2
+  done
 fi
-sudo loginctl enable-linger "$USER"
-ok "Beeper Server on http://127.0.0.1:23373"
+curl -fsS http://127.0.0.1:23373/v1/info >/dev/null 2>&1 ||
+  die "Beeper Desktop is not answering on 127.0.0.1:23373 — check 'systemctl --user status beeper-desktop'"
+ok "Beeper Desktop on http://127.0.0.1:23373"
 
 say "5/7 Claude Messenger"
 if [ ! -d "$INSTALL_DIR/.git" ]; then

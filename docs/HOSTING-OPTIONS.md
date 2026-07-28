@@ -6,19 +6,20 @@ container PaaS, owned hardware, and Beeper Server's actual requirements.
 
 ## What the workload needs (verified)
 
-- **~2 GB RAM comfortably; 1 GB is marginal** (measured idle ~240 MB for
-  beeper-server, but headroom matters; swap tolerated)
+- **~4 GB RAM** (revised upward 2026-07-28). The earlier ~2 GB figure assumed
+  beeper-server's ~240 MB idle; that path is abandoned as unsafe, and Beeper
+  Desktop under Xvfb idles ~0.5–0.8 GB instead. This invalidates the 1 GB
+  options below — GCP e2-micro and Oracle's E2.1.Micro no longer qualify.
 - **arm64 and x86_64 both fine** — arm64 server artifacts are published
 - **Outbound-only networking** — no inbound ports, works behind any NAT;
   residential internet is fine
 - **Persistent disk is non-negotiable** — the data dir holds Matrix E2EE
   device keys; losing it means re-verifying the device
-- ⚠ The released `beeper-cli` still installs the **nightly** channel for
-  server installs (stable artifacts appeared on Beeper's production
-  endpoint 2026-07-08 but the CLI hasn't flipped yet). Nightly has caused
-  one account-level data-loss incident
-  ([beeper/cli#21](https://github.com/beeper/cli/issues/21)). GA fallback:
-  Beeper Desktop + Remote Access behind Tailscale.
+- ⚠ **Beeper Server is not used at all** — see `DEPLOY.md`.
+  [beeper/cli#21](https://github.com/beeper/cli/issues/21) is open and
+  unanswered: it deleted a legacy account's bridge connections across every
+  device, and its chats API returned empty. The host runs **Beeper Desktop
+  headless under Xvfb** instead, which changes the RAM figure below.
 - **iMessage bridging requires macOS on-device** — no Linux host of any
   kind provides it ([Beeper help](https://help.beeper.com/en_US/chat-networks/new-imessage-on-macos-getting-started-guide))
 
