@@ -8,8 +8,13 @@ so it survives session death and either session can read it._
 ## The two peers
 
 - **A — orchestrator.** Claude Code on the web (CCR cloud container). Drives
-  cloud work: git, GitHub, provisioning, PR merges. Cannot use a browser
-  (egress proxy resets Chromium). Cannot restart itself with CLI flags.
+  cloud work: git, GitHub, provisioning, PR merges. Can browse headless:
+  Playwright with the preinstalled Chromium (`/opt/pw-browsers`), launched with
+  `proxy: {server: process.env.HTTPS_PROXY}`, loaded https://example.com
+  (HTTP 200, 2026-10-08), overturning the earlier "proxy resets Chromium" note.
+  But bot-protected sites block its datacenter IP (www.hims.com returned a
+  Cloudflare "Just a moment..." 403 challenge) and it has no logged-in
+  sessions. Cannot restart itself with CLI flags.
 - **B — workhorse.** Local Claude Code on the user's Mac. Real browser +
   Computer Use, Bun, `gh`, unrestricted local tooling. A Remote-Control
   "bridge" session with a cloud-addressable tagged id.
