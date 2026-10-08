@@ -62,12 +62,16 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 79 tests / 11 files.
+- `npm test` must be green before any push. Currently 100 tests / 13 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
 - `FakeMessenger` (`test/fake-messenger.ts`) is how anything above `providers/`
   is tested. Needing a real Beeper to test a policy change means the seam leaked.
+- Deploy scripts run as real subprocesses against shimmed `tailscale` and
+  `systemctl` CLIs (`test/signin-surface.integration.test.ts`). The shims
+  reject any invocation they don't model, so a script can't drift to an
+  untested CLI form. A real provision still needs a VM.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene

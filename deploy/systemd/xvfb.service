@@ -1,0 +1,13 @@
+# systemd user unit: the virtual display Beeper Desktop renders into.
+# Beeper Desktop is Electron and needs an X server even though nobody looks
+# at it. Installed by deploy/bootstrap.sh and deploy/cloud-init.yaml.
+[Unit]
+Description=Virtual framebuffer for Beeper Desktop
+
+[Service]
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x900x24 -nolisten tcp
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -12,7 +12,7 @@ cloud or local. Read `CLAUDE.md` first, then this, then
     intent/outcome audit.
   - Curated MCP server.
   - CLI: `doctor`, read, `send`, `serve`.
-  - 79 tests.
+  - 100 tests.
 - **Hosted mode**:
   - HTTP MCP transport with bearer auth (`serve --http`).
   - `deploy/bootstrap.sh` and `deploy/cloud-init.yaml`.
@@ -21,7 +21,11 @@ cloud or local. Read `CLAUDE.md` first, then this, then
 - **Safe install path (#8, #9)**:
   - Every install path runs **Beeper Desktop headless under Xvfb**, with
     noVNC on loopback.
-  - The one-time sign-in surface is exposed via `tailscale serve`.
+  - The one-time sign-in surface is opened and closed only by
+    `deploy/signin-surface.sh`, published to the tailnet only.
+    - It is never enabled at boot.
+    - Bootstrap closes it once `doctor` passes.
+  - Systemd units are single-sourced in `deploy/systemd/`.
   - Beeper Server / `beeper-cli` is gone everywhere.
     [beeper/cli#21](https://github.com/beeper/cli/issues/21) wiped a legacy
     account's bridges across all devices.

@@ -1,0 +1,18 @@
+# systemd user unit: Beeper Desktop, headless, serving the Client API on
+# 127.0.0.1:23373. Installed by deploy/bootstrap.sh and deploy/cloud-init.yaml.
+[Unit]
+Description=Beeper Desktop (headless) — serves the Client API on :23373
+Requires=xvfb.service
+After=xvfb.service
+
+[Service]
+Environment=DISPLAY=:99
+# --no-sandbox is required because the Chromium sandbox needs either user
+# namespaces or a setuid helper, neither of which survives the AppImage
+# extraction we do to avoid a FUSE dependency.
+ExecStart=/opt/beeper/squashfs-root/AppRun --no-sandbox --disable-gpu
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -79,13 +79,18 @@ installed — you are doing configuration and logins):
 1. `sudo tailscale up` → give the user the printed URL to click.
 2. Sign Beeper Desktop in. **Do not run `beeper setup --server --install`** —
    see the warning in docs/DEPLOY.md; it can delete the user's cloud bridge
-   connections across every device. cloud-init already has Beeper Desktop
-   running headless under Xvfb with noVNC on loopback, so:
-   - `sudo tailscale serve --bg --https 8443 http://127.0.0.1:6080`
-   - Give the user the resulting tailnet HTTPS URL. They open it in a
-     browser, see the Beeper window, and sign in themselves — relaying
-     nothing. The emailed login code and the recovery key are typed by them,
-     directly into the app, and never pass through chat.
+   connections across every device.
+
+   cloud-init already has Beeper Desktop running headless under Xvfb, with
+   the sign-in surface installed but closed. So:
+   - Run `~/claude-messenger/deploy/signin-surface.sh up`. It starts the
+     loopback VNC/noVNC pair and publishes it to the tailnet only.
+   - Give the user the URL it prints. They open it in a browser, see the
+     Beeper window, and sign in themselves, relaying nothing. They type the
+     emailed login code and the recovery key directly into the app, so
+     neither passes through chat.
+   - Have them make sure "Beeper Desktop API" is switched on in Beeper's
+     settings.
    - Confirm with them when the account list has finished syncing.
 3. Mint the Beeper access token in that same browser session: Beeper
    Settings → Integrations → "+" next to Approved connections. Have the user
@@ -97,12 +102,13 @@ installed — you are doing configuration and logins):
    `BEEPER_BASE_URL=http://127.0.0.1:23373`, absolute policy/audit/state
    paths, and a generated `CLAUDE_MESSENGER_MCP_TOKEN` (`openssl rand -hex 32`).
    Run `node dist/cli/main.js policy-init` then `doctor` — must be green.
-5. Now that `doctor` is green, tear the sign-in surface back down — it exists
-   only for that one login, and a VNC view of a logged-in Beeper is exactly
-   what you don't want left running:
-   `sudo tailscale serve --https 8443 off` and
-   `systemctl --user disable --now novnc.service x11vnc.service`
-   (Re-enable them the same way if the account ever needs re-authenticating.)
+5. Now that `doctor` is green, close the sign-in surface:
+   `~/claude-messenger/deploy/signin-surface.sh down`.
+   - It exists only for that one login, and a VNC view of a logged-in Beeper
+     is exactly what you don't want left running.
+   - The script verifies that nothing is left exposed. If it exits non-zero,
+     stop and fix that before going on.
+   - If the account ever needs re-authenticating, reopen it with `up`.
 6. Install the systemd user unit (see bootstrap.sh's sed line for the
    `__NODE__`/`__INSTALL_DIR__`/`__PORT__` substitutions), enable + start,
    verify `/healthz`, then `sudo tailscale serve --bg http://127.0.0.1:8484`.

@@ -1,0 +1,19 @@
+# systemd user unit: half of Beeper's one-time sign-in surface (VNC view of
+# the Xvfb display, loopback only). Never enable it at boot. It is started and
+# stopped ONLY by deploy/signin-surface.sh, because a VNC view of a signed-in
+# Beeper is equivalent to holding the account.
+[Unit]
+Description=x11vnc on loopback (one-time Beeper GUI sign-in)
+Requires=xvfb.service
+After=xvfb.service
+
+[Service]
+Environment=DISPLAY=:99
+ExecStart=/usr/bin/x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw
+Restart=always
+RestartSec=5
+
+# Kept so `systemctl disable` can clean up hosts provisioned before the
+# surface was managed by deploy/signin-surface.sh (they enabled it at boot).
+[Install]
+WantedBy=default.target
