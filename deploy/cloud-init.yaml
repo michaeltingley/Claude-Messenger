@@ -2,8 +2,9 @@
 # Claude Messenger — unattended host provisioning (any cloud).
 #
 # Paste this whole file into the instance-creation form's user-data box
-# (Oracle: Advanced options -> Management -> Cloud-init script; Hetzner:
-# Cloud config). On first boot it installs, with NO terminal work: Node 22,
+# (usually labeled "user data" or "cloud-init"; Contabo's API takes it as
+# `userData`). OVHcloud VPS has no such field; run deploy/bootstrap.sh over
+# SSH there instead. On first boot it installs, with NO terminal work: Node 22,
 # Tailscale, Beeper Desktop (headless under Xvfb), Claude Messenger (cloned
 # + built), and Claude Code — turning the VM into a machine Claude itself
 # can operate.

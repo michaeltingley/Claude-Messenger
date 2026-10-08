@@ -39,16 +39,29 @@ the public internet; the Beeper token never leaves the host.
 
 ## The zero-terminal path (recommended)
 
-Paste `deploy/cloud-init.yaml` into the VM-creation form's user-data box
-(Oracle: Advanced options → Management → Cloud-init script). First boot
-installs everything — Node, Tailscale, Beeper CLI, Claude Messenger
-(built), and **Claude Code**. Then connect once (SSH or the cloud
-console), run `claude`, sign in, and say *"Finish setting up Claude
-Messenger on this machine."* The on-box Claude session joins your
-tailnet, walks the Beeper login with you (you relay the emailed code and
-recovery key), and starts the service. From then on, all operations —
-upgrades, policy edits, diagnostics — are Claude sessions on the host,
-not terminal work.
+Paste `deploy/cloud-init.yaml` into the VM-creation form's user-data box.
+It is usually labeled "user data" or "cloud-init". OVHcloud VPS has no such
+field, so use the one-command path below instead.
+
+First boot installs everything:
+
+- Node
+- Tailscale
+- Beeper Desktop (headless under Xvfb)
+- Claude Messenger (built)
+- **Claude Code**
+
+Then connect once (SSH or the cloud console), run `claude`, sign in, and say
+*"Finish setting up Claude Messenger on this machine."* The on-box Claude
+session:
+
+1. joins your tailnet;
+2. opens the Beeper sign-in to you over the tailnet, where you type the
+   emailed code and your recovery key into the app yourself;
+3. starts the service.
+
+From then on, all operations (upgrades, policy edits, diagnostics) are
+Claude sessions on the host, not terminal work.
 
 ## The one command (manual alternative)
 
@@ -58,17 +71,27 @@ SSH into the fresh machine and run:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/michaeltingley/Claude-Messenger/main/deploy/bootstrap.sh)"
 ```
 
-(This form keeps stdin attached to your terminal — the script prompts for
-the Beeper login code and recovery key. A plain `curl | bash` also works;
-the script rebinds stdin to the tty itself.)
+This form keeps stdin attached to your terminal, because the script prompts
+you to:
 
-It installs Node 22, Tailscale, and the Beeper CLI; stands up headless
-Beeper Server (email-code login + recovery-key E2EE unlock — the two
-interactive prompts); clones and builds Claude Messenger; writes `.env`
-with a freshly generated MCP bearer token; runs `doctor` end to end;
-installs a boot-persistent systemd user service; and exposes the MCP
-endpoint on your tailnet over HTTPS via `tailscale serve`. Re-running the
-script is safe — completed steps are skipped.
+- join Tailscale;
+- sign Beeper in through the browser;
+- paste the Beeper access token you mint in the app.
+
+A plain `curl | bash` also works; the script rebinds stdin to the tty itself.
+
+What the script does:
+
+1. Installs Node 22, Tailscale, and Beeper Desktop (headless under Xvfb). For
+   the one-time login, it publishes a loopback noVNC sign-in page on your
+   tailnet.
+2. Clones and builds Claude Messenger.
+3. Writes `.env` with a freshly generated MCP bearer token.
+4. Runs `doctor` end to end.
+5. Installs a boot-persistent systemd user service.
+6. Exposes the MCP endpoint on your tailnet over HTTPS via `tailscale serve`.
+
+Re-running the script is safe: completed steps are skipped.
 
 At the end it prints the exact `claude mcp add …` command (URL + bearer
 token) to connect Claude Code, and the same URL/header works for Claude
