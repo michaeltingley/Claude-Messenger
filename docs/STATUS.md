@@ -54,16 +54,16 @@ passed end to end: config → connection → auth → policy.
     permanent.
   - The user rejected PAYG because its budgets only alert; there is no hard
     cap.
-  - Leftovers: an empty VCN and subnet in `us-sanjose-1`. They are free and
-    can be deleted.
+  - Leftovers: the network in `us-sanjose-1` (VCN, internet gateway,
+    subnet). It is free and can be deleted.
 - **Hetzner: out.**
   - US CPX21 is now $38.09/mo after two 2026 price rises.
   - Its ~€4 EU plans are "currently unavailable".
-  - Beeper's own backend is in the EU, which settles US East as the region.
-    See `docs/HOSTING-OPTIONS.md`.
 - **Recommended: OVHcloud US VPS-1 in Vint Hill, VA, at $5.35/mo month to
   month.**
   - 2 vCPU / 4 GB / 40 GB NVMe; IPv4 and traffic included.
+  - US East because Beeper's own backend is in the EU (Hetzner + AWS
+    Frankfurt). See `docs/HOSTING-OPTIONS.md`.
   - Upgrade in place to VPS-2 (8 GB) when the context engine needs it.
   - **Waiting on the user's go-ahead.** The order, payment, and any OVH ID
     verification are theirs.
@@ -71,8 +71,9 @@ passed end to end: config → connection → auth → policy.
 ## NEXT ACTION (for the picking-up session)
 
 1. The user orders VPS-1: Virginia, Ubuntu 24.04, monthly billing.
-   - The VPS has no cloud-init user-data. Access comes from an SSH public key
-     added at order time, or from `rebuild` with `postInstallScript`.
+   - The VPS has no cloud-init user-data. Put an SSH public key on it with the
+     OVH control panel's reinstall, or with the API's `rebuild`, which also
+     takes `postInstallScript`.
    - Generate a fresh keypair for this. Keys in a cloud container die with
      the container (see gotchas).
 2. Over SSH, run the `deploy/bootstrap.sh` flow:

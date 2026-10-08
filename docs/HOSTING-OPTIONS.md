@@ -14,7 +14,12 @@ the public endpoints listed under [Re-verifying](#re-verifying).
   Node MCP service and headroom. 2 GB plans are out.
 - **A public IPv4 address.** `api.beeper.com` and `github.com` publish no AAAA
   records (checked 2026-10-08), so IPv6-only plans cannot reach them.
-- **A persistent disk.** It holds the Matrix E2EE device keys.
+- **A persistent disk, backed up off-box.** It holds the Matrix E2EE device
+  keys; losing them means re-verifying the device.
+- **A provider you trust with plaintext.** Beeper Desktop keeps message
+  history on that disk, along with the E2EE keys that decrypt it. The
+  provider's own security, including its control panel, is part of the
+  threat model, not just its price.
 - **Outbound-only networking.** Inbound access rides Tailscale.
 - **arm64 or x86_64.** Beeper ships official AppImages for both.
 - **Never Beeper Server.** [beeper/cli#21](https://github.com/beeper/cli/issues/21)
@@ -82,9 +87,9 @@ the live site blocks automated fetches. **[S]** secondary source.
   - CX and CAX (the ~€4 4 GB plans this doc used to recommend) were always
     EU-only. Every one now shows "This product is currently unavailable" [V].
   - US locations sell only CPX (shared AMD) and CCX (dedicated AMD) [V].
-- **OVHcloud US.** It replaced its lineup with "2027" models. VPS-1 is now
-  2 vCore / 4 GB / 40 GB NVMe, unlimited traffic at 500 Mbps, with no setup
-  fee [V].
+- **OVHcloud US.** It sells "2027"-generation VPS models (plan codes
+  `vps-2027-model*`). VPS-1 is 2 vCore / 4 GB / 40 GB NVMe, unlimited
+  traffic at 500 Mbps, with no setup fee [V].
 - **Raspberry Pi 5 8 GB.** It rose to ~$175 for the bare board after
   RAM-driven price hikes (+$50 in April 2026) [V].
 
@@ -111,15 +116,37 @@ the live site blocks automated fetches. **[S]** secondary source.
    - In January 2026, attackers abused a third-party control panel that many
      budget hosts share to wipe customer VMs. CloudCone confirmed it was hit
      [V]; the panel was reportedly Virtualizor [S].
-   - Providers in this segment also vanish with under 24 h notice: DediPath
-     2023, HostDare 2023 [S].
+   - Providers in this segment also vanish abruptly. DediPath gave under 24 h
+     notice in 2023, and HostDare went dark the same year [S].
 4. **Home hardware** remains the $0/low-cost alternative:
-   - A spare laptop costs nothing.
+   - A spare laptop costs nothing. Set `HandleLidSwitch=ignore` in
+     `/etc/systemd/logind.conf`, then run `deploy/bootstrap.sh`. Its battery
+     doubles as a UPS.
+   - A used 1-liter business mini PC (ThinkCentre M720q class, 8–16 GB) was
+     ~$80–110 in July 2026 [? not re-checked].
    - A used M1 Mac mini runs ~$390 once plus ~$2/mo at ~$0.40/kWh. It is the
      only route to iMessage.
    - Costs: home power and ISP outages (including utility fire-safety
      shutoffs), and physical theft exposes decrypted chats unless the disk is
      encrypted.
+
+### Disqualified (don't re-research)
+
+- **Oracle Cloud Always Free.**
+  - The home region `us-sanjose-1` returns `OUT_OF_HOST_CAPACITY` for every
+    free shape. Both the Compute Capacity Report API and real launches
+    confirmed it.
+  - Always Free exists only in the home region, and the home region is
+    permanent.
+  - Pay-as-you-go has no hard spending cap; its budgets only alert.
+- **GCP e2-micro (free).** It has 1 GB RAM, below the 4 GB floor.
+- **Container PaaS** (Fly.io, Railway, Render, Koyeb, Northflank).
+  - As of July 2026, none offered a free always-on container with a
+    persistent volume.
+  - A headless Electron GUI app under Xvfb is also the worst-case container
+    workload.
+- **IPv6-only plans.** These include Lightsail's cheaper IPv6 bundles. They
+  can't reach `api.beeper.com` or `github.com`.
 
 ## Provider operational notes
 

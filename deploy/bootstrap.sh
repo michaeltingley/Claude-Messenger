@@ -181,10 +181,10 @@ ok "built $(node dist/cli/main.js --version)"
 
 say "6/7 Configuration"
 if [ ! -f .env ]; then
-  echo "Claude Messenger needs a Beeper access token for the LOCAL server."
-  echo "Mint one with the Beeper CLI (it prints a bearer token for this target),"
-  echo "e.g. 'beeper token create' on current CLI builds — see 'beeper --help' if"
-  echo "the subcommand differs on your version."
+  echo "Claude Messenger needs an access token for Beeper Desktop's local API."
+  echo "Mint one in the same browser sign-in session: Beeper Settings ->"
+  echo "Integrations -> '+' next to \"Approved connections\". (Never via the"
+  echo "Beeper CLI: see beeper/cli#21.)"
   read -rsp "Paste Beeper access token: " BEEPER_TOKEN; echo
   MCP_TOKEN="$(openssl rand -hex 32)"
   # umask first: the file must never exist world-readable, even briefly.
