@@ -6,6 +6,19 @@ Claude Messenger host on Oracle Cloud end to end, with the user touching
 only identity ceremonies. Work top to bottom; each phase is idempotent.
 The user's kickoff prompt points here — treat this file as your task list.*
 
+> **⚠ Phases 0–2 are Oracle-specific, and Oracle is dead.** The home region
+> has a permanent capacity wall; see `docs/STATUS.md`.
+>
+> The host is now an **OVHcloud US VPS-1** (`docs/HOSTING-OPTIONS.md`). The
+> user orders it, then you pick up at Phase 3.
+>
+> OVHcloud VPS has no cloud-init user-data field, so the installs that
+> `deploy/cloud-init.yaml` performs must run another way: either
+> `deploy/bootstrap.sh` over SSH, or OVH's `rebuild` with
+> `postInstallScript`.
+>
+> Rewrite Phases 0–2 for OVH once that path has actually been run.
+
 ## What the user does vs. what you do
 
 | Step | User | You (local Claude) |
@@ -112,8 +125,13 @@ installed — you are doing configuration and logins):
 
 ## Failure etiquette
 
-Diagnose before retrying; every step here is safe to re-run. If Oracle
-capacity blocks Phase 2 for more than a day, the fallback is Hetzner CAX11
-(~€4/mo, same phases, skip the capacity dance) or the user's own always-on
-machine (skip Phases 1–2 entirely; run Phase 3 locally). Both documented in
-docs/HOSTING-OPTIONS.md.
+Diagnose before retrying; every step here is safe to re-run.
+
+If the VPS order stalls (OVH can hold new orders for ID verification), there
+are two fallbacks, both in docs/HOSTING-OPTIONS.md:
+
+- Contabo Cloud VPS 4. Its API takes cloud-init `userData`.
+- The user's own always-on machine. Run Phase 3 locally.
+
+Hetzner is no longer a fallback. Its US 4 GB plan is $38/mo, and its EU 4 GB
+plans are unavailable.

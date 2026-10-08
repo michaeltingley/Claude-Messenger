@@ -107,8 +107,8 @@ its `NO_PROXY` covers the tailnet CIDR and it has no tailnet interface).
 
 ### Phase 0 (bootstrap, until the host exists): a GitHub mailbox thread
 
-Phase 1 rides the always-on host, which does not exist yet (gated on the Hetzner
-token). Until then, the two sessions need *just enough* channel to coordinate
+Phase 1 rides the always-on host, which does not exist yet (gated on the user
+ordering the VPS — `docs/STATUS.md`). Until then, the two sessions need *just enough* channel to coordinate
 standing the host up. That bootstrap is a dedicated GitHub **"mailbox PR"** whose
 comment thread is a durable log: classifier-safe for A (a first-class GitHub
 tool call), and A gets a push-ish inbox via `subscribe_pr_activity`. It has **no
@@ -323,7 +323,8 @@ relay-only token (it lands in access logs), never the MCP or Beeper token.
 
 ### Phase 1 — the real channel (once the host is up)
 
-5. Provision the host (blocked on the Hetzner token) and land the Beeper login.
+5. Provision the host (blocked on the user ordering the VPS — `docs/STATUS.md`)
+   and land the Beeper login.
 6. Add the relay to `src/mcp/http.ts` per the detail above; publish only
    `/relay/*` via Funnel; mint the scoped relay token.
 7. **A:** `Monitor(ws:{wss://<host-funnel>/relay/stream?peer=A&token=…})` for

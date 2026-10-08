@@ -61,6 +61,8 @@ the live site blocks automated fetches. **[S]** secondary source.
 | OVHcloud US VPS-2 | 4 / 8 GB / 75 GB NVMe | same | 10.00 · 9.50 · 8.50 [V] | same | Upgrade path for the context engine |
 | Contabo Cloud VPS 4 | 4 / 8 GB / 100 GB SSD | Seattle, St. Louis, NY | **8.20** in Seattle, incl. a $1.60 location fee · 7.21 (12-mo) [Va] | API + cloud-init `userData` | Fallback; reputation is poor |
 | netcup VPS 500 G12.5 | 2 / 4 GB / 64 GB | Manassas VA | ~7.59 (24-mo, ~$182 upfront) · ~9.91 monthly [V calc / ?] | No API to order servers | Long lock-in, manual ordering |
+| Hostinger KVM 1 | 1 / 4 GB / 50 GB NVMe | Phoenix, Boston | 6.49 (24-mo prepaid promo), **renews at 11.99** · 9.99 → 19.49 monthly [V] | API purchase/rebuild + post-install script | Promo cliff; 1 vCPU |
+| IONOS VPS M+ | 2 / 4 GB / 120 GB NVMe | Kansas City area | 5 for 3 months on a 12-mo term, **then 14** [V] | No API to create a VPS | Promo cliff |
 | RackNerd 4 GB KVM | 3 / 4 GB / 60 GB | San Jose, LA, Seattle | 5.00 ($59.99/yr prepaid) [V] | No API | Budget-host risk (see below) |
 | HostHatch / Hostodo | 2 / 4 GB / 20 or 64 GB | LA / Las Vegas | 6 / 7 [V] | Limited | Budget-host risk |
 | UpCloud Starter | 1 / 4 GB / 30 GB | San Jose | 12.00 [V] | API + cloud-init | Over budget; 1 vCPU |
