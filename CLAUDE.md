@@ -3,8 +3,9 @@
 _Read this first, then `docs/STATUS.md` for where the project currently stands._
 
 This file exists because engineering standards kept living only in chat
-transcripts, which do not survive a session handoff. Sessions have already been
-lost this way. **If a standard matters, it belongs here, not in a conversation.**
+transcripts, which do not reliably survive a session handoff. Sessions have
+already been lost this way. **If a standard matters, it belongs here, not in a
+conversation.**
 
 "Standards" describes what the codebase already does, derived from the code.
 "Standing directives" is what the user has said directly — recovered from a
@@ -178,8 +179,13 @@ to hold the ML expertise here, not to be handed it.
 
 ## Environment notes
 
-- **Cloud sessions have no access to prior transcripts.** Only the repo carries
-  forward. Assume the next session knows nothing that isn't committed.
+- **The repo is the durable handoff; transcripts are only a fallback.** Cloud
+  sessions can read the user's other cloud and bridge sessions' transcripts,
+  user and assistant messages included, through the claude-code-remote MCP
+  tools `list_sessions` and `list_events`. Cowork sessions are not listed:
+  `list_sessions` with `tags` returns "tags filter is not currently available"
+  (checked 2026-10-08). Use transcripts to recover something that was missed,
+  then commit it. Assume the next session knows nothing that isn't committed.
 - iMessage bridging requires macOS on-device; no Linux host provides it.
 - The Beeper CLI still installs the **nightly** server channel (data-loss risk,
   beeper/cli#21). Beeper Desktop + Remote Access is the GA fallback.
