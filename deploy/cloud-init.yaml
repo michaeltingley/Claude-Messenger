@@ -62,83 +62,6 @@ packages:
   - libcairo2
   - fonts-liberation
 
-write_files:
-  # Virtual display. Beeper Desktop is Electron and needs an X server even
-  # though nobody is looking at it.
-  - path: /home/ubuntu/.config/systemd/user/xvfb.service
-    owner: ubuntu:ubuntu
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=Virtual framebuffer for Beeper Desktop
-
-      [Service]
-      ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x900x24 -nolisten tcp
-      Restart=always
-      RestartSec=2
-
-      [Install]
-      WantedBy=default.target
-
-  - path: /home/ubuntu/.config/systemd/user/beeper-desktop.service
-    owner: ubuntu:ubuntu
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=Beeper Desktop (headless) — serves the Client API on :23373
-      Requires=xvfb.service
-      After=xvfb.service
-
-      [Service]
-      Environment=DISPLAY=:99
-      # --no-sandbox is required because the Chromium sandbox needs either
-      # user namespaces or a setuid helper, neither of which survives the
-      # AppImage extraction we do to avoid a FUSE dependency.
-      ExecStart=/opt/beeper/squashfs-root/AppRun --no-sandbox --disable-gpu
-      Restart=always
-      RestartSec=5
-
-      [Install]
-      WantedBy=default.target
-
-  # VNC + noVNC exist ONLY for the one-time Beeper sign-in, which needs a
-  # real screen. Both bind loopback; `tailscale serve` is what makes them
-  # reachable, and only from the user's own tailnet. Never expose these.
-  - path: /home/ubuntu/.config/systemd/user/x11vnc.service
-    owner: ubuntu:ubuntu
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=x11vnc on loopback (one-time Beeper GUI sign-in)
-      Requires=xvfb.service
-      After=xvfb.service
-
-      [Service]
-      Environment=DISPLAY=:99
-      ExecStart=/usr/bin/x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw
-      Restart=always
-      RestartSec=5
-
-      [Install]
-      WantedBy=default.target
-
-  - path: /home/ubuntu/.config/systemd/user/novnc.service
-    owner: ubuntu:ubuntu
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=noVNC bridge so the sign-in works from a browser
-      Requires=x11vnc.service
-      After=x11vnc.service
-
-      [Service]
-      ExecStart=/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900
-      Restart=always
-      RestartSec=5
-
-      [Install]
-      WantedBy=default.target
-
 runcmd:
   # Node 22 (nodesource)
   - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -164,10 +87,17 @@ runcmd:
   # Claude Messenger, cloned and built for the default user
   - sudo -u ubuntu git clone https://github.com/michaeltingley/Claude-Messenger.git /home/ubuntu/claude-messenger
   - sudo -u ubuntu bash -c 'cd /home/ubuntu/claude-messenger && npm ci --no-audit --no-fund && npm run build'
+  # systemd user units come from deploy/systemd/, the single source shared
+  # with bootstrap.sh. x11vnc/noVNC are installed but never enabled: the
+  # Beeper sign-in surface is opened and closed only by
+  # deploy/signin-surface.sh, because a VNC view of a signed-in Beeper is
+  # equivalent to holding the account.
+  - sudo -u ubuntu mkdir -p /home/ubuntu/.config/systemd/user
+  - sudo -u ubuntu bash -c 'for u in xvfb beeper-desktop x11vnc novnc; do install -m 644 /home/ubuntu/claude-messenger/deploy/systemd/$u.service /home/ubuntu/.config/systemd/user/; done'
   # User services must survive logout/reboot
   - loginctl enable-linger ubuntu
   - sudo -u ubuntu XDG_RUNTIME_DIR=/run/user/$(id -u ubuntu) systemctl --user daemon-reload
-  - sudo -u ubuntu XDG_RUNTIME_DIR=/run/user/$(id -u ubuntu) systemctl --user enable --now xvfb.service beeper-desktop.service x11vnc.service novnc.service
+  - sudo -u ubuntu XDG_RUNTIME_DIR=/run/user/$(id -u ubuntu) systemctl --user enable --now xvfb.service beeper-desktop.service
   # Leave a signpost for the first login
   - |
     cat > /etc/motd <<'EOF'
@@ -175,9 +105,9 @@ runcmd:
     Provisioned by cloud-init. Everything is installed; nothing is
     logged in yet. To finish: run `claude`, sign in, and tell it:
       "Finish setting up Claude Messenger on this machine."
-    (It will join Tailscale, expose the Beeper sign-in screen over
-    your tailnet so you can log in from a browser, then start the
-    MCP service.)
+    (It will join Tailscale, open the Beeper sign-in screen to your
+    tailnet with deploy/signin-surface.sh so you can log in from a
+    browser, close it again, then start the MCP service.)
     ────────────────────────────────────────────────────────────────
     EOF
 

@@ -1,0 +1,17 @@
+# systemd user unit: the other half of Beeper's one-time sign-in surface
+# (noVNC, so the login works from a browser; loopback only). Never enable it
+# at boot. It is started and stopped ONLY by deploy/signin-surface.sh.
+[Unit]
+Description=noVNC bridge so the sign-in works from a browser
+Requires=x11vnc.service
+After=x11vnc.service
+
+[Service]
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900
+Restart=always
+RestartSec=5
+
+# Kept so `systemctl disable` can clean up hosts provisioned before the
+# surface was managed by deploy/signin-surface.sh (they enabled it at boot).
+[Install]
+WantedBy=default.target

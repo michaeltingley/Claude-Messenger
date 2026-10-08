@@ -29,11 +29,12 @@ the public internet; the Beeper token never leaves the host.
    home box. Size for **4 GB RAM**: Beeper Desktop is Electron and idles
    ~0.5–0.8 GB with Xvfb, so 2 GB hosts are tight. iMessage bridging needs
    macOS — use a Mac mini if that matters.
-2. **A few minutes in a browser** to sign Beeper in. cloud-init leaves the
-   app running headless with noVNC on loopback; the host exposes it over
-   your tailnet just long enough for you to log in, so the emailed code and
-   your recovery key are typed straight into the app and never relayed
-   through a chat transcript.
+2. **A few minutes in a browser** to sign Beeper in. The app runs headless,
+   and `deploy/signin-surface.sh` opens its screen to your tailnet only, just
+   long enough for you to log in.
+   - You type the emailed code and your recovery key straight into the app;
+     they are never relayed through a chat transcript.
+   - The screen closes again as soon as `doctor` passes.
 3. A free [Tailscale](https://tailscale.com) account (the script logs the
    host into your tailnet).
 
@@ -82,14 +83,16 @@ A plain `curl | bash` also works; the script rebinds stdin to the tty itself.
 
 What the script does:
 
-1. Installs Node 22, Tailscale, and Beeper Desktop (headless under Xvfb). For
-   the one-time login, it publishes a loopback noVNC sign-in page on your
-   tailnet.
-2. Clones and builds Claude Messenger.
+1. Installs Node 22 and Tailscale, then clones and builds Claude Messenger.
+2. Installs Beeper Desktop (headless under Xvfb) with the systemd units from
+   `deploy/systemd/`, and opens the sign-in screen to your tailnet for the
+   one-time login.
 3. Writes `.env` with a freshly generated MCP bearer token.
 4. Runs `doctor` end to end.
-5. Installs a boot-persistent systemd user service.
-6. Exposes the MCP endpoint on your tailnet over HTTPS via `tailscale serve`.
+5. Closes the sign-in screen again. It refuses to finish while anything is
+   still exposed.
+6. Installs a boot-persistent systemd user service.
+7. Exposes the MCP endpoint on your tailnet over HTTPS via `tailscale serve`.
 
 Re-running the script is safe: completed steps are skipped.
 
@@ -119,15 +122,17 @@ cd ~/claude-messenger && git pull && npm ci && npm run build \
   && systemctl --user restart claude-messenger-mcp   # upgrade
 ```
 
-To re-authenticate Beeper later, bring the sign-in surface back up, log in
-through the browser, then take it down again:
+Re-running `deploy/bootstrap.sh` is the full upgrade: it also refreshes the
+systemd units from `deploy/systemd/`.
+
+To re-authenticate Beeper later, open the sign-in surface, log in through the
+browser, then close it again:
 
 ```sh
-systemctl --user enable --now x11vnc novnc
-sudo tailscale serve --bg --https 8443 http://127.0.0.1:6080
-# ... sign in at https://<host>.<tailnet>.ts.net:8443 ...
-sudo tailscale serve --https 8443 off
-systemctl --user disable --now novnc x11vnc
+~/claude-messenger/deploy/signin-surface.sh up      # prints the tailnet-only URL
+# ... sign in ...
+~/claude-messenger/deploy/signin-surface.sh down    # verifies nothing is left exposed
+~/claude-messenger/deploy/signin-surface.sh status  # exit 1 = fully closed
 ```
 
 ## Known caveats
@@ -138,7 +143,8 @@ systemctl --user disable --now novnc x11vnc
 - **Beeper Desktop must stay signed in.** If the account is signed out or the
   E2EE device is invalidated, the Client API keeps answering but returns no
   decryptable history — `doctor` catches this, so run it after any incident.
-- The sign-in surface (x11vnc + noVNC) is loopback-bound and should stay
-  disabled outside of an actual login. A VNC view of a signed-in Beeper is
-  equivalent to holding the account.
+- The sign-in surface (x11vnc + noVNC) is loopback-bound and never enabled
+  at boot. It is open only between `signin-surface.sh up` and `down`, and
+  `signin-surface.sh status` checks its state. A VNC view of a signed-in
+  Beeper is equivalent to holding the account.
 - One Beeper account per host.
