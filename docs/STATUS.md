@@ -1,72 +1,103 @@
 # Project Status & Session Handoff
 
-_Last updated: 2026-07-10. This file is the pick-up point for any new session
-(cloud or local). Read it first, then `docs/HOSTING-OPTIONS.md` and
-`docs/RUNBOOK-HOME-SETUP.md`._
+_Last updated: 2026-10-08. This file is the pick-up point for any new session,
+cloud or local. Read `CLAUDE.md` first, then this, then
+`docs/HOSTING-OPTIONS.md`._
 
-## What's done and merged (`main`, PRs #1–#5)
+## What's done and merged (`main`)
 
-- **Foundation**: provider-agnostic core, Beeper Client API adapter, policy +
-  audit layer (read-only default, fail-closed rate limiting, intent/outcome
-  audit), curated MCP server, CLI (`doctor`/read/`send`/`serve`), 79 tests.
-- **Hosted mode**: HTTP MCP transport with bearer auth (`serve --http`),
-  one-command `deploy/bootstrap.sh`, `deploy/cloud-init.yaml` (zero-terminal
-  provisioning), hardened systemd unit, `docs/DEPLOY.md`.
-- **Research**: `docs/CONTEXT-ENGINE-RESEARCH.md` + `docs/research/` (8 lanes),
-  `docs/HOSTING-OPTIONS.md`.
+- **Foundation**:
+  - Provider-agnostic core and the Beeper Client API adapter.
+  - Policy + audit layer: read-only default, fail-closed rate limiting,
+    intent/outcome audit.
+  - Curated MCP server.
+  - CLI: `doctor`, read, `send`, `serve`.
+  - 79 tests.
+- **Hosted mode**:
+  - HTTP MCP transport with bearer auth (`serve --http`).
+  - `deploy/bootstrap.sh` and `deploy/cloud-init.yaml`.
+  - Hardened systemd unit.
+  - `docs/DEPLOY.md`.
+- **Safe install path (#8, #9)**:
+  - Every install path runs **Beeper Desktop headless under Xvfb**, with
+    noVNC on loopback.
+  - The one-time sign-in surface is exposed via `tailscale serve`.
+  - Beeper Server / `beeper-cli` is gone everywhere.
+    [beeper/cli#21](https://github.com/beeper/cli/issues/21) wiped a legacy
+    account's bridges across all devices.
+- **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
+  directives verbatim.
+- **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
+  - Destination: a presence-aware WebSocket relay on the host.
+  - Bootstrap: a GitHub mailbox.
+- **Research**:
+  - Context engine: `docs/CONTEXT-ENGINE-RESEARCH.md` and `docs/research/`.
+  - Hosting: `docs/HOSTING-OPTIONS.md`, re-verified 2026-10-08.
 
 ## VERIFIED LIVE (2026-07-10)
 
 On the user's laptop, against real Beeper Desktop, `claude-messenger doctor`
-passed end-to-end: config → connection (Beeper 4.2.977) → auth → policy, with
-**10 real accounts** visible under the read-only default policy (WhatsApp,
-Signal, Instagram, Discord, LinkedIn, Facebook, Google Messages/Chat/Voice,
-Matrix). The stack works against real data. The token used was a throwaway
-24h OAuth token minted locally — NOT needed for the host.
+passed end to end: config → connection → auth → policy.
+
+- **10 real accounts** were visible under the read-only default policy:
+  WhatsApp, Signal, Instagram, Discord, LinkedIn, Facebook, Google
+  Messages/Chat/Voice, and Matrix.
+- The stack works against real data.
 
 ## Current goal: stand up the always-on host
 
-**Oracle Cloud Always Free was attempted and abandoned.** Two blocking
-free-tier problems (both predicted in `docs/HOSTING-OPTIONS.md`):
-1. **ARM capacity**: `us-sanjose-1` returned "Out of host capacity" on every
-   attempt (35 min / 7 retries). Single-AD region, no PAYG priority.
-2. **Idle reclamation**: pure-free instances get reclaimed when idle — a
-   low-traffic message bridge trips all three (CPU/net/mem <20%) thresholds.
-   Unacceptable for an always-on service.
-
-### DECISION: pivot off pure-free Oracle. Recommended → **Hetzner**.
-
-- **Hetzner (~€4/mo, recommended)**: simple API token (no browser-SSO/MFA),
-  so fully provisionable from a cloud session with zero laptop dependency; no
-  capacity lottery; no reclamation; 4 GB+ RAM. This is the teleport-friendly,
-  reliable choice.
-- **Oracle PAYG (still ~$0)**: exempts from reclamation AND gets capacity
-  priority, but needs the billing upgrade and Oracle's interactive login
-  (harder to drive from a cloud session).
+- **Oracle Always Free: dead.**
+  - The home region `us-sanjose-1` reports `OUT_OF_HOST_CAPACITY` for every
+    free shape (A1.Flex at both sizes, and E2.1.Micro). Both the Compute
+    Capacity Report API and real launches confirmed it.
+  - Always Free exists only in the home region, and the home region is
+    permanent.
+  - The user rejected PAYG because its budgets only alert; there is no hard
+    cap.
+  - Leftovers: an empty VCN and subnet in `us-sanjose-1`. They are free and
+    can be deleted.
+- **Hetzner: out.**
+  - US CPX21 is now $38.09/mo after two 2026 price rises.
+  - Its ~€4 EU plans are "currently unavailable".
+  - Beeper's own backend is in the EU, which settles US East as the region.
+    See `docs/HOSTING-OPTIONS.md`.
+- **Recommended: OVHcloud US VPS-1 in Vint Hill, VA, at $5.35/mo month to
+  month.**
+  - 2 vCPU / 4 GB / 40 GB NVMe; IPv4 and traffic included.
+  - Upgrade in place to VPS-2 (8 GB) when the context engine needs it.
+  - **Waiting on the user's go-ahead.** The order, payment, and any OVH ID
+    verification are theirs.
 
 ## NEXT ACTION (for the picking-up session)
 
-1. Get a Hetzner Cloud **read/write API token** from the user (Console →
-   project → Security → API Tokens). [Or confirm Oracle PAYG instead.]
-2. Provision from wherever you're running (no laptop needed): create a server
-   (Ubuntu 24.04, ARM `CAX` or x86, ≥4 GB), apply `deploy/cloud-init.yaml` as
-   user-data, boot.
-3. Finish on the host per `docs/RUNBOOK-HOME-SETUP.md` Phase 3: Tailscale
-   join, headless Beeper Server login (**user relays the emailed code +
-   recovery key** — these are the only irreducibly-human steps, doable from
-   phone), mint the host's own Beeper token on-box, write `.env`, start the
-   systemd service, expose tailnet-only via `tailscale serve`, run `doctor`.
-4. Lock down: remove public 22/tcp ingress once Tailscale works.
+1. The user orders VPS-1: Virginia, Ubuntu 24.04, monthly billing.
+   - The VPS has no cloud-init user-data. Access comes from an SSH public key
+     added at order time, or from `rebuild` with `postInstallScript`.
+   - Generate a fresh keypair for this. Keys in a cloud container die with
+     the container (see gotchas).
+2. Over SSH, run the `deploy/bootstrap.sh` flow:
+   - Join Tailscale (the user clicks the URL).
+   - Install Beeper Desktop and serve noVNC on the tailnet.
+   - Sign in to Beeper Desktop. **The user types the emailed code and the
+     recovery key.**
+   - Mint the token in-app and write `.env`.
+   - Run `doctor`; it must be green.
+   - Start the systemd service.
+   - Expose it on the tailnet with `tailscale serve`.
+   - Tear down the sign-in surface.
+3. Lock down public SSH once tailnet SSH works.
+4. Then build the session-channel relay (Phase 1, `docs/SESSION-CHANNEL.md`)
+   on the host.
 
 ## Notes / gotchas
 
-- **Nothing depends on the user's laptop.** All tooling is in this repo;
-  Hetzner needs only the API token. A fresh cloud session loses nothing.
-- Oracle leftovers: an empty VCN (`cm-vcn`) + subnet in `us-sanjose-1`, free,
-  deletable later.
-- Beeper CLI installs the **nightly** server channel (data-loss risk
-  beeper/cli#21). Stable alternative: Beeper Desktop + Remote Access on the
-  host. Decide with the user before the Beeper login step.
-- The user wants maximum autonomy ("do everything I can't"). The irreducible
-  human steps are: account signups (card/CAPTCHA), and relaying the Beeper
-  emailed code + recovery key. Everything else is automatable.
+- **Cloud containers are ephemeral.** A container reset on 2026-10-08 wiped
+  the scratchpad and `~/.ssh`. That took an uncommitted provisioning script
+  and the host SSH key with it.
+  - Anything a later session needs must be committed.
+  - Keys belong with the user or on the host, never only in a container.
+- **Never install Beeper Server.** See above.
+- The user wants maximum autonomy ("do everything I can't"). The irreducibly
+  human steps are:
+  - account signups (card, CAPTCHA, ID checks);
+  - relaying the Beeper emailed code and recovery key.
