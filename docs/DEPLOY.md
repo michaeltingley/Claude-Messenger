@@ -124,13 +124,16 @@ cd ~/claude-messenger && git pull && npm ci && npm run build \
 ```
 
 Re-running `deploy/bootstrap.sh` is the full upgrade: it also refreshes the
-systemd units from `deploy/systemd/`.
+systemd units from `deploy/systemd/`. It does not restart a display that is
+already running. A host provisioned before 2026-10-09 picks up the display's
+X cookie only after `systemctl --user restart xvfb.service` (Beeper restarts
+with it) or a reboot.
 
 To re-authenticate Beeper later, open the sign-in surface, log in through the
 browser, then close it again:
 
 ```sh
-~/claude-messenger/deploy/signin-surface.sh up      # prints the tailnet-only URL
+~/claude-messenger/deploy/signin-surface.sh up      # prints the tailnet-only URL, with a fresh password
 # ... sign in ...
 ~/claude-messenger/deploy/signin-surface.sh down    # verifies nothing is left exposed
 ~/claude-messenger/deploy/signin-surface.sh status  # exit 1 = fully closed
@@ -150,4 +153,12 @@ browser, then close it again:
   at boot. It is open only between `signin-surface.sh up` and `down`, and
   `signin-surface.sh status` checks its state. A VNC view of a signed-in
   Beeper is equivalent to holding the account.
+- **The host is safe to share** with other local users, such as the
+  automation agent in `SHARED-HOST.md`:
+  - The Xvfb display admits only clients holding its X cookie, which is
+    owner-only in `/run/user/UID`.
+  - While the surface is up, VNC demands a password. Each `up` mints a fresh
+    one and `down` deletes it.
+  - `bootstrap.sh` makes the home directory, and with it `.env`, unreadable
+    to other users.
 - One Beeper account per host.

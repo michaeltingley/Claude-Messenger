@@ -39,6 +39,7 @@ packages:
   - tmux
   # Headless display stack for Beeper Desktop (Electron) + one-time GUI login
   - xvfb
+  - xauth
   - x11vnc
   - novnc
   - websockify
@@ -92,6 +93,9 @@ runcmd:
   # Beeper sign-in surface is opened and closed only by
   # deploy/signin-surface.sh, because a VNC view of a signed-in Beeper is
   # equivalent to holding the account.
+  # Nobody else on this host may read this home: it holds .env (the Beeper
+  # token) and Beeper's own data (docs/SHARED-HOST.md, rule 1).
+  - chmod go-rwx /home/ubuntu
   - sudo -u ubuntu mkdir -p /home/ubuntu/.config/systemd/user
   - sudo -u ubuntu bash -c 'for u in xvfb beeper-desktop x11vnc novnc; do install -m 644 /home/ubuntu/claude-messenger/deploy/systemd/$u.service /home/ubuntu/.config/systemd/user/; done'
   # User services must survive logout/reboot

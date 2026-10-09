@@ -86,8 +86,11 @@ installed — you are doing configuration and logins):
    the sign-in surface installed but closed. So:
    - Run `~/claude-messenger/deploy/signin-surface.sh up`. It starts the
      loopback VNC/noVNC pair and publishes it to the tailnet only.
-   - Give the user the URL it prints. They open it in a browser, see the
-     Beeper window, and sign in themselves, relaying nothing. They type the
+   - Give the user the URL it prints. It carries a one-time viewer password
+     in its `#` fragment, which never reaches the server, and the password is
+     also printed on its own in case the page asks. They open it in a
+     browser, see the Beeper window, and sign in themselves, relaying
+     nothing. They type the
      emailed login code and the recovery key directly into the app, so
      neither passes through chat.
    - Have them make sure "Beeper Desktop API" is switched on in Beeper's

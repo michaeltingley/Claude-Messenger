@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 100 tests / 13 files.
+- `npm test` must be green before any push. Currently 111 tests / 14 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -72,6 +72,11 @@ built for hypothetical futures.
   `systemctl` CLIs (`test/signin-surface.integration.test.ts`). The shims
   reject any invocation they don't model, so a script can't drift to an
   untested CLI form. A real provision still needs a VM.
+- Security properties of the host get proven against the real binaries, not
+  config greps. `test/display-isolation.integration.test.ts` starts Xvfb and
+  x11vnc exactly as `deploy/systemd/` runs them and speaks X11 and RFB to
+  them. CI installs those binaries, and a missing one fails CI rather than
+  skipping.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene

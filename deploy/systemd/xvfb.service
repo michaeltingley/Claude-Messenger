@@ -5,7 +5,13 @@
 Description=Virtual framebuffer for Beeper Desktop
 
 [Service]
-ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x900x24 -nolisten tcp
+# The display only admits clients holding its X authorization cookie. Without
+# -auth, Xvfb accepts X clients from ANY local user, and on a shared host
+# (docs/SHARED-HOST.md) that lets another account screenshot and drive the
+# signed-in Beeper. The cookie lives in the user's runtime dir (%t, i.e.
+# /run/user/UID: mode 0700, tmpfs), and a fresh one is minted on every start.
+ExecStartPre=/bin/sh -c 'umask 077 && mkdir -p "%t/claude-messenger" && : > "%t/claude-messenger/xauth" && /usr/bin/xauth -q -f "%t/claude-messenger/xauth" add :99 . "$$(/usr/bin/mcookie)"'
+ExecStart=/usr/bin/Xvfb :99 -auth %t/claude-messenger/xauth -screen 0 1280x900x24 -nolisten tcp
 Restart=always
 RestartSec=2
 
