@@ -48,6 +48,14 @@ passed end to end: config → connection → auth → policy.
   Messages/Chat/Voice, and Matrix.
 - The stack works against real data.
 
+## Parked (2026-10-09): the shared host
+
+The owner paused putting the automation agent on this project's host. The
+automation server is now a standalone setup in `michaeltingley/ai-tools`
+(`automation-host/`), with no Claude Messenger dependencies.
+`docs/SHARED-HOST.md` stays only as a record. The hosting notes below still
+describe this project's own host, for when work here resumes.
+
 ## Current goal: stand up the always-on host
 
 - **Oracle Always Free: dead.**

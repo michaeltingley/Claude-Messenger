@@ -1,5 +1,9 @@
 # Shared host: Claude Messenger + the personal automation agent
 
+> **Parked 2026-10-09.** The owner chose a standalone automation server
+> (`michaeltingley/ai-tools`, `automation-host/`) and no agent/Beeper
+> isolation for now. Kept as a record; nothing here is a pending action.
+
 _Decided 2026-10-09. The user wants one server, not two. This doc is the
 contract between the two things that share it._
 
