@@ -82,11 +82,13 @@ passed end to end: config → connection → auth → policy.
 
 Follow the provisioning sequence in `docs/SHARED-HOST.md`:
 
-1. **Claude: land the isolation prerequisites in `deploy/` first** (rule 3).
-   - Verified: Xvfb without `-auth` accepts X clients from any local user.
-   - x11vnc (`-nopw`, 5900) and websockify (6080) are reachable by any local
-     user while the surface is up.
-   - Fix both, with tests, before a second user exists on the host.
+1. ~~Claude: land the isolation prerequisites in `deploy/`~~ **Done**
+   (2026-10-09):
+   - The Xvfb display requires its owner-only X cookie.
+   - The VNC hop demands a password, minted per `up` and deleted on `down`.
+   - `bootstrap.sh` locks the home directory.
+   - Proven against the real binaries in
+     `test/display-isolation.integration.test.ts`.
 2. **The user** orders VPS-2 (Virginia, Ubuntu 24.04, monthly billing) and
    installs the Tailscale app on their phone.
    - The VPS has no cloud-init user-data. Put an SSH public key on it with the

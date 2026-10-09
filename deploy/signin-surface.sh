@@ -8,7 +8,10 @@
 # nothing is relayed through a chat transcript.
 #
 # A VNC view of a signed-in Beeper is equivalent to holding the account, so
-# the surface is DOWN by default and up only for a login:
+# the surface is DOWN by default and up only for a login. While it is up, VNC
+# demands a password minted fresh by each `up` and deleted by `down`. Loopback
+# is not private on a shared host (docs/SHARED-HOST.md), so being reachable
+# only through the tailnet is not enough on its own.
 #
 #   deploy/signin-surface.sh up      # start it, publish it to the tailnet, print the URL
 #   deploy/signin-surface.sh down    # unpublish + stop; exits non-zero if anything stays exposed
@@ -23,6 +26,9 @@ PORT=8443
 BACKEND="http://127.0.0.1:6080"
 UNITS=(x11vnc.service novnc.service)
 SELF="$(basename "$0")"
+# Where x11vnc.service reads the viewer password. %t in the unit is this
+# user's runtime dir.
+PASSWD_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/claude-messenger/vncpasswd"
 
 err() { printf '✗ %s\n' "$*" >&2; }
 
@@ -58,6 +64,21 @@ tailnet_url() {
   printf 'https://%s:%s/vnc.html\n' "${name:-<this-host>.<tailnet>.ts.net}" "$PORT"
 }
 
+# Write a fresh 8-character viewer password (VNC uses at most 8) where
+# x11vnc.service reads it, owner-only, and print it. printf is a shell builtin,
+# so the password never appears in a process's arguments.
+mint_password() {
+  local password
+  password="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-8)"
+  [ "${#password}" -eq 8 ] || return 1
+  (
+    umask 077
+    mkdir -p "$(dirname "$PASSWD_FILE")"
+    printf '%s\n' "$password" > "$PASSWD_FILE"
+  ) || return 1
+  printf '%s\n' "$password"
+}
+
 status() {
   local exposed=1 unit rc=0
   published || rc=$?
@@ -91,14 +112,24 @@ up() {
       return 1
     fi
   done
-  systemctl --user start "${UNITS[@]}"
+  local password
+  if ! password="$(mint_password)"; then
+    err "could not mint the sign-in screen's password; nothing was opened"
+    return 1
+  fi
+  # restart, not start: a reopened surface must pick up the new password.
+  systemctl --user restart "${UNITS[@]}"
   if ! sudo tailscale serve --bg --https "$PORT" "$BACKEND" >/dev/null; then
     err "could not publish the sign-in screen to the tailnet."
-    err "Alternative: ssh -L 6080:127.0.0.1:6080 <this-host>, then open http://127.0.0.1:6080/vnc.html"
+    err "Alternative: ssh -L 6080:127.0.0.1:6080 <this-host>, then open"
+    err "  http://127.0.0.1:6080/vnc.html#autoconnect=1&password=${password}"
     return 1
   fi
   echo "Beeper sign-in is open, to your tailnet only, at:"
-  echo "  $(tailnet_url)"
+  # The password rides in the URL fragment: noVNC reads it from there, and
+  # browsers never send a fragment to the server, so it stays out of logs.
+  echo "  $(tailnet_url)#autoconnect=1&password=${password}"
+  echo "If the page asks for a password: ${password}  (it stops working at '${SELF} down')"
   echo "Close it as soon as you're signed in: ${SELF} down"
 }
 
@@ -116,6 +147,8 @@ down() {
       systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
     fi
   done
+  # A closed surface leaves no password behind to reopen it with.
+  rm -f "$PASSWD_FILE"
   # Fail closed: verify the end state instead of trusting the commands above.
   if status >/dev/null; then
     err "the Beeper sign-in surface is STILL exposed:"

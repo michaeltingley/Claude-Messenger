@@ -9,7 +9,16 @@ After=xvfb.service
 
 [Service]
 Environment=DISPLAY=:99
-ExecStart=/usr/bin/x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw
+# Two locks, because loopback is not private on a shared host
+# (docs/SHARED-HOST.md):
+# - -auth: the display's cookie, minted by xvfb.service.
+# - -passwdfile: the viewer password. Any local user can reach 127.0.0.1:5900,
+#   and noVNC's 127.0.0.1:6080 in front of it, so VNC itself must demand a
+#   password. signin-surface.sh mints a fresh one on every `up` and deletes it
+#   on `down`. It is read from a file rather than passed as an argument, which
+#   `ps` would show to every user. If the file is missing or empty, x11vnc
+#   refuses to start, so the surface fails closed.
+ExecStart=/usr/bin/x11vnc -display :99 -auth %t/claude-messenger/xauth -localhost -rfbport 5900 -forever -shared -passwdfile %t/claude-messenger/vncpasswd
 Restart=always
 RestartSec=5
 

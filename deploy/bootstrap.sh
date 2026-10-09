@@ -104,7 +104,7 @@ else
     esac
 
     sudo apt-get update -qq
-    sudo apt-get install -y -qq xvfb x11vnc novnc websockify libfuse2t64 \
+    sudo apt-get install -y -qq xvfb xauth x11vnc novnc websockify libfuse2t64 \
       libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 \
       libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libxcomposite1 \
       libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 fonts-liberation
@@ -147,6 +147,10 @@ else
 fi
 
 say "6/7 Configuration"
+# Nobody else on this host may read this home: it holds .env (the Beeper
+# token) and, on a managed host, Beeper's own data. Either bypasses the policy
+# layer. See docs/SHARED-HOST.md, rule 1.
+chmod go-rwx "$HOME"
 if [ ! -f .env ]; then
   if [ "$MANAGED_BEEPER" -eq 1 ]; then
     # Minting needs the app's screen. `up` is idempotent and reprints the URL,

@@ -39,6 +39,7 @@ packages:
   - tmux
   # Headless display stack for Beeper Desktop (Electron) + one-time GUI login
   - xvfb
+  - xauth
   - x11vnc
   - novnc
   - websockify
@@ -87,6 +88,9 @@ runcmd:
   # Claude Messenger, cloned and built for the default user
   - sudo -u ubuntu git clone https://github.com/michaeltingley/Claude-Messenger.git /home/ubuntu/claude-messenger
   - sudo -u ubuntu bash -c 'cd /home/ubuntu/claude-messenger && npm ci --no-audit --no-fund && npm run build'
+  # Nobody else on this host may read this home: it holds .env (the Beeper
+  # token) and Beeper's own data (docs/SHARED-HOST.md, rule 1).
+  - chmod go-rwx /home/ubuntu
   # systemd user units come from deploy/systemd/, the single source shared
   # with bootstrap.sh. x11vnc/noVNC are installed but never enabled: the
   # Beeper sign-in surface is opened and closed only by

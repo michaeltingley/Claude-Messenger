@@ -60,8 +60,16 @@ has to the raw Beeper token, or to the signed-in Beeper UI, bypasses
    - The same goes for the VNC hops behind the sign-in surface. x11vnc runs
      `-nopw` on `127.0.0.1:5900` and websockify on `127.0.0.1:6080`, both
      reachable by any local user while the surface is up.
-   - Fix before the agent user exists: a VNC password file, or Unix sockets
-     only the owner can open.
+   - **Done in `deploy/`:**
+     - `xvfb.service` mints a fresh cookie into `%t/claude-messenger/xauth`
+       (owner-only) on every start and runs Xvfb with `-auth`.
+     - x11vnc demands a password from `-passwdfile`, which
+       `signin-surface.sh` mints on every `up` and deletes on `down`. With no
+       file, x11vnc won't start.
+     - `test/display-isolation.integration.test.ts` proves both against the
+       real binaries.
+     - Unix sockets weren't an option for the noVNC hop: `tailscale serve`
+       proxies only to `http://127.0.0.1`.
 4. **The agent reaches messages only through the MCP endpoint**, with a
    bearer token, so policy and audit apply. Beeper's own API on
    `127.0.0.1:23373` is reachable from loopback, but useless without the
@@ -104,7 +112,7 @@ and off-box backups of the Beeper keys matter more now, not less.
 ## Provisioning sequence
 
 1. **Claude:** land the isolation prerequisites in `deploy/` (rule 3), with
-   tests.
+   tests. **Done.**
 2. **User:**
    - Order OVHcloud US VPS-2: Vint Hill, Ubuntu 24.04, monthly.
    - Install the Tailscale app on their phone.

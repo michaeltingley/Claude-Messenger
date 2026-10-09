@@ -64,6 +64,40 @@ describe('deploy/ contracts', () => {
     }
   });
 
+  it('every unit on the Beeper display authenticates with the cookie xvfb.service mints', () => {
+    const cookie = '%t/claude-messenger/xauth';
+    const xvfb = read('systemd/xvfb.service');
+    expect(xvfb).toMatch(new RegExp(`^ExecStartPre=.*xauth -q -f "${cookie}" add :99`, 'm'));
+    expect(xvfb).toMatch(new RegExp(`^ExecStart=/usr/bin/Xvfb :99 -auth ${cookie} `, 'm'));
+
+    // Any other unit that talks to :99 must carry the same cookie, or it can't connect.
+    const clients = readdirSync(join(DEPLOY, 'systemd'))
+      .filter((f) => f !== 'xvfb.service')
+      .filter((f) => /DISPLAY=:99|-display :99/.test(read(`systemd/${f}`)));
+    expect(clients).toEqual(expect.arrayContaining(['beeper-desktop.service', 'x11vnc.service']));
+    for (const unit of clients) {
+      const body = read(`systemd/${unit}`);
+      expect(body.includes(`XAUTHORITY=${cookie}`) || body.includes(`-auth ${cookie}`), unit).toBe(true);
+    }
+  });
+
+  it('x11vnc demands the password signin-surface.sh writes, from the same file', () => {
+    const exec = read('systemd/x11vnc.service')
+      .split('\n')
+      .find((l) => l.startsWith('ExecStart='));
+    expect(exec).toContain('-passwdfile %t/claude-messenger/vncpasswd');
+    expect(exec).not.toMatch(/-nopw|-passwd /);
+    // %t is the runtime dir; the script resolves it the same way.
+    expect(read('signin-surface.sh')).toContain(
+      'PASSWD_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/claude-messenger/vncpasswd"',
+    );
+  });
+
+  it('both install paths install xauth, which xvfb.service needs to mint its cookie', () => {
+    expect(read('bootstrap.sh')).toMatch(/apt-get install [^\n]*\bxauth\b/);
+    expect(read('cloud-init.yaml')).toMatch(/^\s+- xauth$/m);
+  });
+
   it('signin-surface.sh is executable, because the runbook and DEPLOY.md invoke it directly', () => {
     expect(statSync(join(DEPLOY, 'signin-surface.sh')).mode & 0o111).not.toBe(0);
   });

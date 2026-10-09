@@ -7,6 +7,8 @@ After=xvfb.service
 
 [Service]
 Environment=DISPLAY=:99
+# The display's auth cookie, minted by xvfb.service.
+Environment=XAUTHORITY=%t/claude-messenger/xauth
 # --no-sandbox is required because the Chromium sandbox needs either user
 # namespaces or a setuid helper, neither of which survives the AppImage
 # extraction we do to avoid a FUSE dependency.

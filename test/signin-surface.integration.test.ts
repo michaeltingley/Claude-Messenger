@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -55,9 +55,15 @@ case "$verb" in
   cat) [ -e "$S/units/$1" ] ;;
   is-active) [ "$1" = "--quiet" ] && shift; [ -e "$S/active/$1" ] ;;
   is-enabled) [ "$1" = "--quiet" ] && shift; [ -e "$S/enabled/$1" ] ;;
-  start)
+  start|restart)
     for u in "$@"; do
       if [ ! -e "$S/units/$u" ]; then echo "Unit $u not found." >&2; exit 5; fi
+    done
+    # Like the real unit: x11vnc -passwdfile exits when the file is missing.
+    for u in "$@"; do
+      if [ "$u" = x11vnc.service ] && [ ! -s "$XDG_RUNTIME_DIR/claude-messenger/vncpasswd" ]; then
+        echo "Job for x11vnc.service failed (cannot open passwdfile)." >&2; exit 1
+      fi
     done
     for u in "$@"; do touch "$S/active/$u"; done ;;
   disable)
@@ -84,11 +90,15 @@ class FakeHost {
   readonly root = mkdtempSync(join(tmpdir(), 'signin-surface-'));
   private readonly bin = join(this.root, 'bin');
   readonly state = join(this.root, 'state');
+  /** The user's runtime dir ($XDG_RUNTIME_DIR, /run/user/UID on a real host). */
+  readonly runtime = join(this.root, 'runtime');
+  readonly passwdFile = join(this.runtime, 'claude-messenger', 'vncpasswd');
 
   constructor() {
     for (const dir of [this.bin, this.state, ...['units', 'active', 'enabled'].map((d) => join(this.state, d))]) {
       mkdirSync(dir, { recursive: true });
     }
+    mkdirSync(this.runtime, { mode: 0o700 });
     for (const [name, body] of [
       ['tailscale', TAILSCALE_SHIM],
       ['systemctl', SYSTEMCTL_SHIM],
@@ -131,7 +141,12 @@ class FakeHost {
   run(...args: string[]): { code: number; stdout: string; stderr: string } {
     const result = spawnSync('bash', [SCRIPT, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${this.bin}:${process.env.PATH}`, FAKE_HOST_STATE: this.state },
+      env: {
+        ...process.env,
+        PATH: `${this.bin}:${process.env.PATH}`,
+        FAKE_HOST_STATE: this.state,
+        XDG_RUNTIME_DIR: this.runtime,
+      },
     });
     return { code: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
   }
@@ -212,6 +227,44 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
       }
     });
 
+    it('mints an owner-only viewer password and prints a one-tap URL that carries it', () => {
+      const { code, stdout } = host.run('up');
+
+      expect(code).toBe(0);
+      const password = readFileSync(host.passwdFile, 'utf8').trim();
+      expect(password).toMatch(/^[A-Za-z0-9]{8}$/);
+      expect(statSync(host.passwdFile).mode & 0o777).toBe(0o600);
+      // In the fragment, which browsers never send to the server.
+      expect(stdout).toContain(`https://box.example-tailnet.ts.net:8443/vnc.html#autoconnect=1&password=${password}`);
+    });
+
+    it('rotates the password on every opening, so an old link stops working', () => {
+      const first = host.run('up');
+      const firstPassword = readFileSync(host.passwdFile, 'utf8').trim();
+
+      const second = host.run('up');
+      const secondPassword = readFileSync(host.passwdFile, 'utf8').trim();
+
+      expect([first.code, second.code]).toEqual([0, 0]);
+      expect(secondPassword).not.toBe(firstPassword);
+      expect(second.stdout).toContain(`password=${secondPassword}`);
+      expect(second.stdout).not.toContain(firstPassword);
+      // restart, so a running x11vnc picks up the new password.
+      expect(host.calls().filter((c) => c.startsWith('systemctl --user restart'))).toHaveLength(2);
+    });
+
+    it('opens nothing when the password cannot be minted', () => {
+      // A broken runtime dir: where the password's directory should be, a file.
+      writeFileSync(join(host.runtime, 'claude-messenger'), '');
+
+      const { code, stderr } = host.run('up');
+
+      expect(code).not.toBe(0);
+      expect(stderr).toContain('could not mint');
+      expect(host.fullyClosed()).toBe(true);
+      expect(host.calls().filter((c) => /restart|serve --bg/.test(c))).toEqual([]);
+    });
+
     it('fails loudly with an SSH-tunnel fallback when the tailnet refuses to publish', () => {
       host.set('fail-serve-on');
 
@@ -219,6 +272,8 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
 
       expect(code).not.toBe(0);
       expect(stderr).toContain('ssh -L 6080:127.0.0.1:6080');
+      // The tunnel reaches the same password-protected VNC, so the fallback must carry the password.
+      expect(stderr).toContain(`vnc.html#autoconnect=1&password=${readFileSync(host.passwdFile, 'utf8').trim()}`);
       expect(host.has('serve-8443')).toBe(false);
     });
   });
@@ -233,6 +288,16 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
       expect(stdout).toContain('sign-in surface: down');
       expect(host.fullyClosed()).toBe(true);
       expect(host.run('status').code).toBe(1);
+    });
+
+    it('deletes the viewer password, so nothing is left to reopen the surface with', () => {
+      host.run('up');
+      expect(existsSync(host.passwdFile)).toBe(true);
+
+      const { code } = host.run('down');
+
+      expect(code).toBe(0);
+      expect(existsSync(host.passwdFile)).toBe(false);
     });
 
     it('is idempotent: closing an already-closed surface succeeds without errors', () => {
@@ -313,11 +378,12 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
     });
   });
 
-  it('a full login cycle (up, then down) leaves nothing exposed', () => {
+  it('a full login cycle (up, then down) leaves nothing exposed and no password behind', () => {
     expect(host.run('up').code).toBe(0);
     expect(host.run('down').code).toBe(0);
 
     expect(host.fullyClosed()).toBe(true);
+    expect(existsSync(host.passwdFile)).toBe(false);
   });
 
   it('rejects an unknown subcommand with usage and exit 2', () => {
