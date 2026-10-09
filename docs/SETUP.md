@@ -31,7 +31,7 @@ Three steps: get a Beeper endpoint + token, point Claude Messenger at it, connec
 
 The officially supported route since Sept 2025, and what `deploy/cloud-init.yaml` and `deploy/bootstrap.sh` now provision. Run regular Beeper Desktop on any machine that stays awake (spare desktop, Mac mini, home server, or a VPS running it headless under Xvfb), then reach it through a tunnel. Same API, boring and stable.
 
-For a headless Linux host, the deploy scripts handle this for you: they install the Beeper Desktop AppImage matched to the host architecture, run it under Xvfb as a systemd user service, and expose noVNC over your tailnet just long enough for the one-time sign-in — so the emailed login code and your recovery key are typed straight into the app rather than relayed through a terminal or a chat transcript. Size for **4 GB RAM**; Electron plus Xvfb idles ~0.5–0.8 GB.
+For a headless Linux host, the deploy scripts handle this for you: they install the Beeper Desktop AppImage matched to the host architecture, run it under Xvfb as a systemd user service, and expose noVNC over your tailnet just long enough for the one-time sign-in — so the emailed login code and your recovery key are typed straight into the app rather than relayed through a terminal or a chat transcript. Size for **4 GB RAM**: Electron plus Xvfb is estimated at ~0.5–0.8 GB (not yet measured; many accounts push it higher).
 
 Then mint a token in the app: **Settings → Integrations → "+"** next to Approved connections, and treat `http://127.0.0.1:23373` on that machine as your endpoint. Note: iMessage bridging requires macOS, so an iMessage-heavy setup may prefer a Mac mini as the always-on host.
 

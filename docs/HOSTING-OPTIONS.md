@@ -10,11 +10,14 @@ the public endpoints listed under [Re-verifying](#re-verifying).
 
 ## What the workload needs
 
-- **≥4 GB RAM for Claude Messenger alone; 8 GB for the shared host.**
-  Beeper Desktop under Xvfb idles at ~0.5–0.8 GB, plus the Node MCP service
-  and headroom, so 2 GB plans are out. The host now also runs the automation
-  agent (Chrome plus Claude sessions; `SHARED-HOST.md`), which brings it to
-  ~4–5 GB.
+- **8 GB for the shared host; ≥4 GB for Claude Messenger alone.**
+  - The host also runs the automation agent (Chrome plus Claude sessions;
+    `SHARED-HOST.md`), which brings it to ~4–5 GB.
+  - Beeper Desktop's own footprint is **not measured yet**. ~0.5–0.8 GB is a
+    generic Electron estimate; with ~10 accounts, 1–2 GB is plausible.
+  - 2 GB plans are out.
+  - Measure after Beeper's first sync, and add swap so a spike degrades
+    instead of getting OOM-killed.
 - **A public IPv4 address.** `api.beeper.com` and `github.com` publish no AAAA
   records (checked 2026-10-08), so IPv6-only plans cannot reach them.
 - **A persistent disk, backed up off-box.** It holds the Matrix E2EE device
@@ -42,6 +45,30 @@ published IP ranges:
 | `matrix.beeper.com` | `edgeserv-lb.beeper-tools.com` → 6 IPs | Hetzner (AS24940): Falkenstein, Nuremberg, Helsinki |
 | `api.beeper.com` (also auth, synapse) | `lb.aws.beeper.com` → ELB | AWS `eu-central-1` (Frankfurt) |
 | per-user homeservers | `user.eu-*.edge.beeper.com` | Hetzner FSN/HEL; all 23 edge clusters in CT logs since 2023 are `eu-` |
+
+Two first-hand checks on 2026-10-09 rule out registry artifacts and
+geo-routing:
+
+- **No geo-DNS.** Queries carrying US client subnets (EDNS client subnet
+  73.162.0.0/16 and 24.4.0.0/16) got the identical EU answers. Beeper has no
+  US servers to route US users to.
+- **Physics.** Round-trip times were measured from Anthropic's US cloud, as
+  the minimum time-to-first-byte over 7 requests:
+
+  | Target | ms |
+  |---|---|
+  | Hetzner Ashburn / Hillsboro | 33 / 90 |
+  | AWS us-east-1 / us-west-2 | 33 / 84 |
+  | Hetzner Falkenstein / Nuremberg / Helsinki | 123 / 122 / 135 |
+  | AWS eu-central-1 | 120 |
+  | **`matrix.beeper.com`** | **133** |
+  | **`api.beeper.com`** | **119** |
+
+  The two Beeper endpoints are physically in Europe, not just registered
+  there.
+
+Still unknown: which homeserver cluster the user's own account is on. Every
+cluster found is `eu-`-named.
 
 **Every message the host sends or syncs crosses the Atlantic, wherever the
 host is.** Round-trip times to Frankfurt are ~81 ms from Ashburn and ~133–142 ms
@@ -107,6 +134,9 @@ the live site blocks automated fetches. **[S]** secondary source.
      remainder.
    - VPS-1 ($5.35, 4 GB) fits Claude Messenger alone, but not Chrome and
      Claude sessions alongside it.
+   - [OVH docs](https://support.us.ovhcloud.com/hc/en-us/articles/38299056076947)
+     say a US VPS upgrade keeps your data and IP, so moving up a tier later
+     doesn't mean rebuilding. Downgrades are unverified.
    - OVH is a large incumbent, so collapse risk is negligible. IPv4 and
      traffic are included.
 2. **Fallback: Contabo Cloud VPS 4 (US Central or West).** Use it only if

@@ -26,8 +26,9 @@ the public internet; the Beeper token never leaves the host.
 ## What you need (the only human parts)
 
 1. **A machine that stays on.** A small VPS (Ubuntu 24.04, ~$4–8/mo) or any
-   home box. Size for **4 GB RAM**: Beeper Desktop is Electron and idles
-   ~0.5–0.8 GB with Xvfb, so 2 GB hosts are tight. iMessage bridging needs
+   home box. Size for **4 GB RAM**: Beeper Desktop is Electron, and its real
+   footprint is not yet measured (~0.5–0.8 GB is an estimate; many accounts
+   push it higher), so 2 GB hosts are out. iMessage bridging needs
    macOS — use a Mac mini if that matters.
 2. **A few minutes in a browser** to sign Beeper in. The app runs headless,
    and `deploy/signin-surface.sh` opens its screen to your tailnet only, just
@@ -137,9 +138,11 @@ browser, then close it again:
 
 ## Known caveats
 
-- **Plan for 4 GB RAM.** Beeper Desktop is an Electron app; with Xvfb it idles
-  around 0.5–0.8 GB, on top of Claude Messenger's own footprint. 2 GB hosts
-  are not viable for this topology.
+- **Plan for 4 GB RAM.** Beeper Desktop is an Electron app.
+  - Its footprint under Xvfb is estimated at 0.5–0.8 GB, but has not been
+    measured. Many accounts and long uptimes push it higher.
+  - Add Claude Messenger's own footprint on top.
+  - 2 GB hosts are not viable for this topology.
 - **Beeper Desktop must stay signed in.** If the account is signed out or the
   E2EE device is invalidated, the Client API keeps answering but returns no
   decryptable history — `doctor` catches this, so run it after any incident.

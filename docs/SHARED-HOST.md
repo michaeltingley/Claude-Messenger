@@ -23,13 +23,13 @@ Xvfb, Tailscale, and a tailnet-only noVNC surface.
 
 | Process | Typical RAM |
 |---|---|
-| Beeper Desktop + Xvfb | 0.5–0.8 GB |
+| Beeper Desktop + Xvfb | 0.5–0.8 GB (estimate, not measured; ~10 accounts may push it to 1–2 GB) |
 | Chrome with a few tabs | 1–2 GB |
 | Claude Code, per active session | ~0.5 GB |
 | Claude Messenger MCP service | ≤0.5 GB (capped by its unit) |
 | OS | ~0.5 GB |
 
-With two Claude sessions that is ~4–5 GB, so VPS-1 (4 GB) would swap. Order
+With two Claude sessions that is ~4–5 GB, or ~5–6 GB if Beeper lands at the high end, so VPS-1 (4 GB) would swap. Order
 **OVHcloud US VPS-2** instead: 4 vCPU / 8 GB / 75 GB NVMe, Vint Hill VA,
 **$10.00/mo** month to month, or $8.50 on a 12-month term (`HOSTING-OPTIONS.md`).
 It is also the upgrade path the context engine was going to need.
