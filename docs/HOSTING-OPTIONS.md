@@ -10,14 +10,14 @@ the public endpoints listed under [Re-verifying](#re-verifying).
 
 ## What the workload needs
 
-- **≥4 GB RAM.** Beeper Desktop's footprint has **not been measured yet**.
-  - ~0.5–0.8 GB is a generic Electron estimate. With ~10 accounts, 1–2 GB is
-    plausible, and Electron apps tend to grow.
-  - The rest of the host (OS, Tailscale, Node MCP service, Xvfb) is
-    ~0.5 GB.
-  - 2 GB plans are out. Measure after Beeper's first sync, and add swap so a
-    spike degrades instead of getting OOM-killed.
-  - Indexing message history (the context engine) wants 8 GB.
+- **8 GB for the shared host; ≥4 GB for Claude Messenger alone.**
+  - The host also runs the automation agent (Chrome plus Claude sessions;
+    `SHARED-HOST.md`), which brings it to ~4–5 GB.
+  - Beeper Desktop's own footprint is **not measured yet**. ~0.5–0.8 GB is a
+    generic Electron estimate; with ~10 accounts, 1–2 GB is plausible.
+  - 2 GB plans are out.
+  - Measure after Beeper's first sync, and add swap so a spike degrades
+    instead of getting OOM-killed.
 - **A public IPv4 address.** `api.beeper.com` and `github.com` publish no AAAA
   records (checked 2026-10-08), so IPv6-only plans cannot reach them.
 - **A persistent disk, backed up off-box.** It holds the Matrix E2EE device
@@ -92,8 +92,8 @@ the live site blocks automated fetches. **[S]** secondary source.
 
 | Option | vCPU / RAM / disk | US location | $/mo | Provisioning | Verdict |
 |---|---|---|---|---|---|
-| **OVHcloud US VPS-1** | 2 / 4 GB / 40 GB NVMe | Vint Hill VA, Hillsboro OR (both in stock) | **5.35** monthly · 5.08 (6-mo) · **4.54** (12-mo prepaid) [V] | REST API orders (VPS routes marked beta). No user-data field: `rebuild` takes `postInstallScript` + SSH key | **Pick** |
-| OVHcloud US VPS-2 | 4 / 8 GB / 75 GB NVMe | same | 10.00 · 9.50 · 8.50 [V] | same | Upgrade path for the context engine |
+| **OVHcloud US VPS-1** | 2 / 4 GB / 40 GB NVMe | Vint Hill VA, Hillsboro OR (both in stock) | **5.35** monthly · 5.08 (6-mo) · **4.54** (12-mo prepaid) [V] | REST API orders (VPS routes marked beta). No user-data field: `rebuild` takes `postInstallScript` + SSH key | Too small once the host is shared |
+| OVHcloud US VPS-2 | 4 / 8 GB / 75 GB NVMe | same | 10.00 · 9.50 · 8.50 [V] | same | **Pick** (shared host) |
 | Contabo Cloud VPS 4 | 4 / 8 GB / 100 GB SSD | Seattle, St. Louis, NY | **8.20** in Seattle, incl. a $1.60 location fee · 7.21 (12-mo) [Va] | API + cloud-init `userData` | Fallback; reputation is poor |
 | netcup VPS 500 G12.5 | 2 / 4 GB / 64 GB | Manassas VA | ~7.59 (24-mo, ~$182 upfront) · ~9.91 monthly [V calc / ?] | No API to order servers | Long lock-in, manual ordering |
 | Hostinger KVM 1 | 1 / 4 GB / 50 GB NVMe | Phoenix, Boston | 6.49 (24-mo prepaid promo), **renews at 11.99** · 9.99 → 19.49 monthly [V] | API purchase/rebuild + post-install script | Promo cliff; 1 vCPU |
@@ -125,21 +125,23 @@ the live site blocks automated fetches. **[S]** secondary source.
 
 ## Recommendation
 
-1. **OVHcloud US VPS-1 in Vint Hill, VA.**
-   - Start **month-to-month ($5.35)**.
-   - Move to the 12-month rate ($4.54) once Beeper Desktop has run stably for
-     a few weeks.
+1. **OVHcloud US VPS-2 in Vint Hill, VA** (revised 2026-10-09 for the shared
+   host; see `SHARED-HOST.md`).
+   - Start **month-to-month ($10.00)**.
+   - Move to the 12-month rate ($8.50) once the host has run stably for a few
+     weeks.
    - Commitments auto-renew for the same term, and an early exit owes the
      remainder.
-   - When the context engine needs RAM, or measurement says so, upgrade in
-     place to VPS-2 ($8.50–10).
-     [OVH docs](https://support.us.ovhcloud.com/hc/en-us/articles/38299056076947)
-     say a US VPS upgrade keeps your data and IP. Downgrades are unverified.
+   - VPS-1 ($5.35, 4 GB) fits Claude Messenger alone, but not Chrome and
+     Claude sessions alongside it.
+   - [OVH docs](https://support.us.ovhcloud.com/hc/en-us/articles/38299056076947)
+     say a US VPS upgrade keeps your data and IP, so moving up a tier later
+     doesn't mean rebuilding. Downgrades are unverified.
    - OVH is a large incumbent, so collapse risk is negligible. IPv4 and
      traffic are included.
 2. **Fallback: Contabo Cloud VPS 4 (US Central or West).** Use it only if
    OVH's order verification blocks the user.
-   - Twice the specs for $7–8.
+   - The same 8 GB as VPS-2 for $7–8.
    - Independent benchmarks grade its stability F and disk E [S].
    - There is a long-running "US West ~30 downtimes in 6 months" thread [S].
    - The location fee never gets the term discount [Va].

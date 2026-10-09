@@ -1,8 +1,8 @@
 # Project Status & Session Handoff
 
-_Last updated: 2026-10-08. This file is the pick-up point for any new session,
-cloud or local. Read `CLAUDE.md` first, then this, then
-`docs/HOSTING-OPTIONS.md`._
+_Last updated: 2026-10-09. This file is the pick-up point for any new session,
+cloud or local. Read `CLAUDE.md` first, then this, then `docs/SHARED-HOST.md`
+and `docs/HOSTING-OPTIONS.md`._
 
 ## What's done and merged (`main`)
 
@@ -63,24 +63,38 @@ passed end to end: config → connection → auth → policy.
 - **Hetzner: out.**
   - US CPX21 is now $38.09/mo after two 2026 price rises.
   - Its ~€4 EU plans are "currently unavailable".
-- **Recommended: OVHcloud US VPS-1 in Vint Hill, VA, at $5.35/mo month to
-  month.**
-  - 2 vCPU / 4 GB / 40 GB NVMe; IPv4 and traffic included.
+- **One host for two jobs (2026-10-09).** The same server also runs the
+  user's personal automation agent: Claude Code with Remote Control and a
+  signed-in headful Chrome (`michaeltingley/ai-tools`, `automation-host/`).
+  `docs/SHARED-HOST.md` is the contract between the two, and its isolation
+  rules protect this project's policy guarantees from the agent.
+- **Recommended: OVHcloud US VPS-2 in Vint Hill, VA, at $10.00/mo month to
+  month** ($8.50 on a 12-month term).
+  - 4 vCPU / 8 GB / 75 GB NVMe; IPv4 and traffic included.
+  - VPS-1 (4 GB) fit Beeper alone, but Chrome and Claude sessions push the
+    shared host to ~4–5 GB.
   - US East because Beeper's own backend is in the EU (Hetzner + AWS
     Frankfurt). See `docs/HOSTING-OPTIONS.md`.
-  - Upgrade in place to VPS-2 (8 GB) when the context engine needs it.
   - **Waiting on the user's go-ahead.** The order, payment, and any OVH ID
     verification are theirs.
 
 ## NEXT ACTION (for the picking-up session)
 
-1. The user orders VPS-1: Virginia, Ubuntu 24.04, monthly billing.
+Follow the provisioning sequence in `docs/SHARED-HOST.md`:
+
+1. **Claude: land the isolation prerequisites in `deploy/` first** (rule 3).
+   - Verified: Xvfb without `-auth` accepts X clients from any local user.
+   - x11vnc (`-nopw`, 5900) and websockify (6080) are reachable by any local
+     user while the surface is up.
+   - Fix both, with tests, before a second user exists on the host.
+2. **The user** orders VPS-2 (Virginia, Ubuntu 24.04, monthly billing) and
+   installs the Tailscale app on their phone.
    - The VPS has no cloud-init user-data. Put an SSH public key on it with the
      OVH control panel's reinstall, or with the API's `rebuild`, which also
      takes `postInstallScript`.
    - Generate a fresh keypair for this. Keys in a cloud container die with
      the container (see gotchas).
-2. Over SSH, run the `deploy/bootstrap.sh` flow:
+3. Over SSH, run the `deploy/bootstrap.sh` flow:
    - Join Tailscale (the user clicks the URL).
    - Install Beeper Desktop and serve noVNC on the tailnet.
    - Sign in to Beeper Desktop. **The user types the emailed code and the
@@ -90,9 +104,11 @@ passed end to end: config → connection → auth → policy.
    - Start the systemd service.
    - Expose it on the tailnet with `tailscale serve`.
    - Tear down the sign-in surface.
-3. Lock down public SSH once tailnet SSH works.
-4. Then build the session-channel relay (Phase 1, `docs/SESSION-CHANNEL.md`)
-   on the host.
+4. Lock down public SSH once tailnet SSH works.
+5. Install the agent layer from `ai-tools/automation-host`, then run its
+   server-day test. Both are owned there, not here.
+6. Re-evaluate the session-channel relay before building it. The agent on the
+   host may make it unnecessary (`docs/SHARED-HOST.md`).
 
 ## Notes / gotchas
 

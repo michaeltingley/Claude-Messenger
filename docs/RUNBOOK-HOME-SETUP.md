@@ -9,7 +9,8 @@ The user's kickoff prompt points here — treat this file as your task list.*
 > **⚠ Phases 0–2 are Oracle-specific, and Oracle is dead.** The home region
 > has a permanent capacity wall; see `docs/STATUS.md`.
 >
-> The host is now an **OVHcloud US VPS-1** (`docs/HOSTING-OPTIONS.md`). The
+> The host is now an **OVHcloud US VPS-2**, shared with the automation agent
+> (`docs/SHARED-HOST.md`, `docs/HOSTING-OPTIONS.md`). The
 > user orders it, then you pick up at Phase 3.
 >
 > OVHcloud VPS has no cloud-init user-data field, so the installs that
