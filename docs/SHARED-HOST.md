@@ -1,8 +1,15 @@
 # Shared host: Claude Messenger + the personal automation agent
 
-> **Parked 2026-10-09.** The owner chose a standalone automation server
-> (`michaeltingley/ai-tools`, `automation-host/`) and no agent/Beeper
-> isolation for now. Kept as a record; nothing here is a pending action.
+> **Revived 2026-10-12, without the user isolation.** Claude Messenger now
+> runs on the automation VPS after all.
+>
+> - Rules 1–2 (separate Unix users, no general sudo for the agent) are
+>   waived. The owner accepted that any session on the box can read the
+>   Beeper token and bypass the policy layer.
+> - Rule 3 (display cookie, VNC password) is implemented and stays.
+> - The box is VPS-1 (4 GB) plus swap, not VPS-2. Measure it, and upgrade in
+>   place if it's tight.
+> - `docs/STATUS.md` has the current plan.
 
 _Decided 2026-10-09. The user wants one server, not two. This doc is the
 contract between the two things that share it._
