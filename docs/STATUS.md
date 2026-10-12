@@ -72,7 +72,7 @@ passed end to end: config → connection → auth → policy.
   - `docs/SHARED-HOST.md` rules 1–2 (separate users, no general sudo) are
     therefore waived. The display and VNC hardening from #17 stays.
 - **Memory.**
-  - 4 GB plus swap; Chrome and Better Suno sessions already run there.
+  - 4 GB plus swap; Chrome and other Claude sessions already run there.
   - Measure after Beeper's first sync. Upgrade in place to VPS-2 (8 GB,
     $10/mo) if it's tight; that keeps the data and IP.
 - **Who uses the MCP.** Claude sessions on the VPS, via
@@ -93,9 +93,11 @@ passed end to end: config → connection → auth → policy.
 2. **Land the repo fixes it reports.** Expect apt package names that differ on
    26.04, because bootstrap's list was written for 24.04.
 3. **Record memory after the first sync** and decide on VPS-2.
-4. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
+4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
+   internet, or restrict it to the owner's IP.
+5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
    Orchestrator-started sessions on the VPS may make it unnecessary.
-5. **Projects (beta).** The owner may move this work into a Claude project.
+6. **Projects (beta).** The owner may move this work into a Claude project.
    Its threads start VPS sessions for host work, the same way the
    orchestrator does.
 
