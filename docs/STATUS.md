@@ -1,6 +1,6 @@
 # Project Status & Session Handoff
 
-_Last updated: 2026-10-09. This file is the pick-up point for any new session,
+_Last updated: 2026-10-12. This file is the pick-up point for any new session,
 cloud or local. Read `CLAUDE.md` first, then this, then `docs/SHARED-HOST.md`
 and `docs/HOSTING-OPTIONS.md`._
 
@@ -48,77 +48,66 @@ passed end to end: config → connection → auth → policy.
   Messages/Chat/Voice, and Matrix.
 - The stack works against real data.
 
-## Parked (2026-10-09): the shared host
+## Decided (2026-10-12): Claude Messenger runs on the automation VPS
 
-The owner paused putting the automation agent on this project's host. The
-automation server is now a standalone setup in `michaeltingley/ai-tools`
-(`automation-host/`), with no Claude Messenger dependencies.
-`docs/SHARED-HOST.md` stays only as a record. The hosting notes below still
-describe this project's own host, for when work here resumes.
-
-## Current goal: stand up the always-on host
-
-- **Oracle Always Free: dead.**
-  - The home region `us-sanjose-1` reports `OUT_OF_HOST_CAPACITY` for every
-    free shape (A1.Flex at both sizes, and E2.1.Micro). Both the Compute
-    Capacity Report API and real launches confirmed it.
-  - Always Free exists only in the home region, and the home region is
-    permanent.
-  - The user rejected PAYG because its budgets only alert; there is no hard
-    cap.
-  - Leftovers: the network in `us-sanjose-1` (VCN, internet gateway,
-    subnet). It is free and can be deleted.
-- **Hetzner: out.**
-  - US CPX21 is now $38.09/mo after two 2026 price rises.
-  - Its ~€4 EU plans are "currently unavailable".
-- **One host for two jobs (2026-10-09).** The same server also runs the
-  user's personal automation agent: Claude Code with Remote Control and a
-  signed-in headful Chrome (`michaeltingley/ai-tools`, `automation-host/`).
-  `docs/SHARED-HOST.md` is the contract between the two, and its isolation
-  rules protect this project's policy guarantees from the agent.
-- **Recommended: OVHcloud US VPS-2 in Vint Hill, VA, at $10.00/mo month to
-  month** ($8.50 on a 12-month term).
-  - 4 vCPU / 8 GB / 75 GB NVMe; IPv4 and traffic included.
-  - VPS-1 (4 GB) fit Beeper alone, but Chrome and Claude sessions push the
-    shared host to ~4–5 GB.
-  - US East because Beeper's own backend is in the EU (Hetzner + AWS
-    Frankfurt). See `docs/HOSTING-OPTIONS.md`.
-  - **Waiting on the user's go-ahead.** The order, payment, and any OVH ID
-    verification are theirs.
+- **The host exists.**
+  - OVHcloud US VPS-1: 2 vCore / 4 GB / 40 GB NVMe, in Vint Hill, VA.
+  - Ubuntu 26.04 LTS, $5.35/mo, no commitment. Ordered 2026-10-09.
+  - It runs the automation host from `michaeltingley/ai-tools`
+    (`automation-host/`).
+  - It is connected to Claude as a Remote Control **bridge environment**. Find
+    it with `list_environments`; its kind is `bridge`.
+- **Host work runs as sessions on that environment, not over SSH.**
+  - Cloud sessions can't SSH: their only egress is an HTTPS proxy that
+    re-terminates TLS.
+  - So the orchestrator starts sessions on the bridge with `create_session`
+    and that `environment_id`. Those sessions run on the box itself.
+- **Owner decision: same Unix user, risk accepted.**
+  - Claude Messenger runs as the same user as the agent and every other
+    Claude session on the box.
+  - Any of those sessions can read the Beeper token and bypass the policy
+    layer. The owner accepted this.
+  - Policy and audit still govern everything that reaches Beeper only through
+    MCP.
+  - `docs/SHARED-HOST.md` rules 1–2 (separate users, no general sudo) are
+    therefore waived. The display and VNC hardening from #17 stays.
+- **Memory.**
+  - 4 GB plus swap; Chrome and other Claude sessions already run there.
+  - Measure after Beeper's first sync. Upgrade in place to VPS-2 (8 GB,
+    $10/mo) if it's tight; that keeps the data and IP.
+- **Who uses the MCP.** Claude sessions on the VPS, via
+  `http://127.0.0.1:8484/mcp`. claude.ai's cloud can't reach a tailnet-only
+  endpoint.
 
 ## NEXT ACTION (for the picking-up session)
 
-Follow the provisioning sequence in `docs/SHARED-HOST.md`:
+1. **Install Claude Messenger on the VPS.** A session on the bridge
+   environment is doing this, started by the orchestrator on 2026-10-12. It
+   follows `deploy/bootstrap.sh`:
+   - Beeper Desktop under Xvfb on :99.
+   - The user signs in through `deploy/signin-surface.sh`'s tailnet link.
+   - The token goes into `.env` through a terminal on that same screen. It
+     never passes through chat.
+   - Then `doctor` green, the surface closed, and the MCP service up.
+   - Then `claude mcp add` for sessions on the box.
+2. **Land the repo fixes it reports.** Expect apt package names that differ on
+   26.04, because bootstrap's list was written for 24.04.
+3. **Record memory after the first sync** and decide on VPS-2.
+4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
+   internet, or restrict it to the owner's IP.
+5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
+   Orchestrator-started sessions on the VPS may make it unnecessary.
+6. **Projects (beta).** The owner may move this work into a Claude project.
+   Its threads start VPS sessions for host work, the same way the
+   orchestrator does.
 
-1. ~~Claude: land the isolation prerequisites in `deploy/`~~ **Done**
-   (2026-10-09):
-   - The Xvfb display requires its owner-only X cookie.
-   - The VNC hop demands a password, minted per `up` and deleted on `down`.
-   - `bootstrap.sh` locks the home directory.
-   - Proven against the real binaries in
-     `test/display-isolation.integration.test.ts`.
-2. **The user** orders VPS-2 (Virginia, Ubuntu 24.04, monthly billing) and
-   installs the Tailscale app on their phone.
-   - The VPS has no cloud-init user-data. Put an SSH public key on it with the
-     OVH control panel's reinstall, or with the API's `rebuild`, which also
-     takes `postInstallScript`.
-   - Generate a fresh keypair for this. Keys in a cloud container die with
-     the container (see gotchas).
-3. Over SSH, run the `deploy/bootstrap.sh` flow:
-   - Join Tailscale (the user clicks the URL).
-   - Install Beeper Desktop and serve noVNC on the tailnet.
-   - Sign in to Beeper Desktop. **The user types the emailed code and the
-     recovery key.**
-   - Mint the token in-app and write `.env`.
-   - Run `doctor`; it must be green.
-   - Start the systemd service.
-   - Expose it on the tailnet with `tailscale serve`.
-   - Tear down the sign-in surface.
-4. Lock down public SSH once tailnet SSH works.
-5. Install the agent layer from `ai-tools/automation-host`, then run its
-   server-day test. Both are owned there, not here.
-6. Re-evaluate the session-channel relay before building it. The agent on the
-   host may make it unnecessary (`docs/SHARED-HOST.md`).
+### Hosting history (kept short)
+
+- Oracle Always Free is dead: the home region `us-sanjose-1` has a permanent
+  capacity wall, and the owner rejected PAYG because it has no hard cap.
+  - Leftover network there (VCN, gateway, subnet) is free and can be deleted.
+- Hetzner is out: US 4 GB is $38/mo, and its EU 4 GB plans are unavailable.
+- Full comparison: `docs/HOSTING-OPTIONS.md`.
 
 ## Notes / gotchas
 
@@ -128,6 +117,8 @@ Follow the provisioning sequence in `docs/SHARED-HOST.md`:
   - Anything a later session needs must be committed.
   - Keys belong with the user or on the host, never only in a container.
 - **Never install Beeper Server.** See above.
+- **Cloud sessions can't add GitHub deploy keys.** That API path is blocked
+  through their proxy. Add deploy keys in the GitHub UI.
 - The user wants maximum autonomy ("do everything I can't"). The irreducibly
   human steps are:
   - account signups (card, CAPTCHA, ID checks);
