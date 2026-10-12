@@ -87,26 +87,43 @@ passed end to end: config → connection → auth → policy.
     already runs `claude remote-control` in its work folder);
   - in a session started on the VPS's bridge environment.
 
+  Anything that checks the box, such as a scheduled health check, has to run
+  on the box too. A cloud thread can't reach it.
+
 ## NEXT ACTION (for the picking-up session)
 
 1. **Install Claude Messenger on the VPS.** A first VPS session ran
    preflight on 2026-10-12. It was then stopped partway through the install,
-   when the owner moved the work into a Project.
-   - Check what it left before redoing anything: `~/claude-messenger`,
-     `/opt/beeper`, the xvfb, beeper-desktop, x11vnc and novnc user units, and
-     `deploy/signin-surface.sh status`. Close the surface if it's up.
-   - Then follow `deploy/bootstrap.sh`:
+   when the owner moved the work into a Project. Its last status line read
+   "Installing X helpers and writing token-capture script".
+   - Check what it left before redoing anything:
+     - `~/claude-messenger`, `/opt/beeper`, and the user units from
+       `deploy/systemd/`;
+     - `deploy/signin-surface.sh status`; close the surface if it's up;
+     - any token-capture script it wrote. Read it, then delete it; the next
+       bullet replaces it.
+   - **First, make the install runnable from a session, in the repo.**
+     `deploy/bootstrap.sh` expects a person at its terminal. It prompts there
+     for Enter once Beeper has synced, and for the token.
+     - Run by a Claude session, it exits before step 1. It rebinds stdin to
+       `/dev/tty`, and the session's shell has no terminal. (Checked in a
+       cloud session on 2026-10-12.)
+     - The token is the hard part. It must reach `.env` without passing
+       through chat; the plan is a terminal on the Beeper screen, where the
+       owner types it.
+     - Land this in `deploy/` with a test. Improvised on the box, it would be
+       improvised again on every reinstall.
+   - Then install, following `deploy/bootstrap.sh`:
      - Beeper Desktop under Xvfb on :99.
-     - The user signs in through `deploy/signin-surface.sh`'s tailnet link.
-     - The token goes into `.env` through a terminal on that same screen. It
-       never passes through chat.
+     - The owner signs in through `deploy/signin-surface.sh`'s tailnet link,
+       then enters the token on that same screen.
      - Then `doctor` green, the surface closed, and the MCP service up.
      - Then `claude mcp add` for sessions on the box.
 2. **Land the repo fixes it reports.** Expect apt package names that differ on
    26.04, because bootstrap's list was written for 24.04.
-3. **Remind the owner to upgrade to VPS-2 once setup is done.** He expects
-   4 GB to be too tight for Beeper alongside the agent's Chrome and Claude
-   sessions.
+3. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
+   asked for this reminder, expecting 4 GB to be too tight for Beeper
+   alongside the agent's Chrome and Claude sessions.
    - VPS-2 is 8 GB at $10/mo; OVH upgrades in place.
    - Record memory after Beeper's first sync, so the reminder carries real
      numbers.
