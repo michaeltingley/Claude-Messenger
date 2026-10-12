@@ -73,33 +73,47 @@ passed end to end: config → connection → auth → policy.
     therefore waived. The display and VNC hardening from #17 stays.
 - **Memory.**
   - 4 GB plus swap; Chrome and other Claude sessions already run there.
+  - Preflight on 2026-10-12, before any Beeper install: 3.8 GB total, about
+    2 GB available, 560 MB of the 4 GB swap in use.
   - Measure after Beeper's first sync. Upgrade in place to VPS-2 (8 GB,
     $10/mo) if it's tight; that keeps the data and IP.
 - **Who uses the MCP.** Claude sessions on the VPS, via
   `http://127.0.0.1:8484/mcp`. claude.ai's cloud can't reach a tailnet-only
   endpoint.
+- **Command center: a Claude Code Project (beta).** The owner runs this work
+  from one project, whose threads start from `CLAUDE.md` and this file. Host
+  work goes either way:
+  - in a project thread that runs on the VPS through Remote Control (the box
+    already runs `claude remote-control` in its work folder);
+  - in a session started on the VPS's bridge environment.
 
 ## NEXT ACTION (for the picking-up session)
 
-1. **Install Claude Messenger on the VPS.** A session on the bridge
-   environment is doing this, started by the orchestrator on 2026-10-12. It
-   follows `deploy/bootstrap.sh`:
-   - Beeper Desktop under Xvfb on :99.
-   - The user signs in through `deploy/signin-surface.sh`'s tailnet link.
-   - The token goes into `.env` through a terminal on that same screen. It
-     never passes through chat.
-   - Then `doctor` green, the surface closed, and the MCP service up.
-   - Then `claude mcp add` for sessions on the box.
+1. **Install Claude Messenger on the VPS.** A first VPS session ran
+   preflight on 2026-10-12. It was then stopped partway through the install,
+   when the owner moved the work into a Project.
+   - Check what it left before redoing anything: `~/claude-messenger`,
+     `/opt/beeper`, the xvfb, beeper-desktop, x11vnc and novnc user units, and
+     `deploy/signin-surface.sh status`. Close the surface if it's up.
+   - Then follow `deploy/bootstrap.sh`:
+     - Beeper Desktop under Xvfb on :99.
+     - The user signs in through `deploy/signin-surface.sh`'s tailnet link.
+     - The token goes into `.env` through a terminal on that same screen. It
+       never passes through chat.
+     - Then `doctor` green, the surface closed, and the MCP service up.
+     - Then `claude mcp add` for sessions on the box.
 2. **Land the repo fixes it reports.** Expect apt package names that differ on
    26.04, because bootstrap's list was written for 24.04.
-3. **Record memory after the first sync** and decide on VPS-2.
+3. **Remind the owner to upgrade to VPS-2 once setup is done.** He expects
+   4 GB to be too tight for Beeper alongside the agent's Chrome and Claude
+   sessions.
+   - VPS-2 is 8 GB at $10/mo; OVH upgrades in place.
+   - Record memory after Beeper's first sync, so the reminder carries real
+     numbers.
 4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
 5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
    Orchestrator-started sessions on the VPS may make it unnecessary.
-6. **Projects (beta).** The owner may move this work into a Claude project.
-   Its threads start VPS sessions for host work, the same way the
-   orchestrator does.
 
 ### Hosting history (kept short)
 
