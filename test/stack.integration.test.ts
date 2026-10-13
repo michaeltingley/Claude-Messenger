@@ -149,7 +149,7 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     });
     expect(result.isError ?? false).toBe(false);
     expect(JSON.parse(text(result))).toEqual({ ok: true });
-    expect(mock.requests.some((r) => r.method === 'POST' && r.path.endsWith('/read'))).toBe(true);
+    expect(mock.requests.some((r) => r.method === 'POST' && r.path === '/v1/chats/!chat1:beeper.com/read')).toBe(true);
   });
 
   it('mark_chat_read is denied by this policy (capability off)', async () => {
