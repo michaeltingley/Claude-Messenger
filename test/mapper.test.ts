@@ -56,6 +56,20 @@ describe('mapper', () => {
     expect(message.replyToMessageId).toBe('m0');
   });
 
+  it('says what kind each message is, "other" for a type newer than this app, and nothing when the wire is silent', () => {
+    const wire = { id: 'm1', accountID: 'a1', chatID: 'c1', senderID: 's1', sortKey: '1', timestamp: '2026-01-01T00:00:00Z' };
+    expect(toMessage({ ...wire, type: 'REACTION' } as never).kind).toBe('reaction');
+    expect(toMessage({ ...wire, type: 'VOICE' } as never).kind).toBe('voice');
+    expect(toMessage({ ...wire, type: 'POLL' } as never).kind).toBe('other');
+    expect(toMessage(wire as never).kind).toBeUndefined();
+  });
+
+  it('keeps whether Beeper hides a message from the chat', () => {
+    const wire = { id: 'm1', accountID: 'a1', chatID: 'c1', senderID: 's1', sortKey: '1', timestamp: '2026-01-01T00:00:00Z' };
+    expect(toMessage({ ...wire, isHidden: true } as never).isHidden).toBe(true);
+    expect(toMessage(wire as never).isHidden).toBeUndefined();
+  });
+
   it('degrades gracefully when both network and bridge are absent (pre-4.2.785 Beeper Desktop)', () => {
     const account = toAccount({ accountID: 'a1', user: { id: 'me' } } as never);
     expect(account.network).toBe('unknown');

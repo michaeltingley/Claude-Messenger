@@ -59,6 +59,24 @@ export interface Reaction {
   participantId: string;
 }
 
+/**
+ * What a message is. A reaction, a notice or a sticker is not something a
+ * person wrote, which matters to anything that acts on what was said.
+ * 'other' is a kind this app does not know yet.
+ */
+export type MessageKind =
+  | 'text'
+  | 'notice'
+  | 'image'
+  | 'video'
+  | 'voice'
+  | 'audio'
+  | 'file'
+  | 'sticker'
+  | 'location'
+  | 'reaction'
+  | 'other';
+
 export interface Message {
   id: string;
   chatId: string;
@@ -68,11 +86,15 @@ export interface Message {
   isFromMe: boolean;
   /** ISO 8601 timestamp. */
   timestamp: string;
+  /** Left out when the provider doesn't say. */
+  kind?: MessageKind;
   text?: string;
   attachments: AttachmentSummary[];
   reactions: Reaction[];
   isUnread?: boolean;
   isDeleted?: boolean;
+  /** Kept out of the chat's normal display by the provider. */
+  isHidden?: boolean;
   /** ID of the message this one replies to, if any. */
   replyToMessageId?: string;
 }

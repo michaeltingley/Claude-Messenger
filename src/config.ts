@@ -14,7 +14,7 @@ const EndpointSchema = z.object({
   BEEPER_BASE_URL: z.string().url().default('http://localhost:23373'),
 });
 
-/** Set but empty reads as unset, as in a .env copied from .env.example. */
+/** Set but empty reads as unset: `BEEPER_POLL_INTERVAL_MS=` means the default. */
 const unsetIfEmpty = (value: unknown) => (value === '' ? undefined : value);
 
 const ConfigSchema = EndpointSchema.extend({
@@ -38,11 +38,12 @@ const ConfigSchema = EndpointSchema.extend({
   CLAUDE_MESSENGER_MCP_TOKEN: z.string().optional(),
   /**
    * How often a message watch (`mentions`) asks Beeper for new messages.
-   * Lower answers sooner and asks Beeper more often.
+   * Lower notices a mention sooner and asks Beeper more often; more than
+   * once a second gains a person nothing.
    */
   BEEPER_POLL_INTERVAL_MS: z.preprocess(
     unsetIfEmpty,
-    z.coerce.number().int().min(100).max(60_000).default(5_000),
+    z.coerce.number().int().min(1_000).max(60_000).default(5_000),
   ),
 });
 

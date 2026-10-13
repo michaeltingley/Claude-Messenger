@@ -4,6 +4,7 @@ import type {
   AttachmentSummary,
   Chat,
   Message,
+  MessageKind,
   Page,
   Participant,
   Reaction,
@@ -88,6 +89,27 @@ function toReaction(r: NonNullable<WireMessage['reactions']>[number]): Reaction 
   return { key: r.reactionKey, participantId: r.participantID };
 }
 
+/** The wire's message types, by this app's names for them. */
+const KINDS = new Map<string, MessageKind>(
+  Object.entries({
+    TEXT: 'text',
+    NOTICE: 'notice',
+    IMAGE: 'image',
+    VIDEO: 'video',
+    VOICE: 'voice',
+    AUDIO: 'audio',
+    FILE: 'file',
+    STICKER: 'sticker',
+    LOCATION: 'location',
+    REACTION: 'reaction',
+  } satisfies Record<NonNullable<WireMessage['type']>, MessageKind>),
+);
+
+/** A type newer than this app is 'other', so nothing mistakes it for text. */
+function toKind(type: string | undefined): MessageKind | undefined {
+  return type === undefined ? undefined : (KINDS.get(type) ?? 'other');
+}
+
 export function toMessage(m: WireMessage): Message {
   return {
     id: m.id,
@@ -97,11 +119,13 @@ export function toMessage(m: WireMessage): Message {
     senderName: m.senderName,
     isFromMe: m.isSender ?? false,
     timestamp: m.timestamp,
+    kind: toKind(m.type),
     text: m.text,
     attachments: (m.attachments ?? []).map(toAttachment),
     reactions: (m.reactions ?? []).map(toReaction),
     isUnread: m.isUnread,
     isDeleted: m.isDeleted,
+    isHidden: m.isHidden,
     replyToMessageId: m.linkedMessageID,
   };
 }

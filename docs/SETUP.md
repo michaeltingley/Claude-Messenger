@@ -110,17 +110,23 @@ Ask Claude: *"Use check_connection then search_chats to show my unread chats."*
 
 **Hosted / remote clients**: run `claude-messenger serve --http` (requires `CLAUDE_MESSENGER_MCP_TOKEN`) and connect with `claude mcp add claude-messenger --transport http https://<host>/mcp --header "Authorization: Bearer <mcp-token>"`. The full 24/7 host recipe is **[DEPLOY.md](DEPLOY.md)**.
 
-## 4. Follow your @Claude mentions
-
-```sh
-npx claude-messenger mentions                                  # from now on
-npx claude-messenger mentions --since 2026-10-13T09:00:00Z     # catch up first
-```
-
-It prints each message **you** send that mentions `@Claude`, in any chat the policy shows, as one JSON line, until Ctrl-C (or SIGTERM). Nobody else's message counts, whatever it says, and the command reads only your own messages. It checks Beeper every 5 seconds (`BEEPER_POLL_INTERVAL_MS`). Each message it reads is in the audit log as a chat and message ID, never its text. This is the first step of the @Claude assistant: nothing answers yet.
-
 ### Token hygiene
 
 - Revoke any token instantly: Beeper → Settings → Integrations → Approved connections.
 - One token per consumer (one for this project, one per experiment) so revocation is surgical.
 - Rotate a token you've ever pasted into a chat or shared screen. `connect` never shows its token, so there is nothing to paste.
+
+## 4. Follow your @Claude mentions
+
+```sh
+npx claude-messenger mentions                                  # from now on
+npx claude-messenger mentions --since 2026-10-13T09:00:00Z     # catch up first (a time with its zone)
+```
+
+It prints each message you send that mentions `@Claude` as one JSON line (`id`, `chatId`, `accountId`, `timestamp`, `text`, and `replyToMessageId` for a reply), until Ctrl-C or SIGTERM. This is the first step of the @Claude assistant: nothing answers yet.
+
+- **Only your own words count.** It reads only messages you send, in chats the policy shows. A mention inside a quote, in a reply's copy of the message it answers, in a reaction, or in a pill naming a person in the chat doesn't count. A message you forward, or one an app sends as you, can't be told apart from one you typed, so it does.
+- **Timing.** It asks Beeper every 5 seconds (`BEEPER_POLL_INTERVAL_MS`, 1000 to 60000). A message that reaches Beeper late, as when a bridge reconnects, is still caught up to 10 minutes late, and missed after that. It catches up on at most 1,000 of your messages at once; past that it stops and says to watch from a later time.
+- **What it misses.** It sees a message once, as it first arrives, so a later edit or deletion isn't seen. Mentions sent while it isn't running are missed unless the next run starts with a `--since` before them.
+- **Failures.** If Beeper fails or stops accepting the token, it exits 1 with the error. It doesn't retry.
+- **Audit.** Each message of yours it reads is in the audit log by chat and message ID, never its text.

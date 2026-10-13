@@ -113,7 +113,8 @@ export class BeeperMessenger implements Messenger {
           dateBefore: query.dateBefore,
           mediaTypes: query.mediaTypes,
           includeMuted: query.includeMuted,
-          limit: query.limit ?? 20,
+          // A larger limit gets fewer, with a cursor to the rest, as paging allows.
+          limit: Math.min(query.limit ?? SEARCH_PAGE_LIMIT, SEARCH_PAGE_LIMIT),
           cursor: query.cursor,
         }),
         toMessage,
@@ -137,14 +138,17 @@ export class BeeperMessenger implements Messenger {
                 {
                   sender: query.sender,
                   dateAfter: request.dateAfter,
-                  // Search leaves out low-priority chats unless told not to;
-                  // a watch covers every chat, as the policy filters them.
+                  // Search leaves out low-priority chats by default. A watch
+                  // reads every chat the policy shows, so it asks for them too.
                   excludeLowPriority: false,
                   includeMuted: true,
                   limit: SEARCH_PAGE_LIMIT,
                   cursor: request.cursor,
                 },
-                { signal: request.signal },
+                // No retries: the SDK waits between them as long as Beeper's
+                // Retry-After says, and an abort can't cut that wait short. A
+                // failure ends the watch instead, as its contract says.
+                { signal: request.signal, maxRetries: 0 },
               ),
               toMessage,
             ),

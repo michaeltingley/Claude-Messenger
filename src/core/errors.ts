@@ -37,6 +37,16 @@ export class ProviderError extends MessengerError {
   }
 }
 
+/**
+ * A watch was asked to catch up on more messages than it takes at once. It
+ * fails rather than skip any; watching from a later time asks for fewer.
+ */
+export class BacklogTooLargeError extends MessengerError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'backlog_too_large', options);
+  }
+}
+
 /** The owner declined the provider's approval prompt for this app's credential. */
 export class AccessDeniedError extends MessengerError {
   constructor(message: string, options?: ErrorOptions) {

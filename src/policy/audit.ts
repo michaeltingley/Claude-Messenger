@@ -6,7 +6,8 @@ import { join } from 'node:path';
  *
  * Content policy: outbound message text IS recorded (the user must be able
  * to review exactly what was said on their behalf); message content that was
- * merely read is NOT recorded — only which chats/queries were accessed.
+ * merely read is NOT recorded — only which chats/queries were accessed, and
+ * which messages a watch handed on, by ID.
  */
 export interface AuditEntry {
   ts: string;

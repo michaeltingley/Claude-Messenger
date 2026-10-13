@@ -32,6 +32,9 @@ export interface WireMessage {
   sortKey: string;
   timestamp: string;
   text?: string;
+  type?: string;
+  isDeleted?: boolean;
+  isHidden?: boolean;
   attachments?: Array<{ type: 'unknown' | 'img' | 'video' | 'audio'; fileName?: string }>;
 }
 
@@ -40,6 +43,8 @@ export interface RecordedRequest {
   path: string;
   query: URLSearchParams;
   body?: unknown;
+  /** When it arrived, in ms since the epoch. */
+  at: number;
 }
 
 export function wireChat(overrides: Partial<WireChat> = {}): WireChat {
@@ -213,12 +218,13 @@ export class MockBeeperServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const at = Date.now();
     const url = new URL(req.url ?? '/', 'http://mock');
     const fullPath = decodeURIComponent(url.pathname);
     const prefixed = fullPath.startsWith(`${this.pathPrefix}/`);
     const path = prefixed ? fullPath.slice(this.pathPrefix.length) : fullPath;
     const body = await this.readBody(req);
-    this.requests.push({ method: req.method ?? '', path, query: url.searchParams, body });
+    this.requests.push({ method: req.method ?? '', path, query: url.searchParams, body, at });
 
     const send = (status: number, payload: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json' });
@@ -328,13 +334,15 @@ export class MockBeeperServer {
 
   /**
    * Message search as Beeper's published API reference describes it: filters
-   * by word, sender ('me', 'others' or a user ID), chats, accounts and time
-   * (both bounds exclusive); leaves out low-priority chats unless
+   * by exact words in any order, sender ('me', 'others' or a user ID),
+   * chats, accounts and time (both bounds exclusive, and a bound that is not
+   * a time is refused); leaves out low-priority chats unless
    * excludeLowPriority=false, and muted ones only when includeMuted=false;
    * pages of at most 20 (the reference's maximum, so more is refused here:
    * whether Beeper refuses or trims it is unverified), newest page first,
    * with a cursor to the next older page. Within a page the newest comes
-   * last, as in the reference's example.
+   * last, as in the reference's example. The cursor is this mock's own: an
+   * offset into the results, which a real one need not be.
    */
   private searchMessages(
     params: URLSearchParams,
@@ -345,19 +353,25 @@ export class MockBeeperServer {
     if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
       return error(400, 'invalid_request', `limit must be an integer from 1 to 20, got ${params.get('limit')}`);
     }
-    const q = params.get('query')?.toLowerCase();
+    const bound = (name: string, unset: number) => (params.has(name) ? Date.parse(params.get(name)!) : unset);
+    const after = bound('dateAfter', -Infinity);
+    const before = bound('dateBefore', Infinity);
+    if (Number.isNaN(after) || Number.isNaN(before)) {
+      return error(400, 'invalid_request', 'dateAfter and dateBefore must be ISO 8601 times');
+    }
+    const wordsOf = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    const wanted = wordsOf(params.get('query') ?? '');
     const sender = params.get('sender');
     const chatIDs = params.getAll('chatIDs');
     const accountIDs = params.getAll('accountIDs');
-    const after = params.has('dateAfter') ? Date.parse(params.get('dateAfter')!) : -Infinity;
-    const before = params.has('dateBefore') ? Date.parse(params.get('dateBefore')!) : Infinity;
     const excludeLowPriority = params.get('excludeLowPriority') !== 'false';
     const includeMuted = params.get('includeMuted') !== 'false';
     const chat = (id: string) => this.chats.find((c) => c.id === id);
     const matches = this.messages.filter((m) => {
       const at = Date.parse(m.timestamp);
+      const words = new Set(wordsOf(m.text ?? ''));
       return (
-        (!q || m.text?.toLowerCase().includes(q)) &&
+        wanted.every((w) => words.has(w)) &&
         (sender === null ||
           (sender === 'me' ? m.isSender === true : sender === 'others' ? m.isSender !== true : m.senderID === sender)) &&
         (chatIDs.length === 0 || chatIDs.includes(m.chatID)) &&

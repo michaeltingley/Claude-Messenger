@@ -243,6 +243,10 @@ export class GuardedMessenger implements Messenger {
    * never), and the outcome when the watch ends (best-effort). All share an
    * opId. Idle polls write nothing, so a watch left running for days adds
    * an entry per delivered message rather than per poll.
+   *
+   * A watch for the user's own messages hands on nothing else, whatever the
+   * provider returns: what other people write must never reach an
+   * automation that acts on the user's words.
    */
   async *watchMessages(query: MessageWatchQuery, signal: AbortSignal): AsyncGenerator<Message, void, undefined> {
     const name = 'watchMessages';
@@ -263,6 +267,7 @@ export class GuardedMessenger implements Messenger {
     let failure: unknown;
     try {
       for await (const message of this.inner.watchMessages(query, signal)) {
+        if (!message.isFromMe) continue; // `sender: 'me'` is the only query there is
         if (!this.engine.chatVisible({ id: message.chatId, accountId: message.accountId })) continue;
         await this.audit.record({
           ts: this.now().toISOString(),
