@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AuthError, ConnectionError, NotFoundError, ProviderError } from '../src/core/errors.js';
 import type { Message, MessageListQuery, Page } from '../src/core/types.js';
-import { ActivityCollector, DEFAULT_ACTIVITY_LIMITS, type ActivityLimits } from '../src/digest/activity.js';
+import { ActivityCollector, DEFAULT_ACTIVITY_LIMITS, type ActivityLimits } from '../src/assistant/digest/activity.js';
 import { FakeMessenger, makeChat, makeMessage } from './fake-messenger.js';
 
 const since = new Date('2026-10-12T14:46:00Z');
@@ -47,11 +47,11 @@ describe('ActivityCollector', () => {
     expect(ids(activity.chats[0]!.messages)).toEqual(['in-1', 'in-2']);
     expect(ids(activity.chats[0]!.earlier)).toEqual(['before-2', 'before-1']);
     expect(activity.chats[0]!.truncated).toBe(false);
-    expect(activity).toMatchObject({ window, unreadable: [], moreChats: false });
+    expect(activity).toMatchObject({ window, unreadable: 0, partial: 0, moreChats: false });
   });
 
-  it('covers only chats active in the window, in the main inbox', async () => {
-    const fake = new FakeMessenger();
+  it('reads only chats active in the window, in the main inbox', async () => {
+    const fake = new CountingMessenger();
     fake.chats = [
       activeChat('active'),
       activeChat('quiet', { lastActivity: at(-60) }),
@@ -60,6 +60,25 @@ describe('ActivityCollector', () => {
     fake.messages = [message('m1', 'active', 5), message('m2', 'archived', 5)];
     const activity = await collector(fake).collect(window);
     expect(activity.chats.map((c) => c.chat.id)).toEqual(['active']);
+    expect(fake.listed).toEqual(['active']);
+  });
+
+  it("counts a message at the window's very end in it, and one at its very start as before it", async () => {
+    const fake = new FakeMessenger();
+    fake.chats = [activeChat('c1')];
+    fake.messages = [message('at-start', 'c1', 0), message('at-end', 'c1', 24 * 60)];
+    const [chat] = (await collector(fake).collect(window)).chats;
+    expect(ids(chat!.messages)).toEqual(['at-end']);
+    expect(ids(chat!.earlier)).toEqual(['at-start']);
+  });
+
+  it('passes over a message whose time it cannot read', async () => {
+    const fake = new FakeMessenger();
+    fake.chats = [activeChat('c1')];
+    fake.messages = [message('in', 'c1', 5), makeMessage({ id: 'garbled', chatId: 'c1', timestamp: 'yesterday-ish' })];
+    const [chat] = (await collector(fake).collect(window)).chats;
+    expect(ids(chat!.messages)).toEqual(['in']);
+    expect(chat!.earlier).toEqual([]);
   });
 
   it('leaves out a chat whose activity in the window left no message to show', async () => {
@@ -94,14 +113,29 @@ describe('ActivityCollector', () => {
     expect(ids(activity.chats[0]!.messages)).toEqual(['in']);
   });
 
-  it('keeps the newest messages of a busy chat, and says older ones in the window were left out', async () => {
-    const fake = new FakeMessenger();
+  it.each([Infinity, 2])(
+    'keeps the newest messages of a busy chat, says older ones in the window were left out, and keeps no context from before it (%s a page)',
+    async (pageSize) => {
+      const fake = new FakeMessenger();
+      fake.pageSize = pageSize;
+      fake.chats = [activeChat('c1')];
+      fake.messages = [message('before', 'c1', -5), ...[1, 2, 3, 4, 5].map((n) => message(`in-${n}`, 'c1', n))];
+      const activity = await collector(fake, { messagesPerChat: 2 }).collect(window);
+      expect(ids(activity.chats[0]!.messages)).toEqual(['in-4', 'in-5']);
+      expect(activity.chats[0]!.truncated).toBe(true);
+      // What came before the window wouldn't come right before what was kept.
+      expect(activity.chats[0]!.earlier).toEqual([]);
+      expect(activity.partial).toBe(1);
+    },
+  );
+
+  it('stops reading a busy chat as soon as it has more than it keeps', async () => {
+    const fake = new CountingMessenger();
+    fake.pageSize = 2;
     fake.chats = [activeChat('c1')];
-    fake.messages = [1, 2, 3, 4, 5].map((n) => message(`in-${n}`, 'c1', n));
-    const activity = await collector(fake, { messagesPerChat: 2 }).collect(window);
-    expect(ids(activity.chats[0]!.messages)).toEqual(['in-4', 'in-5']);
-    expect(activity.chats[0]!.truncated).toBe(true);
-    expect(activity.chats[0]!.earlier).toEqual([]); // the window's start isn't shown, so neither is what came before it
+    fake.messages = Array.from({ length: 10 }, (_, n) => message(`in-${n}`, 'c1', n + 1));
+    await collector(fake, { messagesPerChat: 2 }).collect(window);
+    expect(fake.listed).toEqual(['c1', 'c1']);
   });
 
   it('reads a chat only as far back as it needs, not its whole history', async () => {
@@ -141,6 +175,20 @@ describe('ActivityCollector', () => {
     expect(fake.listed).toHaveLength(2);
     expect(activity.chats[0]!.messages).toHaveLength(10);
     expect(activity.chats[0]!.truncated).toBe(true);
+    expect(activity.partial).toBe(1);
+  });
+
+  it("counts a chat it couldn't finish reading even when nothing it read shows", async () => {
+    const fake = new FakeMessenger();
+    fake.pageSize = 2;
+    fake.chats = [activeChat('c1')];
+    fake.messages = [
+      message('are-you-coming', 'c1', 1),
+      ...Array.from({ length: 6 }, (_, n) => message(`hidden-${n}`, 'c1', 10 + n, { isHidden: true })),
+    ];
+    const activity = await collector(fake, { pagesPerChat: 2 }).collect(window);
+    expect(activity.chats).toEqual([]);
+    expect(activity.partial).toBe(1);
   });
 
   it('pages through the chat search, and stops at its chat limit, saying there were more', async () => {
@@ -173,7 +221,7 @@ describe('ActivityCollector', () => {
     expect(activity.chats.map((c) => c.chat.id)).toEqual(['late', 'middle', 'early']);
   });
 
-  it("goes on past a chat that fails on its own, and says which one and why", async () => {
+  it('goes on past a chat that fails on its own, and counts it', async () => {
     class Failing extends FakeMessenger {
       override listMessages(chatId: string, query?: MessageListQuery): Promise<Page<Message>> {
         if (chatId === 'broken') return Promise.reject(new ProviderError('Beeper API error (500): bridge down'));
@@ -186,10 +234,7 @@ describe('ActivityCollector', () => {
     fake.messages = [message('m1', 'fine', 5)];
     const activity = await collector(fake).collect(window);
     expect(activity.chats.map((c) => c.chat.id)).toEqual(['fine']);
-    expect(activity.unreadable.map(({ chat, reason }) => [chat.id, reason])).toEqual([
-      ['broken', 'Beeper API error (500): bridge down'],
-      ['vanished', 'no such chat'],
-    ]);
+    expect(activity.unreadable).toBe(2);
   });
 
   it('fails as a whole when no chat could be read, rather than writing a digest of nothing', async () => {

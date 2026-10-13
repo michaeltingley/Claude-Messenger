@@ -90,7 +90,14 @@ export interface Message {
   timestamp: string;
   /** Left out when the provider doesn't say. */
   kind?: MessageKind;
+  /** The text as the provider gives it, which may carry markup such as HTML. */
   text?: string;
+  /**
+   * The text as plain text, as the chat shows it: no markup, and not the
+   * copy of the message it answers that a reply can carry. Present whenever
+   * `text` is.
+   */
+  plainText?: string;
   attachments: AttachmentSummary[];
   reactions: Reaction[];
   isUnread?: boolean;

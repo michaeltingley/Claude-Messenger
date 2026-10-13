@@ -3,10 +3,11 @@ import { writeFile } from 'node:fs/promises';
 import { Command, InvalidArgumentError } from 'commander';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
-import { createAccessRequester, createApp, createLanguageModel } from '../app.js';
+import { createAccessRequester, createApp, createLanguageModel, DEFAULT_LANGUAGE_MODEL } from '../app.js';
+import { ActivityCollector } from '../assistant/digest/activity.js';
+import { DigestWriter } from '../assistant/digest/digest.js';
+import { hostTimeZone, isTimeZone } from '../assistant/digest/time.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
-import { DigestWriter } from '../digest/digest.js';
-import { hostTimeZone, isTimeZone } from '../digest/time.js';
 import { createMcpServer } from '../mcp/server.js';
 import { startHttpMcpServer } from '../mcp/http.js';
 import { DEFAULT_POLICY } from '../policy/policy.js';
@@ -88,15 +89,30 @@ function parseLimit(value: string): number {
   return n;
 }
 
-/** A week at most: a digest is for catching up, not for reading history. */
-const MAX_DIGEST_HOURS = 168;
+/**
+ * An ISO 8601 date and time with its zone, so it names the same moment on
+ * every machine. Date.parse alone reads far more ("5" is May 2001) and
+ * rolls an impossible date over (February 30 is March 2).
+ */
+const ISO_TIME = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-function parseHours(value: string): number {
-  const n = Number(value);
-  if (!Number.isInteger(n) || n < 1 || n > MAX_DIGEST_HOURS) {
-    throw new InvalidArgumentError(`must be a whole number of hours from 1 to ${MAX_DIGEST_HOURS}`);
+/** A week at most: a digest is for catching up, not for reading history. */
+const MAX_DIGEST_DAYS = 7;
+
+/** Where a digest starts: a time with its zone, within the last week. */
+function parseSince(value: string): Date {
+  const parts = ISO_TIME.exec(value);
+  const ms = Date.parse(value);
+  const dayExists = (year: number, month: number, day: number) =>
+    new Date(Date.UTC(year, month - 1, day)).getUTCDate() === day;
+  if (parts === null || Number.isNaN(ms) || !dayExists(Number(parts[1]), Number(parts[2]), Number(parts[3]))) {
+    throw new InvalidArgumentError('must be a date and time with its zone, like 2026-10-12T07:46:00-07:00');
   }
-  return n;
+  const ago = Date.now() - ms;
+  if (ago <= 0 || ago > MAX_DIGEST_DAYS * 86_400_000) {
+    throw new InvalidArgumentError(`must be in the past, at most ${MAX_DIGEST_DAYS} days back`);
+  }
+  return new Date(ms);
 }
 
 function parseTimeZone(value: string): string {
@@ -191,18 +207,19 @@ program
 program
   .command('digest')
   .description('Write a digest of your recent chats: what needs you first, then the rest (needs Claude Code signed in here)')
-  .option('--hours <n>', `how many hours back it covers (1-${MAX_DIGEST_HOURS})`, parseHours, 24)
-  .option('--time-zone <zone>', 'the IANA time zone to give times in', parseTimeZone, hostTimeZone())
-  // A summary doesn't need the largest model, and a smaller one spends less
-  // of the subscription's usage limits.
-  .option('--model <name>', 'the Claude model that writes it', 'sonnet')
-  .action(async (opts: { hours: number; timeZone: string; model: string }) => {
-    const { messenger } = await app();
+  .option(
+    '--since <time>',
+    `where it starts, like 2026-10-12T07:46:00-07:00, at most ${MAX_DIGEST_DAYS} days back (default: 24 hours ago)`,
+    parseSince,
+  )
+  .option('--time-zone <zone>', "the IANA time zone to give times in (default: this host's)", parseTimeZone)
+  .option('--model <name>', 'the Claude model that writes it', DEFAULT_LANGUAGE_MODEL)
+  .action(async (opts: { since?: Date; timeZone?: string; model: string }) => {
     const until = new Date();
-    const since = new Date(until.getTime() - opts.hours * 3_600_000);
-    const writer = new DigestWriter(messenger, createLanguageModel({ model: opts.model }));
-    const digest = await writer.write({ since, until }, { timeZone: opts.timeZone });
-    console.log(digest.text);
+    const since = opts.since ?? new Date(until.getTime() - 24 * 3_600_000);
+    const { messenger } = await app();
+    const writer = new DigestWriter(new ActivityCollector(messenger), createLanguageModel({ model: opts.model }));
+    console.log(await writer.write({ since, until }, opts.timeZone ?? hostTimeZone()));
   });
 
 program

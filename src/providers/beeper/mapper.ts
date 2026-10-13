@@ -9,6 +9,7 @@ import type {
   Participant,
   Reaction,
 } from '../../core/types.js';
+import { plainText } from './plain-text.js';
 
 /** Pure translation from Beeper Client API wire types to domain models. */
 
@@ -122,6 +123,7 @@ export function toMessage(m: WireMessage): Message {
     timestamp: m.timestamp,
     kind: toKind(m.type),
     text: m.text,
+    plainText: m.text === undefined ? undefined : plainText(m.text),
     attachments: (m.attachments ?? []).map(toAttachment),
     reactions: (m.reactions ?? []).map(toReaction),
     isUnread: m.isUnread,

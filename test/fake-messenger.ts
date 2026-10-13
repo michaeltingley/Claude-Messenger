@@ -26,7 +26,9 @@ export function makeChat(overrides: Partial<Chat> = {}): Chat {
   };
 }
 
+/** A message whose plain text is its text, unless the overrides say otherwise. */
 export function makeMessage(overrides: Partial<Message> = {}): Message {
+  const text = 'text' in overrides ? overrides.text : 'hello';
   return {
     id: 'msg-1',
     chatId: 'chat-1',
@@ -35,7 +37,8 @@ export function makeMessage(overrides: Partial<Message> = {}): Message {
     senderName: 'Alice',
     isFromMe: false,
     timestamp: '2026-07-10T00:00:00Z',
-    text: 'hello',
+    text,
+    plainText: text,
     attachments: [],
     reactions: [],
     ...overrides,
@@ -70,7 +73,6 @@ export class FakeMessenger implements Messenger {
     if (query?.unreadOnly) items = items.filter((c) => c.unreadCount > 0);
     // The main inbox is what isn't archived (low priority isn't modelled).
     if (query?.inbox === 'primary') items = items.filter((c) => !c.isArchived);
-    if (query?.inbox === 'archive') items = items.filter((c) => c.isArchived);
     const after = query?.lastActivityAfter;
     if (after !== undefined) {
       items = items.filter((c) => c.lastActivity !== undefined && Date.parse(c.lastActivity) > Date.parse(after));

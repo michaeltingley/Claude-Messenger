@@ -1,6 +1,6 @@
-import { NotFoundError, PolicyDeniedError, ProviderError } from '../core/errors.js';
-import type { Messenger } from '../core/messenger.js';
-import type { Chat, Message } from '../core/types.js';
+import { NotFoundError, PolicyDeniedError, ProviderError } from '../../core/errors.js';
+import type { Messenger } from '../../core/messenger.js';
+import type { Chat, Message } from '../../core/types.js';
 
 /** The span of time a digest covers: after `since`, up to and including `until`. */
 export interface DigestWindow {
@@ -16,6 +16,8 @@ export interface ChatActivity {
   /**
    * The last few messages from before the window, oldest first: what the
    * window's first messages answer, or a question that was already waiting.
+   * None when the window was too busy to read in full, since they wouldn't
+   * come right before what was read.
    */
   earlier: Message[];
   /** True when the window held more messages than were read: the oldest were left out. */
@@ -27,8 +29,13 @@ export interface Activity {
   window: DigestWindow;
   /** Chats with messages in the window, the most recent message first. */
   chats: ChatActivity[];
-  /** Chats with activity in the window whose messages could not be read, and why. */
-  unreadable: Array<{ chat: Chat; reason: string }>;
+  /** How many chats with activity in the window could not be read. */
+  unreadable: number;
+  /**
+   * How many chats had more in the window than was read, whether or not
+   * anything read showed: their oldest messages are left out.
+   */
+  partial: number;
   /** True when more chats had activity than were read. */
   moreChats: boolean;
 }
@@ -74,9 +81,8 @@ export class ActivityCollector {
   async collect(window: DigestWindow): Promise<Activity> {
     const { chats, moreChats } = await this.activeChats(window);
     const read: ChatActivity[] = [];
-    const unreadable: Activity['unreadable'] = [];
     const failures: unknown[] = [];
-    let readable = 0;
+    let partial = 0;
     for (const chat of chats) {
       let activity: ChatActivity;
       try {
@@ -84,16 +90,15 @@ export class ActivityCollector {
       } catch (err) {
         if (!concernsOneChat(err)) throw err;
         failures.push(err);
-        unreadable.push({ chat, reason: err.message });
         continue;
       }
-      readable++;
+      if (activity.truncated) partial++;
       if (activity.messages.length > 0) read.push(activity);
     }
     // When no chat at all could be read, the cause is not any one chat's.
-    if (readable === 0 && failures.length > 0) throw failures[0];
+    if (failures.length > 0 && failures.length === chats.length) throw failures[0];
     read.sort((a, b) => latest(b) - latest(a));
-    return { window, chats: read, unreadable, moreChats };
+    return { window, chats: read, unreadable: failures.length, partial, moreChats };
   }
 
   private async activeChats(window: DigestWindow): Promise<{ chats: Chat[]; moreChats: boolean }> {
@@ -152,14 +157,14 @@ export class ActivityCollector {
       }
       cursor = nextCursor;
     }
-    return { chat, messages: inWindow.reverse(), earlier: earlier.reverse(), truncated };
+    return { chat, messages: inWindow.reverse(), earlier: truncated ? [] : earlier.reverse(), truncated };
   }
 }
 
 /** Whether a message shows in its chat with something in it. */
 function shows(message: Message): boolean {
   if (message.isDeleted || message.isHidden) return false;
-  if (message.text?.trim() || message.attachments.length > 0) return true;
+  if (message.plainText?.trim() || message.attachments.length > 0) return true;
   // A reaction, a sticker or a location can carry no text and still show.
   return message.kind !== undefined && message.kind !== 'text' && message.kind !== 'notice';
 }

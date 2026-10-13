@@ -52,12 +52,26 @@ const PASSED_ON = [
   'SSL_CERT_DIR',
 ] as const;
 
-/** Nothing a run reads may outlive it: no memories, no prompt history, no telemetry. */
 const FIXED_ENV = {
+  // Nothing a run reads may outlive it: no memories, no prompt history, no
+  // telemetry.
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1',
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  // Nothing added to the input. Claude Code attaches whatever an @-mention in
+  // a prompt names, tools or not, so a message naming a file would have it
+  // read that file: the install's .env, say.
+  CLAUDE_CODE_DISABLE_ATTACHMENTS: '1',
 } as const;
+
+/**
+ * The input with each "@" made a full-width "＠", which reads the same but
+ * mentions nothing, so no @-mention reaches Claude Code even if it stops
+ * honoring CLAUDE_CODE_DISABLE_ATTACHMENTS.
+ */
+function inert(input: string): string {
+  return input.replaceAll('@', '＠');
+}
 
 const ARGS = [
   '--print',
@@ -77,6 +91,8 @@ const ARGS = [
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 /** Time between asking a run to stop and making it. */
 const KILL_GRACE_MS = 5_000;
+/** Time after a run exits for its output to finish, should something it started hold it open. */
+const DRAIN_GRACE_MS = 2_000;
 /** An answer is a page of text; far more means something is wrong. */
 const MAX_OUTPUT_CHARS = 1_000_000;
 /** Enough of stderr to say why a run failed. */
@@ -89,7 +105,8 @@ const MAX_REASON_CHARS = 300;
  * with. The run is made so that the content it reads goes nowhere else:
  * - the input travels on stdin, never on a command line, which every local
  *   user can read;
- * - it gets no tools, MCP servers, hooks, plugins or CLAUDE.md;
+ * - it gets no tools, MCP servers, hooks, plugins or CLAUDE.md, and nothing
+ *   is attached to the input, so the input can't have it read a file;
  * - it keeps no transcript, memory or history, and sends no telemetry;
  * - it starts in an empty directory of its own, removed afterwards.
  */
@@ -136,6 +153,7 @@ export class ClaudeCodeModel implements LanguageModel {
       let stderr = '';
       let failure: ModelError | undefined;
       let killTimer: NodeJS.Timeout | undefined;
+      let drainTimer: NodeJS.Timeout | undefined;
 
       const stop = (reason: ModelError) => {
         failure ??= reason;
@@ -172,9 +190,18 @@ export class ClaudeCodeModel implements LanguageModel {
             : new ModelError(`Claude Code could not be started: ${err.message}`, { cause: err }),
         );
       });
+      // A process the run started can hold its output open after it exits;
+      // that must not keep this waiting.
+      child.once('exit', () => {
+        drainTimer = setTimeout(() => {
+          child.stdout.destroy();
+          child.stderr.destroy();
+        }, DRAIN_GRACE_MS);
+      });
       child.once('close', (code, signal) => {
         clearTimeout(timer);
         clearTimeout(killTimer);
+        clearTimeout(drainTimer);
         const answer = stdout.trim();
         if (failure) return reject(failure);
         if (code !== 0) {
@@ -188,7 +215,7 @@ export class ClaudeCodeModel implements LanguageModel {
         resolve(answer);
       });
 
-      child.stdin.end(input, 'utf8');
+      child.stdin.end(inert(input), 'utf8');
     });
   }
 }

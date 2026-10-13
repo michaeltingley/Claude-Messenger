@@ -80,12 +80,14 @@ and `docs/HOSTING-OPTIONS.md`._
 - **Research**:
   - Context engine: `docs/CONTEXT-ENGINE-RESEARCH.md` and `docs/research/`.
   - Hosting: `docs/HOSTING-OPTIONS.md`, re-verified 2026-10-08.
-- **Daily digest**: `claude-messenger digest` reads the last 24 hours of the
-  main inbox through the policy layer and has Claude Code write what needs
-  the owner first, then the rest. It runs on the owner's Claude subscription
-  (Claude Code signed in on the host), never an API key, and its model has
-  no tools. Design: `docs/ARCHITECTURE.md` (Language model, Daily digest).
-  How it runs and reaches the owner: "Daily digest" below.
+- **Daily digest**: `claude-messenger digest` reads a window of the main
+  inbox (the last 24 hours unless `--since` says where it starts) through
+  the policy layer and has Claude Code write what needs the owner first,
+  then the rest. It runs on the owner's Claude subscription (Claude Code
+  signed in on the host), never an API key, and its model has no tools and
+  can't be made to read a file. Design: `docs/ARCHITECTURE.md` (Language
+  model, Daily digest). How it is to run and reach the owner: "Daily
+  digest" below.
 
 ## VERIFIED LIVE
 
@@ -109,20 +111,29 @@ and `docs/HOSTING-OPTIONS.md`._
 
 ## Daily digest (project thread "Daily message digest")
 
-- **On the VPS** it runs from the install, with Claude Code there signed in
-  to the owner's Max plan:
-  `cd ~/claude-messenger && node dist/cli/main.js digest --time-zone America/Los_Angeles`.
+- **Not on the VPS yet**: the box's checkout predates it. Once `main` is
+  pulled and built there, with Claude Code signed in to the owner's Max
+  plan, each morning's run is:
+  `cd ~/claude-messenger && node dist/cli/main.js digest --since "$(TZ=America/Los_Angeles date -d 'yesterday 07:46' -Iseconds)" --time-zone America/Los_Angeles`.
+  - `--since` starts it where the day before's run started, so a late run
+    leaves nothing out between two days.
   - It writes with Sonnet (`--model` to change), which spends less of the
     plan's usage limits than Opus.
+  - It needs a Claude Code new enough for `--safe-mode` (the box has
+    2.1.295). One too old, such as 2.1.42, rejects the flag, so the digest
+    fails with `model_failed` before Claude sees anything.
   - It prints the digest and keeps no copy. The audit log gets its reads,
-    never the words.
+    never the words. The text is in the transcripts of the sessions that
+    carry it: the Remote Control session that runs it and the project
+    thread that posts it.
   - Failing, it prints the reason and no digest: `model_failed` with Claude
     Code's own words (signed out: run `claude`, then `/login`; usage limit
     reached), or Beeper's checklist when Beeper is unreachable.
-- **Delivery, being set up 2026-10-13:** each morning a routine wakes the
-  thread's session, which starts a Remote Control session on the VPS to run
-  the command and send the text back, and then posts it in the thread.
-  Nothing is written to Beeper, so the read-only token stays read-only.
+- **Delivery, being set up 2026-10-13:** each morning at 7:46 AM Pacific a
+  routine wakes the thread's session, which starts a Remote Control session
+  on the VPS to run the command and send the text back, and then posts it
+  in the thread. Nothing is written to Beeper, so the read-only token stays
+  read-only.
 
 ## Decided (2026-10-12): Claude Messenger runs on the automation VPS
 

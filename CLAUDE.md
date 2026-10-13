@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 293 tests / 24 files.
+- `npm test` must be green before any push. Currently 328 tests / 26 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -102,6 +102,10 @@ built for hypothetical futures.
   CI runs it on both Ubuntu 24.04 (systemd 255, too old for `PrivatePIDs`)
   and 26.04 (259), and it asserts the /proc escape open on the first and
   closed on the second.
+  `test/claude-code-binary.integration.test.ts` runs the installed Claude
+  Code, as the digest's model runs it, against a stand-in Anthropic API,
+  and proves a message's @-mention can't make it read a file and that the
+  host's CLAUDE.md and hooks stay out. CI installs the latest Claude Code.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene

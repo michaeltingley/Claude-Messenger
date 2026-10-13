@@ -16,17 +16,21 @@ export { BeeperAccessRequester } from './providers/beeper/access.js';
 export type { BeeperAccessRequesterOptions } from './providers/beeper/access.js';
 export { ClaudeCodeModel } from './providers/claude-code/model.js';
 export type { ClaudeCodeModelOptions } from './providers/claude-code/model.js';
-export { ActivityCollector, DEFAULT_ACTIVITY_LIMITS } from './digest/activity.js';
-export type { Activity, ActivityLimits, ChatActivity, DigestWindow } from './digest/activity.js';
-export { renderBriefing } from './digest/briefing.js';
-export type { Briefing, BriefingOptions } from './digest/briefing.js';
-export { DigestWriter } from './digest/digest.js';
-export type { Digest, DigestOptions } from './digest/digest.js';
+export { ActivityCollector } from './assistant/digest/activity.js';
+export type { ActivityLimits, DigestWindow } from './assistant/digest/activity.js';
+export { DigestWriter } from './assistant/digest/digest.js';
 export { createMcpServer } from './mcp/server.js';
 export { startHttpMcpServer } from './mcp/http.js';
 export type { HttpServerOptions, RunningHttpServer } from './mcp/http.js';
 export { loadConfig, loadEndpointConfig, saveAccessToken } from './config.js';
 export type { Config, EndpointConfig } from './config.js';
-export { createAccessRequester, createApp, createLanguageModel, loadPolicyFile, PolicyFileError } from './app.js';
+export {
+  createAccessRequester,
+  createApp,
+  createLanguageModel,
+  DEFAULT_LANGUAGE_MODEL,
+  loadPolicyFile,
+  PolicyFileError,
+} from './app.js';
 export type { App, ConnectivityProbe, LanguageModelOptions } from './app.js';
 export { packageVersion } from './version.js';

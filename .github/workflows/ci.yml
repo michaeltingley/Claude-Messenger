@@ -29,6 +29,10 @@ jobs:
       # proves the service's under it.
       - name: Restrict unprivileged user namespaces, as Ubuntu 24.04+ hosts do
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+      # The real Claude Code, the latest as hosts auto-update to it: the digest's
+      # model is proven against what it adds to a prompt (an @-mention's file).
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
