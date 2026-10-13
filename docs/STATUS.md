@@ -181,19 +181,33 @@ and `docs/HOSTING-OPTIONS.md`._
    - Telegram (on-device on one phone) is in the same spot; he hasn't said
      whether he wants it on the host.
    - Either way, measure memory again once it runs.
-4. **Measure memory after Beeper's first sync,** and write the numbers here.
-   - Baseline 2026-10-13 00:04Z, Beeper signed out: system used 2238 MB,
-     available 1575 MB, swap in use 625 MB. Beeper's process tree: 7
-     processes, PSS 444 MB, RSS 743 MB.
-   - In progress from 02:11Z, just after sign-in: CPU about 2%, Beeper PSS
-     665–829 MB in the first minutes of the sync.
+4. **Memory after Beeper's first sync: measured 2026-10-13.** Signed in at
+   02:11Z, settled by 02:25Z (Beeper's PSS flat within 4% for 9 minutes,
+   CPU about 2%). Against the signed-out baseline at 00:04Z:
+
+   | | Signed out (00:04Z) | Synced (02:25Z) |
+   |---|---|---|
+   | Beeper, whole tree (7 processes), PSS | 444 MB | 664 MB |
+   | Beeper, whole tree, RSS | 743 MB | 951 MB |
+   | Beeper's two cgroups (service + `app-Beeper-*.scope`) | 592 MB | 900 MB |
+   | System used / available (`free -m`) | 2238 / 1575 MB | 1901 / 1913 MB |
+   | Swap in use | 625 MB | 1351 MB |
+
+   - The first sync peaked right after sign-in at 829 MB PSS (1067 MB of
+     cgroup), then settled.
+   - "Used" fell only because that peak pushed about 730 MB of idle pages
+     (the agent's Chrome, Claude sessions) into swap.
+   - Xvfb adds about 16 MB PSS. The MCP service isn't running yet, and an
+     on-device Google Voice would add its bridge on top.
    - Beeper's main process moves itself out of beeper-desktop.service into
      its own `app-Beeper-<pid>.scope`. Count that cgroup too.
 5. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
    asked for this reminder, expecting 4 GB to be too tight for Beeper
    alongside the agent's Chrome and Claude sessions.
    - VPS-2 is 8 GB at $10/mo; OVH upgrades in place.
-   - Give the reminder with the numbers from step 4.
+   - Give the reminder with the numbers from step 4: Beeper settles at
+     about 0.66 GB, and the box keeps 1.9 GB available only by holding
+     1.35 GB in swap.
 6. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
 7. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
@@ -225,9 +239,11 @@ and `docs/HOSTING-OPTIONS.md`._
     in. The sign-in signal is `GET /v1/app/setup` without a token: 200 while
     signed out, 401 once signed in. It flips right after the emailed code,
     before the recovery key, so an unattended `connect` asks for approval
-    while Beeper may still want the key. On 2026-10-13 the session held
-    `connect` until the key was in; what Beeper does with a box asked for
-    earlier is not yet known.
+    while Beeper may still want the key. Read from Beeper's code: the box
+    then opens at once, over the key step (nothing gates it on sign-in
+    state), and Approve works before the key is in. So `connect`'s steps say
+    to approve, then enter the key. No signal without a token flips when the
+    key goes in.
   - After the emailed code, Beeper first offers to verify with another
     device. "Try another way", then "Enter Recovery Key", gets the key box,
     which has a "Paste from Clipboard" button: the owner pastes the key into

@@ -448,6 +448,8 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
       expect(readOnly).toContain('Allow sensitive actions: leave it off');
       expect(withSend).toContain('Allow sensitive actions: turn it on');
       expect(readOnly).toContain('"Approve connection" box for Claude Messenger');
+      // In the order Beeper asks: the box opens right after the emailed code, before the recovery key.
+      expect(readOnly).toMatch(/emailed code[\s\S]*"Approve connection"[\s\S]*Press Approve[\s\S]*recovery key, enter it/);
     });
   });
 });

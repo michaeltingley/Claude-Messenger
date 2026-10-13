@@ -26,17 +26,18 @@ the public internet; the Beeper token never leaves the host.
 ## What you need (the only human parts)
 
 1. **A machine that stays on.** A small VPS (Ubuntu 24.04 or 26.04, ~$4–8/mo) or any
-   home box. Size for **4 GB RAM**: Beeper Desktop is Electron, and its real
-   footprint is not yet measured (~0.5–0.8 GB is an estimate; many accounts
-   push it higher), so 2 GB hosts are out. iMessage bridging needs
+   home box. Size for **4 GB RAM**: Beeper Desktop is Electron, measured at
+   about 0.66 GB once synced and 1.07 GB at the first sync's peak (many
+   accounts push it higher), so 2 GB hosts are out. iMessage bridging needs
    macOS — use a Mac mini if that matters.
 2. **A few minutes in a browser** to sign Beeper in and approve Claude
    Messenger. The app runs headless, and `deploy/signin-surface.sh` opens its
    screen to your tailnet only, just long enough for that.
    - You type the emailed code and your recovery key straight into the app;
      they are never relayed through a chat transcript.
-   - You then press Approve in Beeper's own "Approve connection" box. The
-     token goes from Beeper straight into `.env`; nobody types or sees it.
+   - You press Approve in Beeper's own "Approve connection" box, which opens
+     right after the code, even before the recovery key. The token goes from
+     Beeper straight into `.env`; nobody types or sees it.
    - The screen closes again as soon as the token is saved.
 3. A free [Tailscale](https://tailscale.com) account (the script logs the
    host into your tailnet), with **Tailscale Serve** allowed once for the
@@ -174,8 +175,10 @@ for anything else, use the surface script directly:
 ## Known caveats
 
 - **Plan for 4 GB RAM.** Beeper Desktop is an Electron app.
-  - Its footprint under Xvfb is estimated at 0.5–0.8 GB, but has not been
-    measured. Many accounts and long uptimes push it higher.
+  - Measured under Xvfb on 2026-10-13 with 9 cloud networks: about 0.66 GB
+    PSS once synced (0.9 GB counting its cgroups' page cache), peaking near
+    1.07 GB during the first sync. Many accounts and long uptimes push it
+    higher.
   - Add Claude Messenger's own footprint on top.
   - 2 GB hosts are not viable for this topology.
 - **Beeper Desktop must stay signed in.** If the account is signed out or the

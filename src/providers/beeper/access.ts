@@ -115,13 +115,16 @@ export class BeeperAccessRequester implements AccessRequester {
   instructions(request: AccessRequest): readonly string[] {
     return [
       "Approve the connection in Beeper's own window:",
-      '  1. If Beeper asks you to sign in, do that first: your emailed code, then your recovery key.',
-      `  2. Beeper then shows an "Approve connection" box for ${request.clientName}. In it:`,
+      '  1. If Beeper asks you to sign in, enter your emailed code.',
+      // Beeper opens it as soon as an account is signed in, which is before
+      // the recovery key, and over whatever its window shows.
+      `  2. Beeper then shows an "Approve connection" box for ${request.clientName}, even if it still wants your recovery key. In it:`,
       '     - Expires in: choose Never. A token that expires would stop working, and nothing here renews it.',
       request.write
         ? '     - Allow sensitive actions: turn it on, so sending can work.'
         : '     - Allow sensitive actions: leave it off.',
       '     - Press Approve.',
+      '  3. If Beeper still asks for your recovery key, enter it.',
       '  If the box says the request has timed out, press Close; a new one follows.',
     ];
   }
