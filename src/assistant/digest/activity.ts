@@ -83,7 +83,8 @@ export class ActivityCollector {
     const { chats, moreChats } = await this.activeChats(window);
     const read: ChatActivity[] = [];
     const failures: unknown[] = [];
-    let partial = 0;
+    // Partly read, with nothing that shows among what was read.
+    let partlyEmpty = 0;
     for (const chat of chats) {
       let activity: ChatActivity;
       try {
@@ -93,15 +94,29 @@ export class ActivityCollector {
         failures.push(err);
         continue;
       }
-      if (activity.truncated) partial++;
       if (activity.messages.length > 0) read.push(activity);
+      else if (activity.truncated) partlyEmpty++;
     }
     // When no chat at all could be read, the cause is not any one chat's.
     if (failures.length > 0 && failures.length === chats.length) throw failures[0];
+    // A chat that moved up the list while it was read is ranked by what it
+    // had in the window, like the rest, and the chat limit holds for them all.
     read.sort((a, b) => latest(b) - latest(a));
-    return { window, chats: read, unreadable: failures.length, partial, moreChats };
+    const kept = read.slice(0, this.limits.chats);
+    return {
+      window,
+      chats: kept,
+      unreadable: failures.length,
+      partial: partlyEmpty + kept.filter((activity) => activity.truncated).length,
+      moreChats: moreChats || read.length > kept.length,
+    };
   }
 
+  /**
+   * The chats to read: the first ones the list holds, up to the chat limit,
+   * and any that moved to its top while it was paged through. `moreChats`
+   * says the list held more than the limit, or more than could be read.
+   */
   private async activeChats(window: DigestWindow): Promise<{ chats: Chat[]; moreChats: boolean }> {
     const page = (cursor?: string) =>
       this.messenger.searchChats({
@@ -121,18 +136,27 @@ export class ActivityCollector {
       const { items, hasMore, nextCursor } = await page(cursor);
       pages++;
       for (const chat of items) if (!found.has(chat.id)) found.set(chat.id, chat);
-      more = hasMore && nextCursor !== undefined;
+      more = hasMore;
+      // Without a cursor, the rest of the list can't be asked for.
+      if (nextCursor === undefined) break;
       cursor = nextCursor;
     }
-    let chats = [...found.values()];
+    const chats = [...found.values()];
+    const leftOut = more || chats.length > this.limits.chats;
+    chats.length = Math.min(chats.length, this.limits.chats);
     if (pages > 1) {
       // One that moved from a page not yet read to the top would be missed,
-      // so the first page is read again, last. What is new on it has the
-      // latest activity of all.
-      const { items } = await page();
-      chats = [...items.filter((chat) => !found.has(chat.id)), ...chats];
+      // so the first page is read again, last, for what is new on it. What
+      // moved it came after the list was first read: when the window ends
+      // as the digest starts, after the window. So it is read, but `collect`
+      // ranks it by what it had in the window.
+      for (const chat of (await page()).items) {
+        if (found.has(chat.id)) continue;
+        found.set(chat.id, chat);
+        chats.push(chat);
+      }
     }
-    return { chats: chats.slice(0, this.limits.chats), moreChats: more || chats.length > this.limits.chats };
+    return { chats, moreChats: leftOut };
   }
 
   private async chatActivity(chat: Chat, window: DigestWindow): Promise<ChatActivity> {

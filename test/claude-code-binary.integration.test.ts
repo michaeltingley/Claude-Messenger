@@ -101,7 +101,8 @@ describe.skipIf(!installed)('ClaudeCodeModel with the real Claude Code (a stand-
       '[ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || export ANTHROPIC_API_KEY=sk-ant-stand-in',
       ...(unset.length > 0 ? [`unset ${unset.join(' ')}`] : []),
       ...(flags.length > 0 ? [`for arg do shift; case "$arg" in ${flags.join('|')}) continue ;; esac; set -- "$@" "$arg"; done`] : []),
-      // Claude Code takes the wrapper's place, so stopping a run stops it.
+      // exec: Claude Code runs as the wrapper's own process, so a signal to the run, as the model's timeout
+      // sends one, reaches it rather than a shell it would outlive.
       inertInput ? `exec ${installed} "$@" < <(sed 's/＠/@/g')` : `exec ${installed} "$@"`,
     ];
     const command = join(root, 'bin', 'claude');

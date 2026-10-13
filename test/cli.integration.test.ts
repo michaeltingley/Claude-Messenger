@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MockBeeperServer, wireChat, wireMessage } from './mock-beeper.js';
 
 const exec = promisify(execFile);
@@ -53,6 +53,10 @@ describe('CLI (subprocess integration)', () => {
   beforeEach(async () => {
     stateDir = await mkdtemp(join(tmpdir(), 'claude-messenger-cli-'));
     mock.requests = [];
+  });
+
+  afterEach(async () => {
+    await rm(stateDir, { recursive: true, force: true });
   });
 
   afterAll(async () => {

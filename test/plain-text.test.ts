@@ -60,16 +60,20 @@ describe('plainText (Beeper)', () => {
   });
 
   it('takes time linear in the text, however its tags are broken', () => {
-    const started = Date.now();
-    for (const piece of ['<a title="', '<b ', '<img alt=', '<mx-reply>', '</mx-reply>', '<!-- ', '&#', '> <@a> x\n', '>\n']) {
-      plainText(piece.repeat(200_000 / piece.length));
+    const texts = [
+      ...['<a title="', '<b ', '<img alt=', '<mx-reply>', '</mx-reply>', '<!-- ', '&#', '> <@a> x\n', '>\n'].map((piece) =>
+        piece.repeat(200_000 / piece.length),
+      ),
+      // One long tag that never ends, as any message can send.
+      ...['<', '</', '<a ', '<a title="', "<a title='", '<!'].map((start) => `hey ${start}${'x'.repeat(60_000)} lol`),
+      `&#${'1'.repeat(200_000)}`,
+    ];
+    // Each takes a few milliseconds; a pattern that backtracked over the text would take seconds on any one.
+    for (const text of texts) {
+      const started = performance.now();
+      plainText(text);
+      expect(performance.now() - started, text.slice(0, 12)).toBeLessThan(1_000);
     }
-    // One long tag that never ends, as any message can send.
-    for (const start of ['<', '</', '<a ', '<a title="', "<a title='", '<!']) {
-      plainText(`hey ${start}${'x'.repeat(20_000)} lol`);
-    }
-    plainText(`&#${'1'.repeat(200_000)}`);
-    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it('decodes entities once, so escaped markup stays text', () => {

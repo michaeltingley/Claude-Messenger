@@ -59,7 +59,7 @@ describe('DigestWriter', () => {
     expect(model.requests).toHaveLength(1);
     const [request] = model.requests;
     expect(request!.instructions).toBe(DIGEST_INSTRUCTIONS);
-    expect(request!.input).toContain('## Alice');
+    expect(request!.input).toContain('## "Alice"');
     expect(request!.input).toContain('"Alice": Dinner Friday at 7?');
     expect(request!.input).toContain('"Mom": Cabin is booked');
     expect(digest).toBe(

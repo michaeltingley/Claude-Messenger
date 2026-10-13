@@ -1,8 +1,8 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FileRateWindow, RateWindowUnavailableError } from '../src/policy/rate.js';
 
 describe('FileRateWindow', () => {
@@ -12,6 +12,10 @@ describe('FileRateWindow', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'rate-window-'));
     path = join(dir, 'send-window.jsonl');
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
   });
 
   it('persists events across instances (fresh process semantics)', () => {

@@ -63,6 +63,7 @@ describe('claude-messenger digest (subprocess integration)', () => {
     claude = await writeClaudeShim({ stdout: `${ANSWER}\n` });
     mock.requests = [];
     mock.messagePageSize = Infinity;
+    mock.onChatSearch = undefined;
     mock.chats = [
       wireChat({
         id: '!alice',
@@ -123,8 +124,8 @@ describe('claude-messenger digest (subprocess integration)', () => {
   it("briefs Claude on stdin with the last day of the main inbox's chats, the words of the messages and a little context", async () => {
     await cli(['--time-zone', 'America/Los_Angeles']);
     const [call] = await claude.calls();
-    expect(call!.stdin).toContain('## Alice');
-    expect(call!.stdin).toContain('"Alice": Dinner on Friday? (reactions: "👍" from You)');
+    expect(call!.stdin).toContain('## "Alice"');
+    expect(call!.stdin).toContain('"Alice" (reactions: "👍" from You): Dinner on Friday?');
     expect(call!.stdin).toContain('"Alice": I can book the place');
     expect(call!.stdin).toContain('You: Free this week?'); // from before the window, for context
     expect(call!.stdin).toContain('"Mom": Cabin is booked');
@@ -147,7 +148,7 @@ describe('claude-messenger digest (subprocess integration)', () => {
     await cli([]);
     const [call] = await claude.calls();
     const headings = call!.stdin.split('\n').filter((line) => line.startsWith('## '));
-    expect(headings).toEqual(['## Family', '## Alice']);
+    expect(headings).toEqual(['## "Family"', '## "Alice"']);
     expect(call!.stdin).toContain('group of 2 · 3 unread · 1 unread mentioning you · last message from "Mom"');
   }, 30_000);
 
@@ -207,16 +208,28 @@ describe('claude-messenger digest (subprocess integration)', () => {
     expect(stdout.trimEnd().split('\n').at(-1)).toMatch(/^_Covers 2 chats and 5 messages since .+\._$/);
   }, 30_000);
 
-  it('pages through the chat list to every chat with activity, past the first page', async () => {
+  it('pages through the chat list to every chat with activity, past the first page, and one that moved to the top meanwhile', async () => {
     mock.chats = Array.from({ length: 25 }, (_, n) =>
       wireChat({ id: `!chat${n}`, title: `Chat ${n}`, lastActivity: ago(1 + n / 10), unreadCount: 0 }),
     );
     mock.messages = mock.chats.map((c, n) => wireMessage({ id: `m${n}`, chatID: c.id, timestamp: ago(1 + n / 10), text: `words ${n}` }));
+    let searches = 0;
+    mock.onChatSearch = () => {
+      // Once the first page is read, the last chat, on the second, gets a message and moves to the top.
+      if (++searches !== 2) return;
+      const now = new Date().toISOString();
+      mock.chats.find((c) => c.id === '!chat24')!.lastActivity = now;
+      mock.messages.push(wireMessage({ id: 'late', chatID: '!chat24', timestamp: now, text: 'after the digest started' }));
+    };
     const { stdout } = await cli([]);
     expect(stdout.trimEnd().split('\n').at(-1)).toMatch(/^_Covers 25 chats and 25 messages since .+\._$/);
-    const searches = mock.requests.filter((r) => r.path === '/v1/chats/search');
-    // Both pages, then the first again, for a chat that moved to the top meanwhile.
-    expect(searches.map((r) => r.query.has('cursor'))).toEqual([false, true, false]);
+    const [call] = await claude.calls();
+    expect(call!.stdin).toContain('## "Chat 24"');
+    expect(call!.stdin).toContain(': words 24');
+    expect(call!.stdin).not.toContain('after the digest started');
+    // Both pages, then the first again, which is where it now is.
+    const pages = mock.requests.filter((r) => r.path === '/v1/chats/search');
+    expect(pages.map((r) => r.query.has('cursor'))).toEqual([false, true, false]);
   }, 30_000);
 
   it('reads only what the policy lets it: a denylisted chat is never read, and nothing of it reaches Claude', async () => {

@@ -40,9 +40,11 @@ type Clock = (date: Date) => string;
  * Titles, names and messages are other people's words, so each is folded
  * onto one line, with no control or invisible characters: none can pass
  * itself off as a line of the briefing's own, such as a chat's heading or
- * another message. Other people's names and every reaction are always in
- * quotes, which they can't hold, so none can pass for the owner, whom the
- * briefing alone calls You, however it is written.
+ * another message. Chats' and other people's names and every reaction are
+ * always in quotes, which they can't hold, so none can pass for the owner,
+ * whom the briefing alone calls You, however it is written. A message's
+ * text comes last on its line, after everything the briefing says of it, so
+ * it can't pass for any of that, such as a reaction of the owner's.
  */
 export function renderBriefing(activity: Activity, timeZone: string): Briefing {
   const { since, until } = activity.window;
@@ -74,7 +76,7 @@ export function renderBriefing(activity: Activity, timeZone: string): Briefing {
 
 function renderChat(activity: ChatActivity, clock: Clock): string {
   const { chat } = activity;
-  const lines = [`## ${oneLine(chat.title, MAX_NAME_CHARS)}`, facts(activity).join(' · ')];
+  const lines = [`## ${quoted(chat.title) ?? 'A chat with no name'}`, facts(activity).join(' · ')];
   if (activity.earlier.length > 0) {
     lines.push('Before then:', ...activity.earlier.map((m) => renderMessage(m, chat, clock)));
     lines.push('Since then:');
@@ -102,8 +104,8 @@ function renderMessage(message: Message, chat: Chat, clock: Clock): string {
   return (
     `- ${clock(new Date(message.timestamp))} ${sender(message, chat)}` +
     (labels.length > 0 ? ` [${labels.join(', ')}]` : '') +
-    (text ? `: ${text}` : '') +
-    reactions(message, chat)
+    reactions(message, chat) +
+    (text ? `: ${text}` : '')
   );
 }
 
@@ -124,11 +126,15 @@ function nameOf(chat: Chat, participantId: string): string | undefined {
 }
 
 /**
- * What reads as a double quote mark: quotes, primes, ditto marks and their
- * ornaments. Words in quotes lose them, so that they can't end their quotes
- * early.
+ * What reads as a double quote mark: every quotation mark but the single
+ * ones, primes, ditto marks, corner brackets, their ornaments, and the
+ * marks that put one over a letter. Words in quotes lose them, so that they
+ * can't end their quotes early.
  */
-const QUOTE_MARKS = /["“”„‟″‶＂ˮʺ˝״〃〝〞〟❝❞❠⹂🙶🙷🙸]/gu;
+const QUOTE_MARKS = /(?![‘’‛])[\p{Pi}\p{Pf}]|["“”„‟″‴‶‷⁗＂ˮʺ˝˵˶״ᐥ〃〝〞〟「」『』﹁﹂﹃﹄｢｣❛❜❝❞❠❮❯⹂🙶🙷🙸\u030b\u030f\u059e]/gu;
+
+/** Two or more single quote marks in a row, which read as a double one. */
+const SINGLE_QUOTES = /['‘’‛ʹʼ′]{2,}/g;
 
 /**
  * Words someone chose, such as a name for themselves or a chat, or a
@@ -137,8 +143,17 @@ const QUOTE_MARKS = /["“”„‟″‶＂ˮʺ˝״〃〝〞〟❝❞❠⹂🙶
  */
 function quoted(words: string | undefined): string | undefined {
   if (words === undefined) return undefined;
-  const shown = oneLine(words.replace(QUOTE_MARKS, ''), MAX_NAME_CHARS);
+  const shown = oneLine(withoutQuoteMarks(words, ''), MAX_NAME_CHARS);
   return shown === '' ? undefined : `"${shown}"`;
+}
+
+/**
+ * `words` with each double quote mark, or run of single ones, replaced:
+ * once nothing invisible is left that could hide one, or join the halves of
+ * one when it goes.
+ */
+function withoutQuoteMarks(words: string, replacement: string): string {
+  return withoutInvisible(words).replace(QUOTE_MARKS, replacement).replace(SINGLE_QUOTES, "'");
 }
 
 /** What a message is, when it is more than its text. */
@@ -179,7 +194,7 @@ function attachment(a: AttachmentSummary): string {
     case 'audio':
       return 'audio';
     default:
-      return a.fileName ? `file "${oneLine(a.fileName.replace(QUOTE_MARKS, "'"), MAX_NAME_CHARS)}"` : 'file';
+      return a.fileName ? `file "${oneLine(withoutQuoteMarks(a.fileName, "'"), MAX_NAME_CHARS)}"` : 'file';
   }
 }
 
@@ -210,7 +225,7 @@ function listed(items: string[], more: string): string[] {
  * never through the middle of a character.
  */
 function oneLine(text: string, max: number): string {
-  const line = withoutInvisible(text).replace(/[\s\u0085]+/g, ' ').trim();
+  const line = withoutInvisible(text).replace(/\s+/g, ' ').trim();
   if (line.length <= max) return line;
   const end = /[\ud800-\udbff]/.test(line[max - 1]!) ? max - 1 : max;
   return `${line.slice(0, end)}…`;

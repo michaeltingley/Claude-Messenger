@@ -174,8 +174,8 @@ and `docs/HOSTING-OPTIONS.md`._
   - The session on the VPS has tools within reach of the token, so it never
     sees the digest as text, and a message can't steer it through the
     digest. The thread's session reads the digest to post it, so the words
-    are in its transcript; a digest names no link, email address or phone
-    number for it to follow.
+    are in its transcript; a digest names no link, web address, email
+    address or phone number for it to follow.
   - Nothing is written to Beeper, so the read-only token stays read-only.
 
 ## Decided (2026-10-12): Claude Messenger runs on the automation VPS

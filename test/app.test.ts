@@ -1,7 +1,7 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadPolicyFile, PolicyFileError } from '../src/app.js';
 
 describe('loadPolicyFile', () => {
@@ -9,6 +9,10 @@ describe('loadPolicyFile', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'policy-load-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
   });
 
   it('returns undefined when the file does not exist (default-policy fallback)', async () => {

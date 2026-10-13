@@ -193,6 +193,12 @@ export class MockBeeperServer {
   revokeFails = false;
   /** Routes that never answer, as a hung Beeper would: only the client can end the request. */
   stalls: ((path: string) => boolean) | undefined;
+  /**
+   * Runs as each chat search arrives, before it is answered: what happens in
+   * the chats while the list is paged through, such as a message moving a
+   * chat to the top.
+   */
+  onChatSearch: (() => void) | undefined;
 
   private clients = new Map<string, RegisteredClient>();
   private codes = new Map<string, PendingCode>();
@@ -312,6 +318,7 @@ export class MockBeeperServer {
       return send(200, accounts);
     }
     if (req.method === 'GET' && path === '/v1/chats/search') {
+      this.onChatSearch?.();
       const page = this.searchChats(url.searchParams);
       return page ? send(200, page) : error(400, 'unmodeled', `mock: unmodeled chat search ${url.search}`);
     }
