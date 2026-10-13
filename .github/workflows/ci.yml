@@ -31,11 +31,15 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
       # The real Claude Code, the latest as hosts auto-update to it: the digest's
       # model is proven against what it adds to a prompt (an @-mention's file).
+      # Off PATH: the MCP sandbox test runs configure.sh, which registers the
+      # service with any Claude Code it finds.
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+        run: mkdir -p "$RUNNER_TEMP/claude-code" && npm install --no-save --prefix "$RUNNER_TEMP/claude-code" @anthropic-ai/claude-code
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+        env:
+          CLAUDE_CODE_UNDER_TEST: ${{ runner.temp }}/claude-code/node_modules/.bin/claude
       - run: npm run build
       - name: CLI smoke test
         run: node dist/cli/main.js --help

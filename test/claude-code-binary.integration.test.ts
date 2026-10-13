@@ -12,11 +12,16 @@ import { StandInAnthropic } from './stand-in-anthropic.js';
  * `claude` on PATH can't show what Claude Code itself adds to a prompt, such
  * as the file an @-mention names.
  *
- * CI installs Claude Code for these tests. Locally they skip when it's
- * missing, but in CI a missing one fails them instead of passing vacuously.
+ * They run the Claude Code that CLAUDE_CODE_UNDER_TEST names, or else the
+ * one on PATH. CI installs one for them, off PATH, since the MCP sandbox
+ * test runs configure.sh, which registers the service with any Claude Code
+ * it finds. Locally they skip when there is none, but in CI a missing one
+ * fails them instead of passing vacuously.
  */
-const installed = spawnSync('sh', ['-c', 'command -v claude'], { encoding: 'utf8' }).stdout.trim();
-if (!installed && process.env.CI) throw new Error('CI must install Claude Code (npm install -g @anthropic-ai/claude-code) for these tests');
+const installed =
+  process.env.CLAUDE_CODE_UNDER_TEST ||
+  spawnSync('sh', ['-c', 'command -v claude'], { encoding: 'utf8' }).stdout.trim();
+if (!installed && process.env.CI) throw new Error('CI must install Claude Code and name it in CLAUDE_CODE_UNDER_TEST');
 
 const SECRET = 'CANARY-BEEPER-TOKEN-7f3a';
 const MEMORY = 'CANARY-USER-MEMORY-91c2';
