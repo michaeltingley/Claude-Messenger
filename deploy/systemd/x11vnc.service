@@ -22,12 +22,12 @@ ExecStart=/usr/bin/x11vnc -display :99 -auth %t/claude-messenger/xauth -localhos
 Restart=always
 RestartSec=5
 # Stopped with SIGINT, which x11vnc turns into a clean exit from its main
-# loop, with status 0. On SIGTERM it exits 2, which systemd counts as a failed
-# stop, and its handler makes X calls of its own, which hang for good if the
-# signal lands during one. Stopping this unit stops noVNC first, dropping any
-# viewer, so the signal can come while x11vnc is still restoring the display
-# after them, and a hang there lasts until systemd's stop timeout, 90 s by
-# default, runs out.
+# loop, with status 0. On SIGTERM it exits 2, which leaves the unit failed,
+# and its handler makes X calls of its own, which hang for good if the signal
+# lands during one. Stopping this unit stops noVNC first, dropping any viewer,
+# so the signal can come while x11vnc is still restoring the display after
+# them, and a hang there lasts until systemd's stop timeout, 90 s by default,
+# runs out.
 KillSignal=SIGINT
 
 # Kept so `systemctl disable` can clean up hosts provisioned before the

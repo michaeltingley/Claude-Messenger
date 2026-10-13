@@ -23,12 +23,16 @@ const has = (bin: string) => spawnSync('sh', ['-c', `command -v ${bin}`]).status
 const toolsPresent = ['Xvfb', 'xauth', 'mcookie', 'x11vnc'].every(has);
 if (!toolsPresent && process.env.CI) throw new Error('CI must install xvfb, xauth and x11vnc for these tests');
 
-/** The value of a unit's KEY= line, as written. A key set twice is refused: this test doesn't model which one wins. */
+/**
+ * The value of a unit's KEY= setting, read as systemd reads it: whitespace
+ * around the key, the "=" and the value doesn't count. A key set twice is
+ * refused, since this test doesn't model which one wins.
+ */
 function setting(unit: string, key: string): string | undefined {
+  const assignment = new RegExp(`^\\s*${key}\\s*=\\s*(.*?)\\s*$`);
   const values = readFileSync(join(SYSTEMD, unit), 'utf8')
     .split('\n')
-    .filter((l) => l.startsWith(`${key}=`))
-    .map((l) => l.slice(key.length + 1));
+    .flatMap((l) => assignment.exec(l)?.[1] ?? []);
   if (values.length > 1) throw new Error(`${unit} sets ${key}= more than once, which this test does not model`);
   return values[0];
 }
@@ -42,6 +46,8 @@ function execLine(unit: string, key: 'ExecStartPre' | 'ExecStart', runtimeDir: s
 
 /** Settings that change how systemd stops a unit, which `stop` does not model. */
 const UNMODELED_STOP_SETTINGS = [
+  'Type',
+  'PIDFile',
   'ExecStop',
   'ExecStopPost',
   'KillMode',
@@ -77,9 +83,10 @@ const STOP_GRACE_MS = 3_000;
  * How a stop ended, as systemd judges it: "clean" if the process exited 0 or
  * died of SIGHUP, SIGINT, SIGTERM or SIGPIPE; "failed" if it ended any other
  * way, which leaves the unit failed; "timed out" if it was still running
- * after the grace period and had to be killed.
+ * after the grace period and had to be killed. "Not running" is a process
+ * that had exited before the stop, which proves nothing about how it stops.
  */
-type StopOutcome = 'clean' | 'failed' | 'timed out';
+type StopOutcome = 'clean' | 'failed' | 'timed out' | 'not running';
 
 const CLEAN_SIGNALS = new Set<NodeJS.Signals>(['SIGHUP', 'SIGINT', 'SIGTERM', 'SIGPIPE']);
 
@@ -89,12 +96,10 @@ const CLEAN_SIGNALS = new Set<NodeJS.Signals>(['SIGHUP', 'SIGINT', 'SIGTERM', 'S
  */
 async function stop(service: Service): Promise<StopOutcome> {
   const child = service.process;
+  if (child.exitCode !== null || child.signalCode !== null) return 'not running';
   const judge = (code: number | null, signal: NodeJS.Signals | null): StopOutcome =>
     code === 0 || (signal !== null && CLEAN_SIGNALS.has(signal)) ? 'clean' : 'failed';
-  const exited = new Promise<StopOutcome>((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) resolve(judge(child.exitCode, child.signalCode));
-    else child.once('exit', (code, signal) => resolve(judge(code, signal)));
-  });
+  const exited = new Promise<StopOutcome>((resolve) => child.once('exit', (code, signal) => resolve(judge(code, signal))));
   child.kill(service.killSignal);
   let timer: NodeJS.Timeout | undefined;
   const outcome = await Promise.race([
@@ -265,10 +270,10 @@ describe.skipIf(!toolsPresent)('Beeper display isolation (real Xvfb + x11vnc fro
   it('the VNC hop stops cleanly on its stop signal, even just after a viewer leaves, as at `signin-surface.sh down`', async () => {
     // Stopping x11vnc.service stops noVNC first, which drops any viewer, so
     // x11vnc can get its stop signal while it is still restoring the display
-    // after them. On SIGTERM it exits 2, which systemd counts as a failed
-    // stop, so this fails in the first round; it also hung in some rounds,
-    // which is why there are ten. The signal goes out before anything is
-    // checked, as systemd sends it as soon as noVNC has stopped.
+    // after them. With SIGTERM this fails in the first round, on its exit
+    // status 2 or on a hang; the ten rounds give the stop signal ten chances
+    // at that race. The signal goes out before anything is checked, as
+    // systemd sends it as soon as noVNC has stopped.
     writeFileSync(join(runtimeDir, 'claude-messenger', 'vncpasswd'), 'Pw7xQ2kz\n', { mode: 0o600 });
     for (let round = 1; round <= 10; round++) {
       const port = await unusedPort();
