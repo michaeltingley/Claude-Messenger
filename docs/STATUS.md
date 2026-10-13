@@ -270,8 +270,12 @@ and `docs/HOSTING-OPTIONS.md`._
     whole home: SSH keys, Claude's and Beeper's credentials (Beeper's login
     token is a full API token) and, in `/run/user`, the sign-in screen's X
     cookie and VNC password. So the unit now hides the home directories
-    (`ProtectHome=tmpfs`) and binds back only the install, read-only, plus
-    `audit/` and `state/`.
+    and binds back only the install, read-only, plus `audit/` and `state/`.
+  - It hides them with `TemporaryFileSystem=…:ro`, not `ProtectHome=tmpfs`.
+    systemd 255 and 256 copy only the path and mode of that setting's
+    built-in mounts (`append_static_mounts` in `src/core/namespace.c`), so
+    their tmpfs stand-ins come up writable, with tmpfs's default mode 1777.
+    CI caught it on Ubuntu 24.04's 255; 257 fixed it.
 - **Cloud sessions can't add GitHub deploy keys.** That API path is blocked
   through their proxy. Add deploy keys in the GitHub UI.
 - The user wants maximum autonomy ("do everything I can't"). The irreducibly

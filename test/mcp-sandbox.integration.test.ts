@@ -171,6 +171,11 @@ describe.runIf(onRunner)('the MCP service sandbox (real systemd and sudo, CI onl
   const outside = (script: string, ...args: string[]) => spawnSync('sh', ['-c', script, 'sh', ...args], { encoding: 'utf8' });
   const touch = 'touch "$1" && rm -f "$1"';
   const exists = 'test -e "$1"';
+  const expectReadOnlyInside = (probe: string) => {
+    const attempt = inside(touch, probe);
+    expect(attempt.status, `inside: ${probe}`).not.toBe(0);
+    expect(attempt.stderr, `inside: ${probe}`).toContain('Read-only file system');
+  };
 
   it('runs as the install owner, under the system manager, and starts at boot', () => {
     expect(pid).toBeGreaterThan(0);
@@ -232,9 +237,13 @@ describe.runIf(onRunner)('the MCP service sandbox (real systemd and sudo, CI onl
     for (const probe of probes) {
       // The user can write there outside the service, so the sandbox is what stops it.
       expect(outside(touch, probe).status, `outside: ${probe}`).toBe(0);
-      const attempt = inside(touch, probe);
-      expect(attempt.status, `inside: ${probe}`).not.toBe(0);
-      expect(attempt.stderr, `inside: ${probe}`).toContain('Read-only file system');
+      expectReadOnlyInside(probe);
+    }
+  });
+
+  it('cannot write to the empty stand-ins for the home directories and /run/user either', () => {
+    for (const probe of ['/home/sandbox-probe', '/root/sandbox-probe', '/run/user/sandbox-probe']) {
+      expectReadOnlyInside(probe);
     }
   });
 

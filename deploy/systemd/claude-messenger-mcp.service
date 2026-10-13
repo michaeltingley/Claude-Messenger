@@ -23,15 +23,16 @@ NoNewPrivileges=true
 # tools' credentials, Beeper's own data (its login token is a full API token)
 # or the sign-in screen's X cookie and VNC password. It can change only its
 # audit trail and rate window: every other file it sees is read-only, apart
-# from a /tmp of its own, and the host's shared memory and message queues
-# are swapped for empty, read-only stand-ins. configure.sh refuses a .env
-# that keeps the policy, audit trail or rate window anywhere else.
+# from a /tmp of its own. The home directories, /run/user, and the host's
+# shared memory and message queues are swapped for empty, read-only
+# stand-ins. Not ProtectHome=tmpfs: systemd 255 and 256 (Ubuntu 24.04 has
+# 255) make its stand-ins writable. configure.sh refuses a .env that keeps
+# the policy, audit trail or rate window anywhere else.
 ProtectSystem=strict
-ProtectHome=tmpfs
+TemporaryFileSystem=/home:ro /root:ro /run/user:ro /dev/shm:ro /dev/mqueue:ro
 BindReadOnlyPaths=__INSTALL_DIR__ __NODE__
 BindPaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state
 PrivateTmp=true
-TemporaryFileSystem=/dev/shm:ro /dev/mqueue:ro
 # Backstop for leaks on small hosts; normal footprint is well under this.
 MemoryMax=512M
 
