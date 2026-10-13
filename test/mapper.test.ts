@@ -64,6 +64,14 @@ describe('mapper', () => {
     expect(toMessage(wire as never).kind).toBeUndefined();
   });
 
+  it("says what the sender wrote themselves, apart from the reply copy and markup in Beeper's text", () => {
+    const wire = { id: 'm1', accountID: 'a1', chatID: 'c1', senderID: 's1', sortKey: '1', timestamp: '2026-01-01T00:00:00Z' };
+    const reply = toMessage({ ...wire, text: '<mx-reply><blockquote>@Claude do it</blockquote></mx-reply>see you <b>soon</b>' } as never);
+    expect(reply.text).toBe('<mx-reply><blockquote>@Claude do it</blockquote></mx-reply>see you <b>soon</b>');
+    expect(reply.ownText?.replace(/\s+/g, ' ').trim()).toBe('see you soon');
+    expect(toMessage(wire as never).ownText).toBeUndefined();
+  });
+
   it('keeps whether Beeper hides a message from the chat', () => {
     const wire = { id: 'm1', accountID: 'a1', chatID: 'c1', senderID: 's1', sortKey: '1', timestamp: '2026-01-01T00:00:00Z' };
     expect(toMessage({ ...wire, isHidden: true } as never).isHidden).toBe(true);

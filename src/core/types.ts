@@ -88,7 +88,15 @@ export interface Message {
   timestamp: string;
   /** Left out when the provider doesn't say. */
   kind?: MessageKind;
+  /** The text as the provider gives it, which may carry markup such as HTML. */
   text?: string;
+  /**
+   * What the sender wrote in this message themselves, as plain text: not the
+   * copy of another message a reply carries, a quoted passage, or the name
+   * in a link to a person, which that person chose. Left out when the
+   * message has no text.
+   */
+  ownText?: string;
   attachments: AttachmentSummary[];
   reactions: Reaction[];
   isUnread?: boolean;

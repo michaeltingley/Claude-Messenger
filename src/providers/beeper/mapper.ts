@@ -9,6 +9,7 @@ import type {
   Participant,
   Reaction,
 } from '../../core/types.js';
+import { ownText } from './own-text.js';
 
 /** Pure translation from Beeper Client API wire types to domain models. */
 
@@ -121,6 +122,7 @@ export function toMessage(m: WireMessage): Message {
     timestamp: m.timestamp,
     kind: toKind(m.type),
     text: m.text,
+    ownText: m.text === undefined ? undefined : ownText(m.text),
     attachments: (m.attachments ?? []).map(toAttachment),
     reactions: (m.reactions ?? []).map(toReaction),
     isUnread: m.isUnread,

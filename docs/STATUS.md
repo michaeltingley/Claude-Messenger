@@ -83,9 +83,13 @@ and `docs/HOSTING-OPTIONS.md`._
     messages that reach Beeper late.
   - The guard hands on only the owner's own messages and audits each one by
     ID, never its text.
-  - Only the owner's own words trigger it: not a quote, a reply's copy of
-    another message, a reaction, or a pill naming a contact called Claude
-    (`assistant/mentions.ts`).
+  - Only what the owner wrote themselves triggers it, as far as the text
+    shows: not a quote, a reply's copy of another message, a tapback's
+    quote of one, a reaction, or a pill naming a contact called Claude. A
+    message the owner forwards still counts. The provider works out the
+    sender's own words (`Message.ownText`; for Beeper,
+    `providers/beeper/own-text.ts`, linear in the message's length), and
+    `assistant/mentions.ts` looks for `@claude` in them.
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -159,19 +163,41 @@ and `docs/HOSTING-OPTIONS.md`._
 
 ## @Claude assistant (thread "Talk to Claude inside Beeper")
 
-The owner wants to write `@Claude` in any of his chats and have Claude
-answer or act, on his Claude Max login, never the API. Plan he chose
-(2026-10-13): Claude gets its own Beeper account and answers in a private
-"Claude" chat in his inbox. Phase 1 "On call" answers and drafts, and
-nothing reaches other people. Phase 2 "Knows you" indexes his messages,
-Gmail and Calendar. Phase 3 "Acts for you" sends as him, each send
-approved in the Claude chat.
+The owner wants to write `@Claude` in any of their chats and have Claude
+answer or act, on their Claude Max login, never the API. The plan they
+chose (2026-10-13): Claude gets its own Beeper account and answers in a
+private "Claude" chat in the owner's inbox. Phase 1 "On call" answers and
+drafts, and nothing reaches other people. Phase 2 "Knows you" indexes the
+owner's messages, Gmail and Calendar. Phase 3 "Acts for you" sends as the
+owner, each send approved in the Claude chat.
 
 1. **Done:** the read-only listener (#24, above).
 2. **Next: Claude's own Beeper account**, so answers come from Claude, not
-   from the owner. Creating an account is the owner's call, and Beeper
-   emails a sign-up code. The plan is a Matrix bot on the VPS through
-   Beeper's `@beeper/chat-adapter-matrix`; his own token stays read-only.
+   from the owner, whose own token stays read-only. Creating it is the
+   owner's call: it accepts Beeper's Terms of Use, and Beeper emails a
+   code to the sign-up address. What's known (2026-10-13):
+   - A Beeper Desktop or Server that isn't signed in can create one
+     through its setup API: `POST /v1/app/setup/start`, `/email`,
+     `/response`, then `/register` with a username and `acceptTerms` when
+     the address is new (`client.app.setup` in `@beeper/desktop-api`
+     6.x; `beeper auth email start|response --username … --yes`). Run it
+     on a runtime of its own, as a separate Unix user, so nothing reaches
+     the owner's signed-in Desktop: `beeper setup` offers to reuse a
+     running local Desktop by default.
+   - If `/response` doesn't ask to register, the address already has an
+     account (a plus address of the owner's Gmail is untried): sign that
+     session out and stop.
+   - Resetting a recovery key disconnects every cloud network on that
+     account (Beeper's maintainer on beeper/cli#21). Harmless on Claude's
+     new account; never on the owner's.
+   - Two ways to run the account, still to choose. Beeper's
+     `@beeper/chat-adapter-matrix` (npm 0.2.0) needs a token, user ID and
+     device ID of its own; it never sets up cross-signing and doesn't
+     verify its device. Or a Beeper Server signed in as Claude, reached
+     through `providers/beeper` with a second token: encryption stays in
+     Beeper's runtime, at the cost of a second Beeper process on a 4 GB
+     box. The CLI's nightly-only Server install (see CLAUDE.md) is fixed
+     by beeper/cli#25, per that maintainer; untried here.
 3. **Then the runtime, as a service on the VPS.** For each mention, read
    the message again (it may have been edited or deleted since), answer
    with `claude -p` on the owner's Max login, and post the answer in
