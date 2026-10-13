@@ -21,6 +21,14 @@ Environment=DISPLAY=:99
 ExecStart=/usr/bin/x11vnc -display :99 -auth %t/claude-messenger/xauth -localhost -rfbport 5900 -forever -shared -passwdfile %t/claude-messenger/vncpasswd
 Restart=always
 RestartSec=5
+# Stopped with SIGINT, which x11vnc turns into a clean exit from its main
+# loop, with status 0. On SIGTERM it exits 2, which systemd counts as a failed
+# stop, and its handler makes X calls of its own, which hang for good if the
+# signal lands during one. Stopping this unit stops noVNC first, dropping any
+# viewer, so the signal comes while x11vnc is still restoring the display
+# after them: there SIGTERM often hangs it, and systemd waits out its stop
+# timeout, 90 s by default, before killing it.
+KillSignal=SIGINT
 
 # Kept so `systemctl disable` can clean up hosts provisioned before the
 # surface was managed by deploy/signin-surface.sh (they enabled it at boot).
