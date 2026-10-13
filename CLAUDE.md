@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 438 tests / 26 files.
+- `npm test` must be green before any push. Currently 439 tests / 26 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -88,9 +88,9 @@ built for hypothetical futures.
   also plays the person answering.
 - Security properties of the host get proven against the real binaries, not
   config greps. `test/display-isolation.integration.test.ts` starts Xvfb and
-  x11vnc exactly as `deploy/systemd/` runs them and speaks X11 and RFB to
-  them. CI installs those binaries, and a missing one fails CI rather than
-  skipping.
+  x11vnc exactly as `deploy/systemd/` runs them, speaks X11 and RFB to
+  them, and stops them as systemd stops the units. CI installs those
+  binaries, and a missing one fails CI rather than skipping.
   `test/mcp-sandbox.integration.test.ts` runs the real `configure.sh` with
   real sudo and systemd, then tries reads and writes from inside the
   running MCP service as its user, and checks its PID and IPC namespaces are
