@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { writeClaudeShim, type Shim } from './claude-code-shim.js';
 import { MockBeeperServer, wireChat, wireMessage } from './mock-beeper.js';
 
@@ -105,6 +105,10 @@ describe('claude-messenger digest (subprocess integration)', () => {
     ];
   });
 
+  afterEach(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+
   afterAll(async () => {
     await mock.stop();
   });
@@ -120,7 +124,7 @@ describe('claude-messenger digest (subprocess integration)', () => {
     await cli(['--time-zone', 'America/Los_Angeles']);
     const [call] = await claude.calls();
     expect(call!.stdin).toContain('## Alice');
-    expect(call!.stdin).toContain('"Alice": Dinner on Friday? (reactions: 👍 from You)');
+    expect(call!.stdin).toContain('"Alice": Dinner on Friday? (reactions: "👍" from You)');
     expect(call!.stdin).toContain('"Alice": I can book the place');
     expect(call!.stdin).toContain('You: Free this week?'); // from before the window, for context
     expect(call!.stdin).toContain('"Mom": Cabin is booked');
@@ -211,7 +215,8 @@ describe('claude-messenger digest (subprocess integration)', () => {
     const { stdout } = await cli([]);
     expect(stdout.trimEnd().split('\n').at(-1)).toMatch(/^_Covers 25 chats and 25 messages since .+\._$/);
     const searches = mock.requests.filter((r) => r.path === '/v1/chats/search');
-    expect(searches.map((r) => r.query.has('cursor'))).toEqual([false, true]);
+    // Both pages, then the first again, for a chat that moved to the top meanwhile.
+    expect(searches.map((r) => r.query.has('cursor'))).toEqual([false, true, false]);
   }, 30_000);
 
   it('reads only what the policy lets it: a denylisted chat is never read, and nothing of it reaches Claude', async () => {

@@ -106,6 +106,32 @@ describe('CLI (subprocess integration)', () => {
     expect(stdout).toContain('whatsapp · single · Alice  [2 unread]');
   }, 30_000);
 
+  it('messages and search print each message as its chat shows it: the words, without the markup of a reply or formatting', async () => {
+    mock.messages = [
+      wireMessage(),
+      wireMessage({
+        id: 'msg-2',
+        sortKey: '2',
+        timestamp: '2026-07-09T12:05:00.000Z',
+        // A reply, as Beeper gives it: HTML, carrying a copy of the message it answers.
+        text: '<mx-reply><blockquote>In reply to <a href="https://matrix.to/#/@me:beeper.com">Me</a><br>Free?</blockquote></mx-reply>Dinner on <b>Friday</b>?',
+      }),
+    ];
+    try {
+      const messages = await cli(['messages', '!chat1:beeper.com']);
+      expect(messages.code).toBe(0);
+      expect(messages.stdout.trimEnd().split('\n')).toEqual([
+        '[2026-07-09T12:00:00.000Z] Alice: hello from alice',
+        '[2026-07-09T12:05:00.000Z] Alice: Dinner on Friday?',
+      ]);
+      const search = await cli(['search', 'friday']);
+      expect(search.code).toBe(0);
+      expect(search.stdout.trimEnd()).toBe('[2026-07-09T12:05:00.000Z] (!chat1:beeper.com) Alice: Dinner on Friday?');
+    } finally {
+      mock.messages = [wireMessage()];
+    }
+  }, 30_000);
+
   it('send is denied by capabilities.send under the default read-only policy, audited, never reaching the wire', async () => {
     const { stderr, code } = await cli(['send', '!chat1:beeper.com', 'hello']);
     expect(code).toBe(1);

@@ -143,10 +143,12 @@ and `docs/HOSTING-OPTIONS.md`._
     …`: sign in again with `claude`, then `/login`). A rate limit Claude
     Code retries for about three minutes first; the run gives up after ten.
 - **Delivery, being set up 2026-10-13:** each morning at 7:46 AM Pacific a
-  routine wakes the thread's session. It starts a Remote Control session on
-  the VPS that runs the command with its output piped through `gzip` and
-  `base64`, takes that output from the session's transcript, decodes it,
-  posts it in the thread, and stops the Remote Control session.
+  routine wakes the thread's session. It hands the thread's Remote Control
+  session on the VPS the morning's run, which pipes the command's output
+  through `gzip` and `base64` and sends that back with its SHA-256. The
+  thread's session checks the hash, decodes it and posts it in the thread.
+  The Remote Control session stays between mornings: stopping it would end
+  the owner's approval of it.
   - The session on the VPS has tools within reach of the token, so it never
     sees the digest as text, and a message can't steer it through the
     digest. The thread's session reads the digest to post it, so the words

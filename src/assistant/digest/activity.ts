@@ -43,6 +43,8 @@ export interface Activity {
 export interface ActivityLimits {
   /** The most chats to read. */
   chats: number;
+  /** The most pages of the chat list to look through, however many chats a policy leaves out of them. */
+  chatListPages: number;
   /** The most messages to keep from one chat's window: the newest. */
   messagesPerChat: number;
   /** How many messages from just before the window to keep, for context. */
@@ -53,15 +55,14 @@ export interface ActivityLimits {
 
 export const DEFAULT_ACTIVITY_LIMITS: ActivityLimits = {
   chats: 40,
+  chatListPages: 25,
   messagesPerChat: 40,
   earlierMessages: 3,
   pagesPerChat: 5,
 };
 
-/** Chats asked for per page of the search. */
+/** Chats asked for per page of the chat list. */
 const CHAT_PAGE_SIZE = 20;
-/** Pages of chats to look through at most, however many a policy filters out. */
-const MAX_CHAT_PAGES = 25;
 
 /**
  * Reads what happened in a window: the chats in the owner's main inbox with
@@ -102,27 +103,36 @@ export class ActivityCollector {
   }
 
   private async activeChats(window: DigestWindow): Promise<{ chats: Chat[]; moreChats: boolean }> {
-    // A chat that gets a message while the list is paged through moves up
-    // it, so it can come twice. It is read once.
-    const byId = new Map<string, Chat>();
-    let cursor: string | undefined;
-    for (let page = 1; ; page++) {
-      const { items, hasMore, nextCursor } = await this.messenger.searchChats({
+    const page = (cursor?: string) =>
+      this.messenger.searchChats({
         inbox: 'primary',
         lastActivityAfter: window.since.toISOString(),
         limit: CHAT_PAGE_SIZE,
         cursor,
       });
-      for (const chat of items) if (!byId.has(chat.id)) byId.set(chat.id, chat);
-      const chats = [...byId.values()];
-      const more = hasMore && nextCursor !== undefined;
-      if (chats.length > this.limits.chats || (chats.length === this.limits.chats && more)) {
-        return { chats: chats.slice(0, this.limits.chats), moreChats: true };
-      }
-      if (!more) return { chats, moreChats: false };
-      if (page === MAX_CHAT_PAGES) return { chats, moreChats: true };
+    // The list puts the latest activity first, so a chat that gets a message
+    // while it is paged through moves up it. One that moves down a page as
+    // others move up comes twice, and is read once.
+    const found = new Map<string, Chat>();
+    let pages = 0;
+    let more = true;
+    let cursor: string | undefined;
+    while (more && found.size < this.limits.chats && pages < this.limits.chatListPages) {
+      const { items, hasMore, nextCursor } = await page(cursor);
+      pages++;
+      for (const chat of items) if (!found.has(chat.id)) found.set(chat.id, chat);
+      more = hasMore && nextCursor !== undefined;
       cursor = nextCursor;
     }
+    let chats = [...found.values()];
+    if (pages > 1) {
+      // One that moved from a page not yet read to the top would be missed,
+      // so the first page is read again, last. What is new on it has the
+      // latest activity of all.
+      const { items } = await page();
+      chats = [...items.filter((chat) => !found.has(chat.id)), ...chats];
+    }
+    return { chats: chats.slice(0, this.limits.chats), moreChats: more || chats.length > this.limits.chats };
   }
 
   private async chatActivity(chat: Chat, window: DigestWindow): Promise<ChatActivity> {

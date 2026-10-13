@@ -515,15 +515,17 @@ export class MockBeeperServer {
   /**
    * Chat search with the filters this app's reads use: title words, the
    * main inbox (neither archived nor low priority) and activity strictly
-   * after lastActivityAfter. Any other inbox is refused, so a read can't
-   * drift to one no test covers. Pages hold `limit` chats (50 when it isn't
-   * given), the most recently active first, and each `oldestCursor` fed
-   * back as `cursor` fetches the page after it, as the SDK pages them.
+   * after lastActivityAfter. Any other parameter, or any other inbox, is
+   * refused, so a read can't drift to a filter no test covers. Pages hold
+   * `limit` chats (50 when it isn't given), the most recently active first,
+   * and each `oldestCursor` fed back as `cursor` fetches the page after it,
+   * as the SDK pages them.
    */
   private searchChats(params: URLSearchParams) {
+    const modelled = ['query', 'inbox', 'lastActivityAfter', 'limit', 'cursor'];
+    if ([...params.keys()].some((key) => !modelled.includes(key))) return undefined;
     const inbox = params.get('inbox');
     if (inbox !== null && inbox !== 'primary') return undefined;
-    if (params.get('direction') !== null) return undefined;
     const q = params.get('query')?.toLowerCase();
     const after = params.has('lastActivityAfter') ? Date.parse(params.get('lastActivityAfter')!) : -Infinity;
     const activity = (c: WireChat) => (c.lastActivity === undefined ? -Infinity : Date.parse(c.lastActivity));

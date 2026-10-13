@@ -1,10 +1,11 @@
 /**
- * A tag, as HTML reads one: "<", an optional "/", a name, then attributes up
- * to ">", where a quoted value may hold ">". A comment or a declaration
- * ("<!...>", "<?...>") counts too. Nothing in a tag can run past the next
- * "<", so finding every tag takes time linear in the text.
+ * A tag, as HTML reads one: "<", an optional "/", a name that ends at a
+ * space, "/" or ">", then attributes up to ">", where a quoted value may hold
+ * ">". A comment or a declaration ("<!...>", "<?...>") counts too. Nothing
+ * in a tag can run past the next "<", and a name ends in one place only, so
+ * finding every tag takes time linear in the text.
  */
-const TAG = /<(?:(\/?)([A-Za-z][A-Za-z\d-]*)((?:[^<>"']|"[^<"]*"|'[^<']*')*)|[!?][^<>]*)>/g;
+const TAG = /<(?:(\/?)([A-Za-z][A-Za-z\d-]*)(?=[\s/>])((?:[^<>"']|"[^<"]*"|'[^<']*')*)|[!?][^<>]*)>/g;
 
 /**
  * The elements a Matrix message's HTML may hold: the spec's list, the

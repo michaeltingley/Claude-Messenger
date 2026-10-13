@@ -1,6 +1,13 @@
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { afterAll } from 'vitest';
+
+/** Every stand-in a test file wrote, removed once its tests are done. */
+const written: string[] = [];
+afterAll(async () => {
+  await Promise.all(written.map((root) => rm(root, { recursive: true, force: true })));
+});
 
 /** What one run of the stand-in `claude` saw. */
 export interface ShimCall {
@@ -60,6 +67,7 @@ export interface Shim {
  */
 export async function writeClaudeShim(behavior: ShimBehavior = {}): Promise<Shim> {
   const root = await mkdtemp(join(tmpdir(), 'claude-shim-'));
+  written.push(root);
   const dir = join(root, 'bin');
   await mkdir(dir);
   const log = join(root, 'calls.jsonl');

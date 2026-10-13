@@ -40,9 +40,9 @@ type Clock = (date: Date) => string;
  * Titles, names and messages are other people's words, so each is folded
  * onto one line, with no control or invisible characters: none can pass
  * itself off as a line of the briefing's own, such as a chat's heading or
- * another message. Other people's names are always in quotes, which a name
- * can't hold, so none can pass for the owner, whom the briefing alone calls
- * You, however it is written.
+ * another message. Other people's names and every reaction are always in
+ * quotes, which they can't hold, so none can pass for the owner, whom the
+ * briefing alone calls You, however it is written.
  */
 export function renderBriefing(activity: Activity, timeZone: string): Briefing {
   const { since, until } = activity.window;
@@ -110,10 +110,10 @@ function renderMessage(message: Message, chat: Chat, clock: Clock): string {
 function sender(message: Message, chat: Chat): string {
   if (message.isFromMe) return 'You';
   return (
-    theirName(message.senderName) ??
-    theirName(nameOf(chat, message.senderId)) ??
+    quoted(message.senderName) ??
+    quoted(nameOf(chat, message.senderId)) ??
     // In a direct chat, whoever isn't the owner is the chat.
-    (chat.type === 'single' ? theirName(chat.title) : undefined) ??
+    (chat.type === 'single' ? quoted(chat.title) : undefined) ??
     'Someone'
   );
 }
@@ -123,17 +123,21 @@ function nameOf(chat: Chat, participantId: string): string | undefined {
   return participant?.fullName ?? participant?.username;
 }
 
-/** What reads as a double quote mark, which a name loses so that it can't end its quotes early. */
-const QUOTE_MARKS = /["“”„‟″＂ˮ״]/g;
+/**
+ * What reads as a double quote mark: quotes, primes, ditto marks and their
+ * ornaments. Words in quotes lose them, so that they can't end their quotes
+ * early.
+ */
+const QUOTE_MARKS = /["“”„‟″‶＂ˮʺ˝״〃〝〞〟❝❞❠⹂🙶🙷🙸]/gu;
 
 /**
- * A name someone chose for themselves or a chat, as a line shows it: on one
- * line and in quotes, so it reads as theirs and nobody else's. Nothing when
- * there's no name to show.
+ * Words someone chose, such as a name for themselves or a chat, or a
+ * reaction, as a line shows them: on one line and in quotes, so they read as
+ * theirs and nobody else's. Nothing when there's nothing to show.
  */
-function theirName(name: string | undefined): string | undefined {
-  if (name === undefined) return undefined;
-  const shown = oneLine(name.replace(QUOTE_MARKS, ''), MAX_NAME_CHARS);
+function quoted(words: string | undefined): string | undefined {
+  if (words === undefined) return undefined;
+  const shown = oneLine(words.replace(QUOTE_MARKS, ''), MAX_NAME_CHARS);
   return shown === '' ? undefined : `"${shown}"`;
 }
 
@@ -186,12 +190,12 @@ function reactions(message: Message, chat: Chat): string {
   const who = (id: string) => {
     if (chat.participants.find((p) => p.id === id)?.isSelf) return 'You';
     return (
-      theirName(nameOf(chat, id)) ??
-      (chat.type === 'single' && knowsOwner ? theirName(chat.title) : undefined) ??
+      quoted(nameOf(chat, id)) ??
+      (chat.type === 'single' && knowsOwner ? quoted(chat.title) : undefined) ??
       'someone'
     );
   };
-  const each = message.reactions.map((r) => `${oneLine(r.key, MAX_NAME_CHARS)} from ${who(r.participantId)}`);
+  const each = message.reactions.map((r) => `${quoted(r.key) ?? 'a reaction'} from ${who(r.participantId)}`);
   return ` (reactions: ${listed(each, 'more').join(', ')})`;
 }
 

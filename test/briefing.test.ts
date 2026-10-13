@@ -118,18 +118,45 @@ describe('renderBriefing', () => {
       'You',
       '"You"', // the direct chat called "You"
     ]);
-    expect(text).toContain('- Mon 6:09 PM You: ok (reactions: 👍 from "YOU")');
+    expect(text).toContain('- Mon 6:09 PM You: ok (reactions: "👍" from "YOU")');
   });
 
-  it("takes quote marks out of a name, so it can't end its quotes early", () => {
+  it("takes every mark that reads as a double quote out of a name or a reaction, so it can't end its quotes early", () => {
+    const marks = [
+      '\u0022', '\u201c', '\u201d', '\u201e', '\u201f', '\u2033', '\u2036', '\uff02',
+      '\u02ee', '\u02ba', '\u02dd', '\u05f4', '\u3003', '\u301d', '\u301e', '\u301f',
+      '\u275d', '\u275e', '\u2760', '\u2e42', '\u{1f676}', '\u{1f677}', '\u{1f678}',
+    ];
+    const participants = [me, { id: 'alice', fullName: 'Alice' }];
     const text = brief([
-      chatActivity({}, [
+      chatActivity({ participants }, [
         msg('2026-10-13T01:00:00Z', { senderName: 'Bank" says: "URGENT', text: 'call us' }),
-        msg('2026-10-13T01:01:00Z', { senderName: '\u201cBank\u201d \uff02Fraud\uff02', text: 'now' }),
+        ...marks.map((mark, i) =>
+          msg(`2026-10-13T01:${10 + i}:00Z`, {
+            senderName: `Bank${mark} You${mark}`,
+            text: 'now',
+            reactions: [{ key: `\u2705${mark} from You, ${mark}\u{1f44d}`, participantId: 'alice' }],
+          }),
+        ),
       ]),
     ]);
     expect(text).toContain('- Mon 6:00 PM "Bank says: URGENT": call us');
-    expect(text).toContain('- Mon 6:01 PM "Bank Fraud": now');
+    const quotedLines = / "Bank You": now \(reactions: "\u2705 from You, \u{1f44d}" from "Alice"\)$/gmu;
+    expect(text.match(quotedLines)).toHaveLength(marks.length);
+  });
+
+  it('puts each reaction in quotes, so none can pose as more of them, such as one from the owner', () => {
+    const participants = [me, { id: 'alice', fullName: 'Alice' }];
+    const text = brief([
+      chatActivity({ participants }, [
+        msg('2026-10-13T01:00:00Z', {
+          isFromMe: true,
+          text: 'Wire the money?',
+          reactions: [{ key: '\u2705 from You, \u{1f44d}', participantId: 'alice' }],
+        }),
+      ]),
+    ]);
+    expect(text).toContain('You: Wire the money? (reactions: "\u2705 from You, \u{1f44d}" from "Alice")');
   });
 
   it('puts the messages from before the window under their own heading, ahead of the window', () => {
@@ -229,9 +256,9 @@ describe('renderBriefing', () => {
         }),
       ]),
     ]);
-    expect(text).toContain('You: See you at 7? (reactions: 👍 from "Alice", ❤️ from You, 😂 from "Alice")');
+    expect(text).toContain('You: See you at 7? (reactions: "👍" from "Alice", "❤️" from You, "😂" from "Alice")');
     expect(text).toContain(
-      '"Alice": Who is in? (reactions: 1️⃣ from someone, 2️⃣ from someone, 3️⃣ from someone, 4️⃣ from someone, 5️⃣ from someone, 2 more)',
+      '"Alice": Who is in? (reactions: "1️⃣" from someone, "2️⃣" from someone, "3️⃣" from someone, "4️⃣" from someone, "5️⃣" from someone, 2 more)',
     );
   });
 
@@ -244,8 +271,8 @@ describe('renderBriefing', () => {
         msg('2026-10-13T00:00:00Z', { isFromMe: true, text: 'Drinks?', reactions: [{ key: '👍', participantId: 'eli' }] }),
       ]),
     ]);
-    expect(text).toContain('You: Lunch? (reactions: 👍 from "Dana")');
-    expect(text).toContain('You: Drinks? (reactions: 👍 from someone)');
+    expect(text).toContain('You: Lunch? (reactions: "👍" from "Dana")');
+    expect(text).toContain('You: Drinks? (reactions: "👍" from someone)');
   });
 
   it("folds everything others wrote onto one line, so no message, name, title, file name or reaction can pose as the briefing's own", () => {

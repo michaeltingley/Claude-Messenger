@@ -43,10 +43,31 @@ describe('safeMarkdown', () => {
     );
   });
 
+  it('turns a domain or an IP address with a port into "(link)" too, and one after anything that ends a URL', () => {
+    expect(
+      safeMarkdown('bit.ly:443/3xYz, paypal.com:80/verify, evil.example:8080, evil.xn--p1ai/login, ev_il.example/x, 127.0.0.1/login or 10.0.0.1:8080.'),
+    ).toBe('(link), (link), (link), (link), (link), (link) or (link).');
+    // A scheme with one slash, or "//" after a digit, starts no URL, but what follows is still a link.
+    expect(safeMarkdown('https:/x.com/y or 1//x.com/y')).toBe('https:/(link) or 1//(link)');
+    expect(safeMarkdown('v1.2.3 at 7:46 from Amazon.com: 2 items')).toBe('v1.2.3 at 7:46 from Amazon.com: 2 items');
+  });
+
   it('turns every email address into "(email address)", however its at sign is written', () => {
     expect(
-      safeMarkdown('help@evil.example, <mailto:help@evil.example>, help＠evil.example, help﹫evil.example or mailto:help%40evil.example.'),
-    ).toBe('(email address), (email address), (email address), (email address) or (email address).');
+      safeMarkdown(
+        'help@evil.example, <mailto:help@evil.example>, help＠evil.example, help﹫evil.example, mailto:help%40evil.example or help@ev_il.example.',
+      ),
+    ).toBe('(email address), (email address), (email address), (email address), (email address) or (email address).');
+  });
+
+  it('reads a fullwidth or other compatibility form as the plain one, so none gets past as something else', () => {
+    expect(safeMarkdown('ｈｔｔｐｓ：／／ｅｖｉｌ．ｅｘａｍｐｌｅ／ｌｏｇｉｎ, ４１５-５５５-０１９９, ｈｅｌｐ＠ｅｖｉｌ．ｅｘａｍｐｌｅ and ＜b＞')).toBe(
+      '(link), (number), (email address) and \\<b>',
+    );
+    // An emoji keeps its own form, though some have a plain one.
+    expect(safeMarkdown('ℹ️ Acme™ news ‼️')).toBe('ℹ️ Acme™ news ‼️');
+    // A no-break space and a no-break hyphen look like a space and a hyphen, and a dash groups digits too.
+    expect(safeMarkdown('415\u00a0555\u00a00199, 415\u2011555\u20110199 or 415–555–0199')).toBe('(number), (number) or (number)');
   });
 
   it('turns phone numbers and codes into "(number)", leaving dates, times, years and amounts', () => {
@@ -73,6 +94,25 @@ describe('safeMarkdown', () => {
   it('leaves the rest of the Markdown as written', () => {
     const digest = '**Needs you**\n- **Alice** asked about dinner Friday at 7:30.\n\n**Everything else**\n- _Family_: the cabin is booked.';
     expect(safeMarkdown(digest)).toBe(digest);
+  });
+
+  it('drops what shows as nothing between ASCII characters, so nothing invisible can split a number, an address or a link', () => {
+    expect(safeMarkdown('Call 415\u200d555\u200d0199, mail help\u200c@evil.example, use 48\ufeff29\u034f13 at bit\u200d\u200d\u200d.ly/3xYz')).toBe(
+      'Call (number), mail (email address), use (number) at (link)',
+    );
+    // Nor once what goes anyway is gone from among them.
+    expect(safeMarkdown('4\u200d\u0600\u200d\u0600\u200d82913')).toBe('(number)');
+    // Emoji keep theirs, next to ASCII or not.
+    const emoji = '\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 1\ufe0f\u20e3 \u2764\ufe0f thanks';
+    expect(safeMarkdown(emoji)).toBe(emoji);
+  });
+
+  it('takes time linear in the text, whatever the text is', () => {
+    const started = Date.now();
+    for (const piece of ['[', '![', '[a](', 'a.', 'a-', 'a_', '1.', 'a@', 'a.b:', 'www.', '//.', '+1 ', 'a.bc/.', '\u200d']) {
+      safeMarkdown(piece.repeat(100_000 / piece.length));
+    }
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it("drops control and invisible characters, which could hide or reorder words or reach a terminal, but keeps emoji's joiners", () => {

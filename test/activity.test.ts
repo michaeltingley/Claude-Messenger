@@ -26,6 +26,15 @@ class CountingMessenger extends FakeMessenger {
   }
 }
 
+/** A CountingMessenger whose last chat gets a message, and so moves to the top, once the first page of chats is read. */
+class Jumping extends CountingMessenger {
+  private searches = 0;
+  override searchChats(query?: ChatQuery): Promise<Page<Chat>> {
+    if (++this.searches === 2) this.chats = [this.chats.at(-1)!, ...this.chats.slice(0, -1)];
+    return super.searchChats(query);
+  }
+}
+
 const collector = (messenger: FakeMessenger, limits: Partial<ActivityLimits> = {}) =>
   new ActivityCollector(messenger, { ...DEFAULT_ACTIVITY_LIMITS, ...limits });
 
@@ -242,17 +251,38 @@ describe('ActivityCollector', () => {
 
   it('stops looking through the chat search after its page limit, however many pages it says remain, and says there were more', async () => {
     class Endless extends FakeMessenger {
-      pages = 0;
-      override async searchChats(): Promise<Page<Chat>> {
-        this.pages++;
+      cursors: (string | undefined)[] = [];
+      override async searchChats(query?: ChatQuery): Promise<Page<Chat>> {
+        this.cursors.push(query?.cursor);
         // Every chat on the page is one the policy hides, so none counts toward the chat limit.
-        return { items: [], hasMore: true, nextCursor: `page-${this.pages + 1}` };
+        return { items: [], hasMore: true, nextCursor: `page-${this.cursors.length + 1}` };
       }
     }
     const fake = new Endless();
-    const activity = await collector(fake).collect(window);
-    expect(fake.pages).toBe(25);
+    const activity = await collector(fake, { chatListPages: 3 }).collect(window);
+    // Three pages, then the first again.
+    expect(fake.cursors).toEqual([undefined, 'page-2', 'page-3', undefined]);
     expect(activity).toMatchObject({ chats: [], moreChats: true });
+  });
+
+  it('reads a chat that moved to the top of the list while the list was paged through, past the pages already read', async () => {
+    const fake = new Jumping();
+    fake.pageSize = 2;
+    fake.chats = ['a', 'b', 'c', 'd'].map((id) => activeChat(id));
+    fake.messages = fake.chats.map((chat, n) => message(`m-${chat.id}`, chat.id, n + 1));
+    const activity = await collector(fake).collect(window);
+    expect(fake.listed.sort()).toEqual(['a', 'b', 'c', 'd']);
+    expect(activity.moreChats).toBe(false);
+  });
+
+  it('keeps the chat that moved to the top over the oldest when that takes it past its chat limit', async () => {
+    const fake = new Jumping();
+    fake.pageSize = 2;
+    fake.chats = ['a', 'b', 'c', 'd', 'e'].map((id) => activeChat(id));
+    fake.messages = fake.chats.map((chat, n) => message(`m-${chat.id}`, chat.id, n + 1));
+    const activity = await collector(fake, { chats: 3 }).collect(window);
+    expect(fake.listed.sort()).toEqual(['a', 'b', 'e']);
+    expect(activity.moreChats).toBe(true);
   });
 
   it('says nothing more is out there when exactly its chat limit was active', async () => {

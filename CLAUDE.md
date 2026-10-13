@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 363 tests / 27 files.
+- `npm test` must be green before any push. Currently 371 tests / 27 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -108,7 +108,10 @@ built for hypothetical futures.
   MCP servers, CLAUDE.md and hooks stay out, and nothing of the input is
   left on disk. Where two guards cover one thing, each is proven alone,
   with the other taken out, beside a control without both that shows the
-  thing happen. CI installs the latest Claude Code.
+  thing happen. CI installs the latest Claude Code. The one guard it can't
+  prove is the one for the subscription's claude.ai connectors: Claude Code
+  fetches them from claude.ai, where no stand-in can answer, so that they
+  stay out rests on Claude Code's code and what its debug log says.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene

@@ -96,12 +96,13 @@ describe.skipIf(!installed)('ClaudeCodeModel with the real Claude Code (a stand-
    */
   async function claudeCode({ flags = [], env: unset = [], inertInput = false }: Without = {}): Promise<string> {
     const script = [
-      '#!/bin/sh',
+      '#!/bin/bash',
       `export ANTHROPIC_BASE_URL=${baseUrl} NO_PROXY=127.0.0.1`,
       '[ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || export ANTHROPIC_API_KEY=sk-ant-stand-in',
       ...(unset.length > 0 ? [`unset ${unset.join(' ')}`] : []),
       ...(flags.length > 0 ? [`for arg do shift; case "$arg" in ${flags.join('|')}) continue ;; esac; set -- "$@" "$arg"; done`] : []),
-      inertInput ? `sed 's/＠/@/g' | exec ${installed} "$@"` : `exec ${installed} "$@"`,
+      // Claude Code takes the wrapper's place, so stopping a run stops it.
+      inertInput ? `exec ${installed} "$@" < <(sed 's/＠/@/g')` : `exec ${installed} "$@"`,
     ];
     const command = join(root, 'bin', 'claude');
     await writeFile(command, `${script.join('\n')}\n`);

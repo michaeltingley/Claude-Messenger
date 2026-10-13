@@ -55,6 +55,11 @@ describe('plainText (Beeper)', () => {
     for (const piece of ['<a title="', '<b ', '<img alt=', '<mx-reply>', '</mx-reply>', '<!-- ', '&#']) {
       plainText(piece.repeat(200_000 / piece.length));
     }
+    // One long tag that never ends, as any message can send.
+    for (const start of ['<', '</', '<a ', '<a title="', "<a title='", '<!']) {
+      plainText(`hey ${start}${'x'.repeat(20_000)} lol`);
+    }
+    plainText(`&#${'1'.repeat(200_000)}`);
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 
