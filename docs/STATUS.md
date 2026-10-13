@@ -30,7 +30,7 @@ and `docs/HOSTING-OPTIONS.md`._
   - Beeper Server / `beeper-cli` is gone everywhere.
     [beeper/cli#21](https://github.com/beeper/cli/issues/21) wiped a legacy
     account's bridges across all devices.
-- **Session-runnable install (#PR)**:
+- **Session-runnable install (#22)**:
   - `deploy/bootstrap.sh` never prompts, so a Claude session can run it.
     apt runs non-interactively. The tty rebind and the token paste are gone.
   - It ends in `deploy/configure.sh`, which also runs on its own (re-runs,
