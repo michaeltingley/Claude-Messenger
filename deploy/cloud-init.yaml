@@ -22,8 +22,9 @@
 # the provider seam changes.
 #
 # It deliberately stops short of the logins that are yours by nature (Claude
-# account, Tailscale, and the Beeper email code + recovery key). Those happen
-# in the FIRST Claude session on the box.
+# account, Tailscale, the Beeper email code + recovery key, and approving
+# Claude Messenger in Beeper's own window). Those happen in the FIRST Claude
+# session on the box, which runs deploy/configure.sh to finish.
 #
 # After first boot, connect once (ssh or the cloud console) and run:
 #   claude
@@ -44,7 +45,8 @@ packages:
   - novnc
   - websockify
   - libfuse2t64
-  # Electron runtime dependencies (Ubuntu 24.04 "noble" package names)
+  # Electron runtime dependencies (Ubuntu 24.04 "noble" package names; they
+  # resolve on 26.04 too)
   - libgtk-3-0t64
   - libnss3
   - libasound2t64
@@ -109,9 +111,10 @@ runcmd:
     Provisioned by cloud-init. Everything is installed; nothing is
     logged in yet. To finish: run `claude`, sign in, and tell it:
       "Finish setting up Claude Messenger on this machine."
-    (It will join Tailscale, open the Beeper sign-in screen to your
-    tailnet with deploy/signin-surface.sh so you can log in from a
-    browser, close it again, then start the MCP service.)
+    (It will join Tailscale, then run deploy/configure.sh: Beeper's
+    screen opens to your tailnet so you can sign in and approve
+    Claude Messenger from a browser. The screen closes once the token
+    is saved, and the MCP service starts.)
     ────────────────────────────────────────────────────────────────
     EOF
 

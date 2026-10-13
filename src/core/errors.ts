@@ -37,6 +37,31 @@ export class ProviderError extends MessengerError {
   }
 }
 
+/** The owner declined the provider's approval prompt for this app's credential. */
+export class AccessDeniedError extends MessengerError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'access_denied', options);
+  }
+}
+
+/**
+ * The owner approved, but on terms this app can't keep (more access than it
+ * asked for, or an expiry). The credential was revoked, or the message says
+ * how to revoke it.
+ */
+export class AccessMismatchError extends MessengerError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'access_mismatch', options);
+  }
+}
+
+/** Nobody signed in to the provider, or answered its approval prompt, in time. */
+export class AccessTimeoutError extends MessengerError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'access_timeout', options);
+  }
+}
+
 /** An action was blocked by the local policy layer (never by the provider). */
 export class PolicyDeniedError extends MessengerError {
   constructor(

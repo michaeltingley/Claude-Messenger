@@ -62,16 +62,27 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 111 tests / 14 files.
+- `npm test` must be green before any push. Currently 198 tests / 18 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
 - `FakeMessenger` (`test/fake-messenger.ts`) is how anything above `providers/`
   is tested. Needing a real Beeper to test a policy change means the seam leaked.
-- Deploy scripts run as real subprocesses against shimmed `tailscale` and
-  `systemctl` CLIs (`test/signin-surface.integration.test.ts`). The shims
-  reject any invocation they don't model, so a script can't drift to an
-  untested CLI form. A real provision still needs a VM.
+- Deploy scripts run as real subprocesses on a fake host (`test/fake-host.ts`):
+  shims for `tailscale`, `systemctl`, `sudo`, `apt-get` and the rest reject
+  any invocation they don't model, so a script can't drift to an untested
+  CLI form, and nothing a script gets wrong can install software on the
+  machine running the tests. Its `systemctl` really starts a unit's
+  `ExecStart`, with only the environment a unit gets, so
+  `test/install.integration.test.ts` proves the installed MCP service answers
+  with the token `connect` saved. Its `sudo` resets the environment, as real
+  sudo does. Install scripts run the way a Claude session runs them: no
+  terminal, nothing on stdin, and signals to the script alone or to its whole
+  process group. A real provision still needs a VM.
+- The mock Beeper (`test/mock-beeper.ts`) models Beeper Desktop's OAuth
+  approval as read from its code: sign-in state, the Desktop API switched
+  off, the two-minute box, decline, and grants on other terms than asked. It
+  also plays the person answering.
 - Security properties of the host get proven against the real binaries, not
   config greps. `test/display-isolation.integration.test.ts` starts Xvfb and
   x11vnc exactly as `deploy/systemd/` runs them and speaks X11 and RFB to

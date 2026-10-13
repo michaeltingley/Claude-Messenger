@@ -6,10 +6,10 @@ Three steps: get a Beeper endpoint + token, point Claude Messenger at it, connec
 
 ### Option A — Beeper Desktop on your machine (5 minutes, start here)
 
-1. Open Beeper Desktop → **Settings → Developers** → enable **Beeper Desktop API**.
-2. **Settings → Developers → Approved connections** → **+** → name it `claude-messenger` → copy the token.
-   (Newer builds: **Settings → Integrations** hosts the same controls.)
-3. The API is now at `http://localhost:23373` while the app runs.
+1. Open Beeper Desktop → **Settings → Integrations** → enable **Beeper Desktop API**.
+   (Older builds: **Settings → Developers** hosts the same controls.)
+2. The API is now at `http://localhost:23373` while the app runs.
+3. Get the token in step 2 below, with `claude-messenger connect`: Beeper asks you to approve, and the token goes straight into `.env`.
 
 ### Option B — Headless Beeper Server on a VPS — ⚠️ DO NOT USE
 
@@ -31,9 +31,9 @@ Three steps: get a Beeper endpoint + token, point Claude Messenger at it, connec
 
 The officially supported route since Sept 2025, and what `deploy/cloud-init.yaml` and `deploy/bootstrap.sh` now provision. Run regular Beeper Desktop on any machine that stays awake (spare desktop, Mac mini, home server, or a VPS running it headless under Xvfb), then reach it through a tunnel. Same API, boring and stable.
 
-For a headless Linux host, the deploy scripts handle this for you: they install the Beeper Desktop AppImage matched to the host architecture, run it under Xvfb as a systemd user service, and expose noVNC over your tailnet just long enough for the one-time sign-in — so the emailed login code and your recovery key are typed straight into the app rather than relayed through a terminal or a chat transcript. Size for **4 GB RAM**: Electron plus Xvfb is estimated at ~0.5–0.8 GB (not yet measured; many accounts push it higher).
+For a headless Linux host, the deploy scripts handle this for you: they install the Beeper Desktop AppImage matched to the host architecture, run it under Xvfb as a systemd user service, and expose noVNC over your tailnet just long enough for the one-time sign-in — so the emailed login code and your recovery key are typed straight into the app rather than relayed through a terminal or a chat transcript. Size for **4 GB RAM**: Electron plus Xvfb measured about 0.66 GB once synced with 9 networks, peaking near 1.07 GB during the first sync (many accounts push it higher).
 
-Then mint a token in the app: **Settings → Integrations → "+"** next to Approved connections, and treat `http://127.0.0.1:23373` on that machine as your endpoint. Note: iMessage bridging requires macOS, so an iMessage-heavy setup may prefer a Mac mini as the always-on host.
+Treat `http://127.0.0.1:23373` on that machine as your endpoint; the deploy scripts get the token for you with `claude-messenger connect`. Note: iMessage bridging requires macOS, so an iMessage-heavy setup may prefer a Mac mini as the always-on host.
 
 ### Making either reachable from elsewhere (tunnels)
 
@@ -48,9 +48,18 @@ If connecting from another device to Beeper *Desktop*, also enable **Settings �
 
 ```sh
 npm install && npm run build
-cp .env.example .env      # set BEEPER_ACCESS_TOKEN and, if not local, BEEPER_BASE_URL
+cp .env.example .env              # if Beeper isn't local, set BEEPER_BASE_URL
+npx claude-messenger connect      # approve in Beeper; saves BEEPER_ACCESS_TOKEN to .env
 npx claude-messenger doctor
 ```
+
+`connect` opens Beeper's own **Approve connection** box and waits for you (15 minutes by default; `--timeout <minutes>`). In the box:
+
+- **Expires in**: choose **Never**. Nothing renews a token that expires.
+- **Allow sensitive actions**: leave it off. It grants write access (sending, marking read); ask for that with `connect --allow-send`, and the policy still decides where it applies.
+- Press **Approve**.
+
+The token is written to `.env` (owner-only) and never displayed. A token approved on other terms is revoked instead of saved, and `connect` says what to choose next time. If Beeper is signed out, `connect` waits for you to sign in first. To mint a token by hand instead: **Settings → Integrations → Approved connections → +**, then set `BEEPER_ACCESS_TOKEN` in `.env`.
 
 `doctor` walks the whole chain — config → connectivity → token → accounts → policy — and tells you exactly which link is broken if any.
 
@@ -77,33 +86,21 @@ Test the guardrails: `claude-messenger send <allowed-chat> "test"` should work; 
 
 ## 3. Connect Claude
 
-**Claude Code** (machine that can reach the endpoint). The server is spawned from whatever directory Claude Code happens to run in, so pass explicit env vars with **absolute paths** — do not rely on `.env` or relative defaults:
+**Claude Code** (machine that can reach the endpoint). The server reads `.env` from its working directory, so start it from the checkout. That keeps the token in the owner-only `.env`, rather than on a command line that every local user can read, or in Claude's config:
 
 ```sh
-claude mcp add claude-messenger -s user \
-  --env BEEPER_ACCESS_TOKEN=... \
-  --env BEEPER_BASE_URL=http://localhost:23373 \
-  --env CLAUDE_MESSENGER_POLICY=/path/to/Claude-Messenger/policy.json \
-  --env CLAUDE_MESSENGER_AUDIT_DIR=/path/to/Claude-Messenger/audit \
-  --env CLAUDE_MESSENGER_STATE_DIR=/path/to/Claude-Messenger/state \
-  -- node /path/to/Claude-Messenger/dist/cli/main.js serve
+claude mcp add claude-messenger -s user -- \
+  sh -c 'cd /path/to/Claude-Messenger && exec node dist/cli/main.js serve'
 ```
 
-**Claude Desktop** — add to MCP settings:
+**Claude Desktop**: add to MCP settings, with node's absolute path (`command -v node`), since Claude Desktop may not start with your shell's `PATH`:
 
 ```json
 {
   "mcpServers": {
     "claude-messenger": {
-      "command": "node",
-      "args": ["/path/to/Claude-Messenger/dist/cli/main.js", "serve"],
-      "env": {
-        "BEEPER_ACCESS_TOKEN": "…",
-        "BEEPER_BASE_URL": "http://localhost:23373",
-        "CLAUDE_MESSENGER_POLICY": "/path/to/policy.json",
-        "CLAUDE_MESSENGER_AUDIT_DIR": "/path/to/audit",
-        "CLAUDE_MESSENGER_STATE_DIR": "/path/to/state"
-      }
+      "command": "sh",
+      "args": ["-c", "cd /path/to/Claude-Messenger && exec /path/to/node dist/cli/main.js serve"]
     }
   }
 }
@@ -117,4 +114,4 @@ Ask Claude: *"Use check_connection then search_chats to show my unread chats."*
 
 - Revoke any token instantly: Beeper → Settings → Integrations → Approved connections.
 - One token per consumer (one for this project, one per experiment) so revocation is surgical.
-- Rotate a token you've ever pasted into a chat or shared screen.
+- Rotate a token you've ever pasted into a chat or shared screen. `connect` never shows its token, so there is nothing to paste.

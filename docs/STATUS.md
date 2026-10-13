@@ -1,6 +1,6 @@
 # Project Status & Session Handoff
 
-_Last updated: 2026-10-12. This file is the pick-up point for any new session,
+_Last updated: 2026-10-13. This file is the pick-up point for any new session,
 cloud or local. Read `CLAUDE.md` first, then this, then `docs/SHARED-HOST.md`
 and `docs/HOSTING-OPTIONS.md`._
 
@@ -24,11 +24,34 @@ and `docs/HOSTING-OPTIONS.md`._
   - The one-time sign-in surface is opened and closed only by
     `deploy/signin-surface.sh`, published to the tailnet only.
     - It is never enabled at boot.
-    - Bootstrap closes it once `doctor` passes.
+    - `deploy/configure.sh` closes it as soon as the token is saved, however
+      the run ends.
   - Systemd units are single-sourced in `deploy/systemd/`.
   - Beeper Server / `beeper-cli` is gone everywhere.
     [beeper/cli#21](https://github.com/beeper/cli/issues/21) wiped a legacy
     account's bridges across all devices.
+- **Session-runnable install (#22)**:
+  - `deploy/bootstrap.sh` never prompts, so a Claude session can run it.
+    apt runs non-interactively. The tty rebind and the token paste are gone.
+  - It ends in `deploy/configure.sh`, which also runs on its own (re-runs,
+    `--reconnect`): `.env`, Beeper access, `doctor`, the MCP unit,
+    `tailscale serve`, and `claude mcp add` on the host.
+  - `claude-messenger connect` gets the Beeper token through Beeper
+    Desktop's own approval box (OAuth with PKCE) and writes it straight into
+    `.env`, so no person, terminal or transcript ever holds it.
+    - It waits for the Desktop API to be switched on and for sign-in, and
+      re-asks when Beeper closes an unanswered box.
+    - A token with an expiry or with unasked write access is revoked, not
+      saved. That call is `GuardedAccessRequester`'s (`policy/access.ts`),
+      the only requester `connect` gets.
+    - The port is `core/access.ts`; the Beeper side is
+      `providers/beeper/access.ts`.
+  - `configure.sh` closes the sign-in screen on every run, and on any exit
+    but `kill -9` (after one, run it again). Claude Code sessions on the host
+    get Claude Messenger over stdio, so no token sits on a command line.
+  - Tests run both scripts with no terminal against a fake host whose
+    systemd really starts the built MCP service (`test/fake-host.ts`,
+    `test/install.integration.test.ts`).
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -38,15 +61,25 @@ and `docs/HOSTING-OPTIONS.md`._
   - Context engine: `docs/CONTEXT-ENGINE-RESEARCH.md` and `docs/research/`.
   - Hosting: `docs/HOSTING-OPTIONS.md`, re-verified 2026-10-08.
 
-## VERIFIED LIVE (2026-07-10)
+## VERIFIED LIVE
 
-On the user's laptop, against real Beeper Desktop, `claude-messenger doctor`
-passed end to end: config → connection → auth → policy.
-
-- **10 real accounts** were visible under the read-only default policy:
-  WhatsApp, Signal, Instagram, Discord, LinkedIn, Facebook, Google
+- **2026-07-10, the user's laptop.** Against real Beeper Desktop,
+  `claude-messenger doctor` passed end to end: config → connection → auth →
+  policy. **10 real accounts** were visible under the read-only default
+  policy: WhatsApp, Signal, Instagram, Discord, LinkedIn, Facebook, Google
   Messages/Chat/Voice, and Matrix.
-- The stack works against real data.
+- **2026-10-13, the VPS.** Beeper Desktop was signed in on the box and
+  `connect` (built from #22) got a read-only token that never expires
+  through Beeper's own box. `doctor` passes with **11 accounts**, all
+  Beeper Cloud: Beeper, Discord, Facebook, Google Messages, Google Chat,
+  Google Voice, Instagram, LinkedIn, Signal, Telegram, WhatsApp.
+  - Google Voice and Telegram were missing at first: they were Beeper
+    On-Device connections on the owner's other devices, and an on-device
+    connection runs per device, so a new device doesn't get it. The owner
+    re-added both as Cloud connections the same night; each reached the host
+    within minutes and runs nothing there. His first try at Telegram set it
+    up on-device on his laptop instead, so check where a re-added network
+    lands.
 
 ## Decided (2026-10-12): Claude Messenger runs on the automation VPS
 
@@ -92,44 +125,81 @@ passed end to end: config → connection → auth → policy.
 
 ## NEXT ACTION (for the picking-up session)
 
-1. **Install Claude Messenger on the VPS.** A first VPS session ran
-   preflight on 2026-10-12. It was then stopped partway through the install,
-   when the owner moved the work into a Project. Its last status line read
-   "Installing X helpers and writing token-capture script".
-   - Check what it left before redoing anything:
-     - `~/claude-messenger`, `/opt/beeper`, and the user units from
-       `deploy/systemd/`;
-     - `deploy/signin-surface.sh status`; close the surface if it's up;
-     - any token-capture script it wrote. Read it, then delete it; the next
-       bullet replaces it.
-   - **First, make the install runnable from a session, in the repo.**
-     `deploy/bootstrap.sh` expects a person at its terminal. It prompts there
-     for Enter once Beeper has synced, and for the token.
-     - Run by a Claude session, it exits before step 1. It rebinds stdin to
-       `/dev/tty`, and the session's shell has no terminal. (Checked in a
-       cloud session on 2026-10-12.)
-     - The token is the hard part. It must reach `.env` without passing
-       through chat; the plan is a terminal on the Beeper screen, where the
-       owner types it.
-     - Land this in `deploy/` with a test. Improvised on the box, it would be
-       improvised again on every reinstall.
-   - Then install, following `deploy/bootstrap.sh`:
-     - Beeper Desktop under Xvfb on :99.
-     - The owner signs in through `deploy/signin-surface.sh`'s tailnet link,
-       then enters the token on that same screen.
-     - Then `doctor` green, the surface closed, and the MCP service up.
-     - Then `claude mcp add` for sessions on the box.
-2. **Land the repo fixes it reports.** Expect apt package names that differ on
-   26.04, because bootstrap's list was written for 24.04.
-3. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
+1. **Run the MCP service as a system unit, so its sandbox applies.** Land
+   this in the repo before the MCP service starts on the VPS.
+   - Found on the VPS on 2026-10-13: Ubuntu's AppArmor restriction on
+     unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns=1`,
+     the default since 24.04) denies the user manager the namespace that
+     `ProtectSystem`, `ProtectHome`, `PrivateTmp` and `ReadWritePaths` need.
+   - systemd 259 then starts the unit **without** that sandbox, and says
+     nothing. A probe there found the home directory, `/run/user` and the
+     host's `/tmp` all writable from inside. `NoNewPrivileges` and
+     `MemoryMax` did apply.
+   - So `deploy/systemd/claude-messenger-mcp.service`'s promise that the rest
+     of `$HOME` stays read-only is false on those hosts.
+   - The fix: install it in `/etc/systemd/system` with `User=`, where the
+     system manager builds the namespace with real privileges. Don't loosen
+     AppArmor host-wide; that would be the owner's call.
+   - Prove it with a test that starts the real unit under real systemd (CI
+     has it) and checks from inside that `$HOME` is read-only, as
+     `display-isolation` does for Xvfb. A config grep passed this bug.
+2. **Finish the VPS install once step 1 has merged.** Beeper is signed in
+   and the token is in place, so what is left is unattended.
+   - **Where it stands** (2026-10-13, done by a Remote Control session on
+     the box, with the owner's go):
+     - Beeper Desktop 4.3.176 in `/opt/beeper`, its xvfb and beeper-desktop
+       user units running, **signed in** since 02:11Z.
+     - `~/claude-messenger/.env` (mode 600) holds the MCP token and a
+       read-only Beeper token that never expires, saved by `connect` from a
+       build of #22 in the worktree `~/cm-pr22`. No `policy.json` and no MCP
+       unit yet; `doctor` passes.
+     - The sign-in surface is closed.
+     - Still there from the July attempt: `~/.local/share/cm-setup/write-env.sh`,
+       an improvised token helper (read it, then delete it: `connect`
+       replaces it), and xdotool, xclip, x11-apps and imagemagick, which the
+       repo doesn't need. A newer kernel waits for a reboot.
+   - **Then, on the box:** `git worktree remove ~/cm-pr22`, put
+     `~/claude-messenger` on `main` and pull, `npm ci && npm run build`, then
+     run `deploy/configure.sh` in the background. It keeps the token (no
+     approval needed), writes `policy.json`, runs `doctor`, starts and
+     publishes the MCP service, and registers it with Claude Code on the box.
+   - Whatever runs `configure.sh` or `bootstrap.sh` in the background must
+     allow more than their 60-minute wait for sign-in and approval. Claude
+     Code's Bash tool stops background commands after 30 minutes unless
+     given a longer timeout (at most 120): pass at least 65.
+   - Decline any Beeper prompt that would add, move or re-connect a chat
+     network, or sign out another device, unless the owner asked for it.
+3. **Memory after Beeper's first sync: measured 2026-10-13.** Signed in at
+   02:11Z, settled by 02:25Z (Beeper's PSS flat within 4% for 9 minutes,
+   CPU about 2%). Against the signed-out baseline at 00:04Z:
+
+   | | Signed out (00:04Z) | Synced (02:25Z) |
+   |---|---|---|
+   | Beeper, whole tree (7 processes), PSS | 444 MB | 664 MB |
+   | Beeper, whole tree, RSS | 743 MB | 951 MB |
+   | Beeper's two cgroups (service + `app-Beeper-*.scope`) | 592 MB | 900 MB |
+   | System used / available (`free -m`) | 2238 / 1575 MB | 1901 / 1913 MB |
+   | Swap in use | 625 MB | 1351 MB |
+
+   - The first sync peaked right after sign-in at 829 MB PSS (1067 MB of
+     cgroup), then settled.
+   - "Used" fell only because that peak pushed about 730 MB of idle pages
+     (the agent's Chrome, Claude sessions) into swap.
+   - Xvfb adds about 16 MB PSS. The MCP service isn't running yet. Google
+     Voice and Telegram arrived later, as Cloud connections, which add no
+     bridge on the host.
+   - Beeper's main process moves itself out of beeper-desktop.service into
+     its own `app-Beeper-<pid>.scope`. Count that cgroup too.
+4. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
    asked for this reminder, expecting 4 GB to be too tight for Beeper
    alongside the agent's Chrome and Claude sessions.
    - VPS-2 is 8 GB at $10/mo; OVH upgrades in place.
-   - Record memory after Beeper's first sync, so the reminder carries real
-     numbers.
-4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
+   - Give the reminder with the numbers from step 3: Beeper settles at
+     about 0.66 GB, and the box keeps 1.9 GB available only by holding
+     1.35 GB in swap.
+5. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
-5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
+6. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
    Orchestrator-started sessions on the VPS may make it unnecessary.
 
 ### Hosting history (kept short)
@@ -148,9 +218,42 @@ passed end to end: config → connection → auth → policy.
   - Anything a later session needs must be committed.
   - Keys belong with the user or on the host, never only in a container.
 - **Never install Beeper Server.** See above.
+- **What the VPS taught the install (2026-10-12/13):**
+  - Every apt package name in `bootstrap.sh` resolves on Ubuntu 26.04
+    (checked by the first VPS session).
+  - needrestart's "Pending kernel upgrade" dialog stalls apt when there is
+    no terminal. `bootstrap.sh` now runs apt with
+    `DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a`.
+  - Beeper Desktop 4.3.176 answers `/v1/info` whether or not it is signed
+    in. The sign-in signal is `GET /v1/app/setup` without a token: 200 while
+    signed out, 401 once signed in. It flips right after the emailed code,
+    before the recovery key, so an unattended `connect` asks for approval
+    while Beeper may still want the key. Read from Beeper's code: the box
+    then opens at once, over the key step (nothing gates it on sign-in
+    state), and Approve works before the key is in. So `connect`'s steps say
+    to approve, then enter the key. No signal without a token flips when the
+    key goes in.
+  - After the emailed code, Beeper first offers to verify with another
+    device. "Try another way", then "Enter Recovery Key", gets the key box,
+    which has a "Paste from Clipboard" button: the owner pastes the key into
+    noVNC's clipboard panel, then presses it. It took him about 3 minutes.
+  - Beeper closes an approval box nobody answered after two minutes.
+    Signing out deletes its approved connections; restarts keep them.
+  - Beeper's own login token also works as an API token, so its data
+    directory is as sensitive as `.env`.
+  - On a tailnet that hasn't allowed Serve, `tailscale serve` prints an
+    enable link and waits forever. Both scripts now stop after 20 s and pass the link on.
+  - On a fresh install the MCP unit could not have started: its
+    `ReadWritePaths` names `state/`, which nothing creates under a read-only
+    policy, and systemd refuses to start a unit whose listed path is missing
+    (226/NAMESPACE). `configure.sh` creates it.
 - **Cloud sessions can't add GitHub deploy keys.** That API path is blocked
   through their proxy. Add deploy keys in the GitHub UI.
 - The user wants maximum autonomy ("do everything I can't"). The irreducibly
   human steps are:
   - account signups (card, CAPTCHA, ID checks);
-  - relaying the Beeper emailed code and recovery key.
+  - Beeper's recovery key, and its emailed code unless the owner lets Claude
+    read it from his Gmail (he did on 2026-10-13);
+  - moving a network Beeper runs on-device to Beeper Cloud, in Beeper on
+    the owner's own devices (he did Google Voice and Telegram on
+    2026-10-13).
