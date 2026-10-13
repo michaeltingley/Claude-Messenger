@@ -74,9 +74,12 @@ step 3 (Tailscale) and step 6 (`deploy/configure.sh`):
 
 1. `sudo tailscale up` → give the user the printed URL to click.
 2. Run `~/claude-messenger/deploy/configure.sh` (it never prompts; run it in
-   the background and read its output). **Do not run `beeper setup --server
-   --install`** — see the warning in docs/DEPLOY.md; it can delete the user's
-   cloud bridge connections across every device.
+   the background and read its output). It waits up to 60 minutes for the
+   user, so give the background command a longer timeout: Claude Code's Bash
+   tool stops it after 30 minutes by default, so pass at least 65. Stop it
+   any way but `kill -9` and it closes Beeper's screen first. **Do not run
+   `beeper setup --server --install`** — see the warning in docs/DEPLOY.md;
+   it can delete the user's cloud bridge connections across every device.
 
    cloud-init already has Beeper Desktop running headless under Xvfb, with
    the sign-in surface installed but closed. The script:
@@ -90,9 +93,12 @@ step 3 (Tailscale) and step 6 (`deploy/configure.sh`):
      into the app, so neither passes through chat) and approves Claude
      Messenger in Beeper's "Approve connection" box. `claude-messenger
      connect` then saves the token straight into `.env`; nobody sees it.
+     After the code, Beeper first offers to verify with another device; the
+     user picks "Try another way", then "Enter Recovery Key".
    - Closes the screen and verifies that nothing is left exposed, then runs
      `doctor`, starts the systemd user service, publishes it with
-     `tailscale serve`, and adds it to Claude Code on the host.
+     `tailscale serve`, and registers it with Claude Code on the host over
+     stdio.
 
    If it stops, it says why and what to do; every step is safe to re-run.
    If Tailscale Serve is off for the tailnet, it prints the link that turns

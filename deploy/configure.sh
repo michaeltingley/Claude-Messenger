@@ -11,8 +11,9 @@
 # approving Claude Messenger's access. The token then goes from Beeper
 # straight into .env (`claude-messenger connect`), so nobody types it and no
 # transcript holds it. When Beeper runs headless on this host, its window is
-# reachable only through the sign-in surface: this opens it for the approval
-# and closes it again before it exits, however it exits.
+# reachable only through the sign-in surface, which this opens for the
+# approval. Every run closes it before going on, whether that run opened it or
+# not, and on any exit but a kill -9; after one of those, run this again.
 set -euo pipefail
 
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,7 +22,8 @@ BEEPER_URL="${BEEPER_BASE_URL:-http://127.0.0.1:23373}"
 # A tailnet that has not allowed Tailscale Serve makes `tailscale serve` wait
 # for someone to allow it; past this many seconds, stop waiting.
 SERVE_TIMEOUT="${CLAUDE_MESSENGER_SERVE_TIMEOUT:-20}"
-# How long the person has to sign in to Beeper and approve.
+# How long the person has to sign in to Beeper and approve. Whatever runs
+# this in the background must give it longer than that.
 APPROVAL_MINUTES=60
 SURFACE="$INSTALL_DIR/deploy/signin-surface.sh"
 UNIT_DIR="$HOME/.config/systemd/user"
@@ -39,15 +41,31 @@ case "${1:-}" in
   *) echo "usage: ${SELF} [--reconnect]" >&2; exit 2 ;;
 esac
 
+# .env, the service and Beeper's own data all belong to one regular user.
+[ "$(id -u)" -ne 0 ] || die "Run as the user who owns this install, not root."
+
+# Beeper Desktop installed by bootstrap runs headless, so its window is only
+# on the sign-in surface.
+MANAGED=0
+[ -e "$UNIT_DIR/beeper-desktop.service" ] && MANAGED=1
+
 SURFACE_OPEN=0
-# Close the sign-in surface if this run opened it. `down` verifies the end
-# state, so this fails if anything is left exposed.
+CONNECT_PID=""
+# `down` verifies the end state, so this fails if anything is left exposed.
+# The flag drops only once that is proven.
 close_surface() {
-  [ "$SURFACE_OPEN" -eq 1 ] || return 0
+  bash "$SURFACE" down || return 1
   SURFACE_OPEN=0
-  bash "$SURFACE" down
 }
-trap 'close_surface || warn "the Beeper sign-in surface may still be exposed; close it: $SURFACE down"' EXIT
+on_exit() {
+  # Another signal must not cut the cleanup short; what it runs inherits this.
+  trap '' INT TERM HUP
+  if [ -n "$CONNECT_PID" ]; then kill "$CONNECT_PID" 2>/dev/null || true; fi
+  if [ "$SURFACE_OPEN" -eq 1 ]; then
+    close_surface || warn "the Beeper sign-in surface may still be exposed; close it: $SURFACE down"
+  fi
+}
+trap on_exit EXIT
 trap 'exit 130' INT TERM HUP
 
 cd "$INSTALL_DIR"
@@ -59,7 +77,10 @@ say "Configuration"
 # token) and, on a managed host, Beeper's own data. Either bypasses the policy
 # layer. See docs/SHARED-HOST.md, rule 1.
 chmod go-rwx "$HOME"
+# Generated outside the heredoc, where a failure would go unnoticed.
+new_mcp_token() { openssl rand -hex 32 || die "openssl could not generate the MCP bearer token"; }
 if [ ! -f .env ]; then
+  mcp_token="$(new_mcp_token)"
   # umask first: the file must never exist world-readable, even briefly. The
   # Beeper token is added by `connect`, below.
   (
@@ -69,26 +90,42 @@ BEEPER_BASE_URL=${BEEPER_URL}
 CLAUDE_MESSENGER_POLICY=${INSTALL_DIR}/policy.json
 CLAUDE_MESSENGER_AUDIT_DIR=${INSTALL_DIR}/audit
 CLAUDE_MESSENGER_STATE_DIR=${INSTALL_DIR}/state
-CLAUDE_MESSENGER_MCP_TOKEN=$(openssl rand -hex 32)
+CLAUDE_MESSENGER_MCP_TOKEN=${mcp_token}
 EOF
   )
+elif ! grep -q '^CLAUDE_MESSENGER_MCP_TOKEN=.' .env; then
+  # A hand-made .env (from .env.example, say) has none, and the service
+  # won't start without it. printf is a builtin: no command line shows it.
+  mcp_token="$(new_mcp_token)"
+  sed -i --follow-symlinks '/^CLAUDE_MESSENGER_MCP_TOKEN=/d' .env
+  printf 'CLAUDE_MESSENGER_MCP_TOKEN=%s\n' "$mcp_token" >> .env
 fi
+unset mcp_token
 ok ".env in $INSTALL_DIR"
 
 say "Beeper access"
 if [ "$RECONNECT" -eq 1 ] || ! grep -q '^BEEPER_ACCESS_TOKEN=.' .env; then
-  if [ -e "$UNIT_DIR/beeper-desktop.service" ]; then
-    # Beeper runs headless here: its window is only on the sign-in surface.
+  if [ "$MANAGED" -eq 1 ]; then
     SURFACE_OPEN=1
     bash "$SURFACE" up || die "the Beeper screen could not be opened; see above, then run ${SELF} again."
   fi
-  cli connect --timeout "$APPROVAL_MINUTES" || die "Beeper access was not granted; see above, then run ${SELF} again."
-  if [ "$SURFACE_OPEN" -eq 1 ]; then
-    close_surface || die "the Beeper sign-in surface is still exposed; close it before using this host: $SURFACE down"
-    ok "sign-in surface closed"
-  fi
+  # In the background, so a signal to this script ends the wait at once
+  # rather than whenever connect returns. node itself, not the cli function,
+  # so that $! is the process to stop.
+  node dist/cli/main.js connect --timeout "$APPROVAL_MINUTES" &
+  CONNECT_PID=$!
+  granted=0
+  wait "$CONNECT_PID" && granted=1
+  CONNECT_PID=""
+  [ "$granted" -eq 1 ] || die "Beeper access was not granted; see above, then run ${SELF} again."
 else
   ok "Beeper token already in .env (to replace it: ${SELF} --reconnect)"
+fi
+if [ "$MANAGED" -eq 1 ]; then
+  # On every run, not only one that opened it: a killed run or a manual `up`
+  # can have left it open, and nothing below runs beside an open surface.
+  close_surface || die "the Beeper sign-in surface is still exposed; close it before using this host: $SURFACE down"
+  ok "sign-in surface closed"
 fi
 
 [ -f policy.json ] || cli policy-init
@@ -120,9 +157,12 @@ done
 [ "$healthy" -eq 1 ] || die "MCP service failed to start — check: journalctl --user -u claude-messenger-mcp"
 ok "claude-messenger-mcp.service answering on http://127.0.0.1:${MCP_PORT}/mcp"
 
-# HTTPS on the tailnet only; the MCP port itself stays on loopback.
+# HTTPS on the tailnet only; the MCP port itself stays on loopback. Under
+# `timeout`, sudo runs outside the terminal's foreground and can't ask for a
+# password, so it gets the chance to ask here first, when it needs one.
+sudo -n true 2>/dev/null || sudo -v 2>/dev/null || true
 published=0
-if out="$(timeout -k 2 "$SERVE_TIMEOUT" sudo tailscale serve --bg "http://127.0.0.1:${MCP_PORT}" 2>&1)"; then
+if out="$(timeout -k 2 "$SERVE_TIMEOUT" sudo -n tailscale serve --bg "http://127.0.0.1:${MCP_PORT}" 2>&1)"; then
   published=1
   ok "published to your tailnet over HTTPS"
 else
@@ -134,14 +174,16 @@ else
 fi
 
 if command -v claude >/dev/null; then
-  token="$(sed -n 's/^CLAUDE_MESSENGER_MCP_TOKEN=//p' .env | tail -n 1)"
-  # Output discarded: `claude mcp add` echoes the headers, token included.
+  # Over stdio: each session starts its own server, which reads .env here.
+  # A bearer token would have to go on claude's command line, which every
+  # local user can read, and into Claude's config.
   claude mcp remove claude-messenger --scope user >/dev/null 2>&1 || true
-  if claude mcp add --scope user --transport http claude-messenger "http://127.0.0.1:${MCP_PORT}/mcp" \
-    --header "Authorization: Bearer ${token}" >/dev/null 2>&1; then
+  if claude mcp add --scope user claude-messenger -- \
+    sh -c 'cd "$1" && exec "$2" dist/cli/main.js serve' claude-messenger "$INSTALL_DIR" "$(command -v node)" \
+    >/dev/null 2>&1; then
     ok "Claude Code sessions on this host have it as the claude-messenger MCP server"
   else
-    warn "could not add the MCP server to Claude Code on this host; see docs/DEPLOY.md to add it by hand"
+    warn "could not add the MCP server to Claude Code on this host; see docs/SETUP.md to add it by hand"
   fi
 fi
 
@@ -162,12 +204,11 @@ cat <<EOF
  ${WHERE}:
 
    URL:    ${URL}
-   Token:  in ${INSTALL_DIR}/.env — print it with:
-             grep CLAUDE_MESSENGER_MCP_TOKEN ${INSTALL_DIR}/.env
+   Token:  CLAUDE_MESSENGER_MCP_TOKEN in ${INSTALL_DIR}/.env
 
-   Claude Code:
+   Claude Code elsewhere (sessions on this host already have it):
      claude mcp add claude-messenger --transport http ${URL} \\
-       --header "Authorization: Bearer \$(grep CLAUDE_MESSENGER_MCP_TOKEN ${INSTALL_DIR}/.env | cut -d= -f2)"
+       --header "Authorization: Bearer <that token>"
 
  Policy is READ-ONLY until you edit ${INSTALL_DIR}/policy.json.
  Audit trail: ${INSTALL_DIR}/audit/

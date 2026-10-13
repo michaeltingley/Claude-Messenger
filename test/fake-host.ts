@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,16 +6,21 @@ import { join } from 'node:path';
 /**
  * A fake host for the deploy scripts. The real scripts run as subprocesses
  * with shims first on PATH for every CLI that would change a real machine:
- * `tailscale`, `systemctl`, `sudo`, `apt-get`, `git`, `npm`, `claude` and
- * `id`. The shims model the real CLIs' exit codes and output over a state
- * directory, and reject any invocation they don't model (exit 64), so a
- * script can't drift to a CLI form these tests don't cover without failing
- * them. Everything else (node, curl, openssl, timeout) is the real thing.
+ * `tailscale`, `systemctl`, `sudo`, `loginctl`, `apt-get`, `git`, `npm`,
+ * `claude` and `id`. The shims model the real CLIs' exit codes and output
+ * over a state directory, and reject any invocation they don't model (exit
+ * 64), so a script can't drift to a CLI form these tests don't cover without
+ * failing them. Everything else (node, curl, openssl, timeout) is the real
+ * thing, except that curl refuses the installers' downloads and sudo refuses
+ * /opt: a script under test that goes wrong must fail, not install software
+ * on the machine running the tests.
  *
  * `systemctl` runs a unit for real when its file is installed under
  * ~/.config/systemd/user: it checks the unit's ReadWritePaths exist, as
- * systemd does, then starts its ExecStart in WorkingDirectory. Units that
- * exist only as state flags (`units/<name>`) are just marked active.
+ * systemd does, then starts its ExecStart in WorkingDirectory, with only the
+ * environment a user manager gives its units. Like systemd, `start` leaves an
+ * active unit alone; only `restart` swaps the process. Units that exist only
+ * as state flags (`units/<name>`) are just marked active.
  */
 
 const TAILSCALE_SHIM = `#!/usr/bin/env bash
@@ -50,6 +55,7 @@ case "$*" in
     if [ -e "$S/fail-serve-on" ]; then echo "serve: access denied" >&2; exit 1; fi
     touch "$S/serve-8443" ;;
   "serve --https 8443 off")
+    if [ -e "$S/slow-serve-off" ]; then sleep 2; fi
     if [ -e "$S/fail-serve-off" ]; then echo "serve: failed" >&2; exit 1; fi
     rm -f "$S/serve-8443" ;;
   "serve --bg http://127.0.0.1:"[0-9]*)
@@ -93,8 +99,12 @@ start_unit() {
     done
     wd="$(sed -n 's/^WorkingDirectory=//p' "$f" | tail -n 1)"
     cmd="$(sed -n 's/^ExecStart=//p' "$f" | tail -n 1)"
-    # Its own process group, so stopping it stops everything it started.
-    ( cd "\${wd:-$HOME}" && exec setsid $cmd ) >> "$S/logs/$u.log" 2>&1 < /dev/null &
+    # Its own process group, so stopping it stops everything it started. And
+    # none of the caller's environment: a unit gets the user manager's, so
+    # whatever it needs must come from its own config.
+    ( cd "\${wd:-$HOME}" &&
+      exec env -i HOME="$HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" PATH=/usr/local/bin:/usr/bin:/bin setsid $cmd
+    ) >> "$S/logs/$u.log" 2>&1 < /dev/null &
     echo "$!" > "$S/pids/$u"
   fi
   touch "$S/active/$u"
@@ -108,14 +118,17 @@ case "$verb" in
     for u in "$@"; do
       if ! installed "$u"; then echo "Unit $u not found." >&2; exit 5; fi
     done
-    for u in "$@"; do start_unit "$u" || exit 1; done ;;
+    for u in "$@"; do
+      if [ "$verb" = start ] && [ -e "$S/active/$u" ]; then continue; fi
+      start_unit "$u" || exit 1
+    done ;;
   enable)
     now=0
     if [ "\${1:-}" = "--now" ]; then now=1; shift; fi
     for u in "$@"; do
       if ! installed "$u"; then echo "Failed to enable unit: Unit file $u does not exist." >&2; exit 1; fi
       touch "$S/enabled/$u"
-      if [ "$now" = 1 ]; then start_unit "$u" || exit 1; fi
+      if [ "$now" = 1 ] && [ ! -e "$S/active/$u" ]; then start_unit "$u" || exit 1; fi
     done ;;
   disable)
     now=0
@@ -132,12 +145,40 @@ case "$verb" in
 esac
 `;
 
-// Real sudo accepts leading VAR=value assignments (with a NOPASSWD ALL rule).
+// Real sudo with a NOPASSWD ALL rule: -v validates, -n never asks, and the
+// command gets a reset environment, so only leading VAR=value assignments
+// reach it (PATH stays, so it still finds the other shims). With the
+// \`sudo-needs-password\` flag it is a rule that wants a password, with no
+// terminal to ask on, as for a Claude session.
 const SUDO_SHIM = `#!/usr/bin/env bash
-echo "sudo $*" >> "$FAKE_HOST_STATE/calls.log"
-while [ $# -gt 0 ] && [[ "$1" == [A-Z_]*=* ]]; do export "$1"; shift; done
+S="$FAKE_HOST_STATE"
+echo "sudo $*" >> "$S/calls.log"
+no_terminal() {
+  echo "sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper" >&2
+  exit 1
+}
+if [ "$*" = "-v" ]; then [ -e "$S/sudo-needs-password" ] && no_terminal; exit 0; fi
+asks=1
+if [ "\${1:-}" = "-n" ]; then asks=0; shift; fi
+assign=()
+while [ $# -gt 0 ] && [[ "$1" == [A-Z_]*=* ]]; do assign+=("$1"); shift; done
 case "\${1:-}" in -*|"") echo "fake sudo: unmodeled invocation: $*" >&2; exit 64 ;; esac
-FAKE_SUDO=1 exec "$@"
+case " $* " in *" /opt"*) echo "fake sudo: a fake host has no /opt to install into: $*" >&2; exit 64 ;; esac
+if [ -e "$S/sudo-needs-password" ]; then
+  [ "$asks" = 1 ] && no_terminal
+  echo "sudo: a password is required" >&2; exit 1
+fi
+exec env -i PATH="$PATH" HOME="$HOME" FAKE_HOST_STATE="$S" FAKE_SUDO=1 "\${assign[@]}" "$@"
+`;
+
+// Lingering lets a user's units run with nobody logged in; root only.
+const LOGINCTL_SHIM = `#!/usr/bin/env bash
+echo "loginctl $*" >> "$FAKE_HOST_STATE/calls.log"
+if [ "\${1:-}" = enable-linger ] && [ $# -eq 2 ]; then
+  if [ "\${FAKE_SUDO:-}" != 1 ]; then echo "Could not enable linger: Access denied" >&2; exit 1; fi
+  touch "$FAKE_HOST_STATE/linger"; exit 0
+fi
+echo "fake loginctl: unmodeled invocation: $*" >&2; exit 64
 `;
 
 const APT_GET_SHIM = `#!/usr/bin/env bash
@@ -169,7 +210,7 @@ case "$*" in
 esac
 `;
 
-// Like the real CLI, \`mcp add\` echoes the headers it stored, token included.
+// Like the real CLI, \`mcp add\` echoes what it stored.
 const CLAUDE_SHIM = `#!/usr/bin/env bash
 S="$FAKE_HOST_STATE"
 echo "claude $1 $2" >> "$S/calls.log"
@@ -180,14 +221,22 @@ case "\${1:-} \${2:-}" in
   "mcp add")
     shift 2
     printf '%s\\n' "$@" > "$S/claude-mcp"
-    echo "Added HTTP MCP server with args: $*" ;;
+    echo "Added MCP server with: $*" ;;
   *) echo "fake claude: unmodeled invocation: $*" >&2; exit 64 ;;
 esac
 `;
 
-// A regular user's host, whoever runs the tests.
+const curlShim = (realCurl: string) => `#!/usr/bin/env bash
+case "$*" in
+  *api.beeper.com*|*deb.nodesource.com*|*tailscale.com/install.sh*)
+    echo "fake curl: a fake host downloads no installers: $*" >&2; exit 64 ;;
+esac
+exec ${realCurl} "$@"
+`;
+
+// A regular user's host, whoever runs the tests; root with the \`root\` flag.
 const ID_SHIM = `#!/usr/bin/env bash
-if [ "$*" = "-u" ]; then echo 1000; exit 0; fi
+if [ "$*" = "-u" ]; then if [ -e "$FAKE_HOST_STATE/root" ]; then echo 0; else echo 1000; fi; exit 0; fi
 echo "fake id: unmodeled invocation: $*" >&2; exit 64
 `;
 
@@ -195,6 +244,14 @@ export interface ScriptResult {
   code: number;
   stdout: string;
   stderr: string;
+}
+
+export interface DetachedRun {
+  child: ChildProcess;
+  /** Everything it has printed so far. */
+  output(): string;
+  running(): boolean;
+  done: Promise<ScriptResult>;
 }
 
 export class FakeHost {
@@ -207,6 +264,7 @@ export class FakeHost {
   readonly runtime = join(this.root, 'runtime');
   readonly passwdFile = join(this.runtime, 'claude-messenger', 'vncpasswd');
   readonly unitDir = join(this.home, '.config', 'systemd', 'user');
+  private readonly detached: ChildProcess[] = [];
 
   constructor() {
     for (const dir of [
@@ -221,11 +279,13 @@ export class FakeHost {
       ['tailscale', TAILSCALE_SHIM],
       ['systemctl', SYSTEMCTL_SHIM],
       ['sudo', SUDO_SHIM],
+      ['loginctl', LOGINCTL_SHIM],
       ['apt-get', APT_GET_SHIM],
       ['git', GIT_SHIM],
       ['npm', NPM_SHIM],
       ['claude', CLAUDE_SHIM],
       ['id', ID_SHIM],
+      ['curl', curlShim(spawnSync('sh', ['-c', 'command -v curl'], { encoding: 'utf8' }).stdout.trim())],
     ] as const) {
       writeFileSync(join(this.bin, name), body);
       chmodSync(join(this.bin, name), 0o755);
@@ -258,6 +318,14 @@ export class FakeHost {
 
   calls(): string[] {
     return readFileSync(join(this.state, 'calls.log'), 'utf8').split('\n').filter(Boolean);
+  }
+
+  /** What every unit the fake systemd started has printed, for a failing test's message. */
+  logs(): string {
+    const dir = join(this.state, 'logs');
+    return readdirSync(dir)
+      .map((log) => `--- ${log}\n${readFileSync(join(dir, log), 'utf8')}`)
+      .join('\n');
   }
 
   /** The sign-in surface published, running, AND enabled at boot (as on hosts older than the script). */
@@ -309,25 +377,30 @@ export class FakeHost {
    * server in this process (the mock Beeper) can answer it meanwhile.
    */
   runDetached(command: string, args: string[] = [], extra: Record<string, string> = {}): Promise<ScriptResult> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(command, args, { env: this.env(extra), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
-      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
-      const timer = setTimeout(() => {
-        try {
-          process.kill(-child.pid!, 'SIGKILL');
-        } catch {
-          // already gone
-        }
-      }, 120_000);
+    return this.startDetached(command, args, extra).done;
+  }
+
+  /**
+   * `runDetached`, handing back the running script too, for tests that act
+   * on it meanwhile. Its pid leads its own process group, as a background
+   * command's does.
+   */
+  startDetached(command: string, args: string[] = [], extra: Record<string, string> = {}): DetachedRun {
+    const child = spawn(command, args, { env: this.env(extra), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    this.detached.push(child);
+    let stdout = '';
+    let stderr = '';
+    let running = true;
+    child.stdout!.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
+    child.stderr!.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+    const done = new Promise<ScriptResult>((resolve, reject) => {
       child.on('error', reject);
       child.on('close', (code, signal) => {
-        clearTimeout(timer);
+        running = false;
         resolve({ code: code ?? (signal ? 128 : -1), stdout, stderr });
       });
     });
+    return { child, output: () => stdout + stderr, running: () => running, done };
   }
 
   /** Stop every unit the fake systemd started. */
@@ -342,7 +415,15 @@ export class FakeHost {
     }
   }
 
+  /** Stop everything this host started, including scripts a failed test left running. */
   dispose(): void {
+    for (const child of this.detached) {
+      try {
+        process.kill(-child.pid!, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
     this.stopUnits();
     rmSync(this.root, { recursive: true, force: true });
   }

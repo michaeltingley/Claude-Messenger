@@ -37,6 +37,14 @@ ok()   { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m⚠ %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
+# Beeper Desktop is up once it answers, signed in or not, and even with its
+# Desktop API switched off: then every route says 404 "disabled", and the
+# person switches it on in Beeper's window while configure.sh waits.
+beeper_answers() {
+  curl -fsS "$BEEPER_URL/v1/info" >/dev/null 2>&1 ||
+    curl -sS "$BEEPER_URL/v1/info" 2>/dev/null | grep -Eq '"code" *: *"disabled"'
+}
+
 [ "$(id -u)" -eq 0 ] && die "Run as a regular user with sudo access, not root (systemd user services need a real user)."
 command -v sudo >/dev/null || die "sudo is required."
 
@@ -81,8 +89,7 @@ say "5/6 Beeper Desktop (headless, under Xvfb)"
 # connection (WhatsApp, Telegram, Google Messages) across ALL devices, and its
 # chats API returned empty results. Beeper Desktop serves the identical Client
 # API on the same port, so nothing above the provider seam changes.
-if curl -fsS "$BEEPER_URL/v1/info" >/dev/null 2>&1 &&
-  [ ! -e "$HOME/.config/systemd/user/beeper-desktop.service" ]; then
+if beeper_answers && [ ! -e "$HOME/.config/systemd/user/beeper-desktop.service" ]; then
   # A Beeper Desktop this script didn't install is already serving the API
   # (e.g. your own app on a spare laptop). A second, headless instance would
   # fight it for :23373 and register as another device, so leave it alone.
@@ -125,14 +132,14 @@ else
   # noVNC) is opened and closed by signin-surface.sh and never enabled.
   systemctl --user enable --now xvfb.service beeper-desktop.service
 
-  # Beeper answers as soon as it is up, signed in or not; signing in is part
-  # of the approval in the next step.
+  # Signing in, and switching the Desktop API on if it is off, are part of
+  # the approval in the next step.
   for _ in $(seq 1 60); do
-    curl -fsS "$BEEPER_URL/v1/info" >/dev/null 2>&1 && break
+    beeper_answers && break
     sleep 2
   done
-  curl -fsS "$BEEPER_URL/v1/info" >/dev/null 2>&1 ||
-    die "Beeper Desktop is not answering on $BEEPER_URL. Check 'systemctl --user status beeper-desktop' and that its Desktop API is switched on."
+  beeper_answers ||
+    die "Beeper Desktop is not answering on $BEEPER_URL. Check 'systemctl --user status beeper-desktop'."
   ok "Beeper Desktop on $BEEPER_URL"
 fi
 

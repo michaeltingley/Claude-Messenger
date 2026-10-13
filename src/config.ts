@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { parseEnv } from 'node:util';
 import { z } from 'zod';
 
 /**
@@ -84,9 +85,12 @@ const ACCESS_TOKEN_VAR = 'BEEPER_ACCESS_TOKEN';
  *
  * The new file is created owner-only (0600) and renamed over the old one, so
  * no reader ever sees a half-written file, and the token never sits in a file
- * anyone else can read, whatever the old file's mode was. Reports whether an
- * earlier, non-empty token was replaced, since the caller should say so: that
- * token still works until it is revoked in Beeper.
+ * anyone else can read, whatever the old file's mode was. A symlinked env
+ * file is updated where it points. The result is read back with Node's own
+ * env-file parser before it replaces anything: if that would load another
+ * token, nothing is saved. Reports whether an earlier, non-empty token was
+ * replaced, since the caller should say so: that token still works until it
+ * is revoked in Beeper.
  */
 export async function saveAccessToken(file: string, token: string): Promise<{ replaced: boolean }> {
   // Written unquoted, so only characters every env-file parser reads back
@@ -96,35 +100,40 @@ export async function saveAccessToken(file: string, token: string): Promise<{ re
     throw new Error('The access token contains characters an env file cannot hold verbatim; nothing was saved.');
   }
 
-  let lines: string[] = [];
+  let target = file;
+  let text = '';
   try {
-    lines = (await readFile(file, 'utf8')).split('\n');
+    target = await realpath(file);
+    text = await readFile(target, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
-  if (lines.at(-1) === '') lines.pop();
+  const replaced = Boolean(parseEnv(text)[ACCESS_TOKEN_VAR]);
 
-  const assignment = new RegExp(`^\\s*(?:export\\s+)?${ACCESS_TOKEN_VAR}\\s*=\\s*(.*)$`);
-  let replaced = false;
-  let written = false;
+  const lines = text.split(/\r?\n/);
+  if (lines.at(-1) === '') lines.pop();
+  const assignment = new RegExp(`^\\s*(?:export\\s+)?${ACCESS_TOKEN_VAR}\\s*=`);
   const out: string[] = [];
+  let written = false;
   for (const line of lines) {
-    const match = assignment.exec(line);
-    if (!match) {
+    if (!assignment.test(line)) {
       out.push(line);
       continue;
     }
     // Every earlier assignment goes; the first one's slot keeps the file's order.
-    if (!/^(?:|""|'')$/.test((match[1] ?? '').trim())) replaced = true;
     if (!written) out.push(`${ACCESS_TOKEN_VAR}=${token}`);
     written = true;
   }
   if (!written) out.push(`${ACCESS_TOKEN_VAR}=${token}`);
+  const content = `${out.join('\n')}\n`;
+  if (parseEnv(content)[ACCESS_TOKEN_VAR] !== token) {
+    throw new Error(`${file} has a line this could not replace cleanly, so it would load another token; nothing was saved.`);
+  }
 
-  const temp = `${file}.${randomBytes(6).toString('hex')}.tmp`;
+  const temp = `${target}.${randomBytes(6).toString('hex')}.tmp`;
   try {
-    await writeFile(temp, `${out.join('\n')}\n`, { mode: 0o600, flag: 'wx' });
-    await rename(temp, file);
+    await writeFile(temp, content, { mode: 0o600, flag: 'wx' });
+    await rename(temp, target);
   } catch (err) {
     await rm(temp, { force: true });
     throw err;

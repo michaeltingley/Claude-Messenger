@@ -121,17 +121,29 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
       expect(host.calls().filter((c) => /restart|serve --bg/.test(c))).toEqual([]);
     });
 
-    it('fails loudly with an SSH-tunnel fallback when the tailnet refuses to publish', () => {
+    it('closes everything it started when the tailnet refuses to publish, saying why', () => {
       host.set('fail-serve-on');
 
       const { code, stderr } = surface(host, 'up');
 
       expect(code).not.toBe(0);
-      expect(stderr).toContain('ssh -L 6080:127.0.0.1:6080');
-      // The tunnel reaches the same password-protected VNC, so the fallback must carry the password.
-      expect(stderr).toContain(`vnc.html#autoconnect=1&password=${readFileSync(host.passwdFile, 'utf8').trim()}`);
-      expect(host.has('serve-8443')).toBe(false);
+      expect(stderr).toContain('could not publish the sign-in screen to the tailnet');
+      expect(stderr).toContain('serve: access denied');
+      expect(stderr).toContain("Then run 'signin-surface.sh up' again.");
+      // Not reachable where it was meant to be, so not running anywhere, and no password left.
+      expect(host.surfaceClosed()).toBe(true);
     });
+
+    it('says sudo wants a password, instead of hanging, when nobody can type one', () => {
+      host.set('sudo-needs-password');
+
+      const { code, stderr } = surface(host, 'up');
+
+      expect(code).not.toBe(0);
+      expect(stderr).toContain('sudo: a password is required');
+      expect(host.surfaceClosed()).toBe(true);
+    });
+
     it('stops waiting on a tailnet that has not allowed Tailscale Serve, and passes on the enable link', () => {
       host.set('serve-disabled');
 
@@ -143,7 +155,7 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
       expect(Date.now() - started).toBeLessThan(15_000);
       expect(stderr).toContain('Tailscale Serve is off on this tailnet');
       expect(stderr).toContain('https://login.tailscale.com/f/serve?node=nFAKE7');
-      expect(host.has('serve-8443')).toBe(false);
+      expect(host.surfaceClosed()).toBe(true);
     });
   });
 

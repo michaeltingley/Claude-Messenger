@@ -7,8 +7,10 @@
  * own approval prompt: the owner approves there, and the credential travels
  * straight from the provider to this process.
  *
- * Implementations live under `providers/`; the CLI gets one from the
- * composition root and never learns which provider it talks to.
+ * Implementations live under `providers/` and report what the owner granted.
+ * Whether this app keeps it is decided above them, by
+ * `GuardedAccessRequester` (policy/access.ts), which is the only requester
+ * the CLI is ever handed.
  */
 export interface AccessRequester {
   /**
@@ -18,15 +20,17 @@ export interface AccessRequester {
    */
   instructions(request: AccessRequest): readonly string[];
 
+  /** Where the owner revokes a credential by hand, in the provider's own words. */
+  readonly revokeByHand: string;
+
   /**
    * Ask the provider for a credential and wait, until `timeoutMs` runs out,
-   * for an account to be signed in and the owner to decide.
+   * for the provider to be ready to ask (an account signed in, say) and for
+   * the owner to decide.
    *
-   * Resolves only with a credential this app can keep: write access only if
-   * asked for, and no expiry, since nothing here renews one. Rejects with
-   * `AccessDeniedError` if the owner declines, `AccessMismatchError` if they
-   * approve on other terms (that credential is revoked first), and
-   * `AccessTimeoutError` if the time runs out.
+   * Resolves with the credential on the terms the owner approved, which can
+   * differ from the request. Rejects with `AccessDeniedError` if the owner
+   * declines, and `AccessTimeoutError` if the time runs out.
    */
   requestAccess(request: AccessRequest): Promise<AccessGrant>;
 }
@@ -47,8 +51,12 @@ export interface AccessRequest {
 }
 
 export type AccessProgress =
-  /** The provider has no signed-in account yet; the person signs in first. */
-  | { kind: 'sign-in-required' }
+  /**
+   * The provider can't ask for approval until the person does something in
+   * its window first, such as signing in. `step` says what, in the
+   * provider's words. Told again whenever the step changes.
+   */
+  | { kind: 'action-required'; step: string }
   /**
    * The approval prompt is open. From the second attempt on, the provider
    * closed an unanswered prompt and this is a fresh one.
@@ -58,8 +66,10 @@ export type AccessProgress =
 export interface AccessGrant {
   /** The credential. Never print or log it; it is equivalent to the account. */
   readonly token: string;
-  /** Whether it can write. It may not, even if asked: the owner can withhold that. */
+  /** Whether it can write. The owner may withhold that, or grant it unasked. */
   readonly write: boolean;
+  /** When it stops working, if the owner gave it a lifetime. */
+  readonly expiresAt?: Date;
   /** Invalidate this credential at the provider, e.g. when it could not be stored. */
   revoke(): Promise<void>;
 }

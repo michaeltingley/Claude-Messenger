@@ -86,10 +86,12 @@ export interface ApprovalRequest {
  * "Expires in" choice (omitted means Never) and the scopes the "Allow
  * sensitive actions" toggle ends up granting (omitted means as asked);
  * decline; or never answer, until Beeper closes the box itself.
- * `{ approve: false, error }` with another error stands for Beeper failing.
+ * `{ approve: false, error }` with another error stands for Beeper failing,
+ * and an approval's `state` for Beeper answering some other request than
+ * the one asked (omitted means it echoes the request's own).
  */
 export type ApprovalDecision =
-  | { approve: true; expiresInSeconds?: number; scopes?: string[] }
+  | { approve: true; expiresInSeconds?: number; scopes?: string[]; state?: string }
   | { approve: false; error?: string }
   | 'no-answer';
 
@@ -152,6 +154,8 @@ export class MockBeeperServer {
   decide: (request: ApprovalRequest) => ApprovalDecision = () => ({ approve: true });
   /** Every approval box Beeper was asked to open, in order. */
   approvalRequests: ApprovalRequest[] = [];
+  /** Boxes open right now: nobody has answered, and the client is still waiting. */
+  openBoxes = 0;
   /** Tokens issued through OAuth, by token. */
   issuedTokens = new Map<string, IssuedToken>();
   /** When false, the OAuth routes don't exist, as in a Beeper Desktop older than its OAuth server. */
@@ -162,6 +166,18 @@ export class MockBeeperServer {
   signedIn = true;
   /** The "Beeper Desktop API" setting switched off: every route answers 404 `disabled`. */
   apiDisabled = false;
+  /** Serve every route under this path, as a reverse proxy in front of Beeper might. */
+  pathPrefix = '';
+  /**
+   * Reshapes the token endpoint's answer once a token is issued, for answers
+   * OAuth allows but Beeper 4.3.176 doesn't give: scope left out, expires_in
+   * as a string, another status.
+   */
+  shapeTokenResponse: ((body: Record<string, unknown>) => { status: number; body: unknown }) | undefined;
+  /** When set, the consent page refuses every request with this message, as it does one it finds invalid. */
+  refuseAuthorize: string | undefined;
+  /** When true, revoking fails and the token keeps working. */
+  revokeFails = false;
 
   private clients = new Map<string, RegisteredClient>();
   private codes = new Map<string, PendingCode>();
@@ -193,7 +209,9 @@ export class MockBeeperServer {
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://mock');
-    const path = decodeURIComponent(url.pathname);
+    const fullPath = decodeURIComponent(url.pathname);
+    const prefixed = fullPath.startsWith(`${this.pathPrefix}/`);
+    const path = prefixed ? fullPath.slice(this.pathPrefix.length) : fullPath;
     const body = await this.readBody(req);
     this.requests.push({ method: req.method ?? '', path, query: url.searchParams, body });
 
@@ -203,6 +221,8 @@ export class MockBeeperServer {
     };
     const error = (status: number, code: string, message: string) =>
       send(status, { error: { code, message } });
+
+    if (!prefixed) return error(404, 'not_found', `no route: ${req.method} ${fullPath}`);
 
     if (this.apiDisabled) {
       return send(404, { message: 'Beeper Client API is disabled', code: 'disabled' });
@@ -361,6 +381,7 @@ export class MockBeeperServer {
       if (!query.get('code_challenge')) return invalid('PKCE code_challenge is required for public clients.');
       const method = query.get('code_challenge_method');
       if (method !== null && method !== 'S256') return invalid('Only S256 code_challenge_method is supported.');
+      if (this.refuseAuthorize !== undefined) return invalid(this.refuseAuthorize);
       const client = this.clients.get(clientId);
       if (client === undefined) {
         if (!isLoopbackRedirect(redirect)) {
@@ -394,6 +415,7 @@ export class MockBeeperServer {
       if (decision === 'no-answer') {
         // The box stays open until the client gives up, or until Beeper
         // closes it and reports that as a server error.
+        this.openBoxes++;
         const closed = await new Promise<boolean>((resolve) => {
           const timer = setTimeout(() => resolve(true), this.boxLifetimeMs);
           res.on('close', () => {
@@ -401,6 +423,7 @@ export class MockBeeperServer {
             resolve(false);
           });
         });
+        this.openBoxes--;
         if (closed) json(200, { error: 'server_error', state: request.state });
         return;
       }
@@ -413,7 +436,7 @@ export class MockBeeperServer {
         codeChallenge: request.codeChallenge,
         expiresInSeconds: decision.expiresInSeconds,
       });
-      return json(200, { code, state: request.state });
+      return json(200, { code, state: decision.state ?? request.state });
     }
 
     if (req.method === 'POST' && path === '/oauth/token') {
@@ -436,15 +459,21 @@ export class MockBeeperServer {
       this.codes.delete(code); // single use
       const token = randomBytes(32).toString('base64url');
       this.issuedTokens.set(token, { scope: pending.scope, revoked: false });
-      return json(200, {
+      const issued = {
         access_token: token,
         token_type: 'Bearer',
         scope: pending.scope,
         ...(pending.expiresInSeconds !== undefined && { expires_in: pending.expiresInSeconds }),
-      });
+      };
+      if (this.shapeTokenResponse) {
+        const shaped = this.shapeTokenResponse(issued);
+        return json(shaped.status, shaped.body);
+      }
+      return json(200, issued);
     }
 
     if (req.method === 'POST' && path === '/oauth/revoke') {
+      if (this.revokeFails) return json(503, { error: 'temporarily_unavailable' });
       const issued = this.issuedTokens.get(form.get('token') ?? '');
       if (issued) issued.revoked = true;
       res.writeHead(200);

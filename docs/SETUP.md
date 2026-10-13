@@ -86,33 +86,21 @@ Test the guardrails: `claude-messenger send <allowed-chat> "test"` should work; 
 
 ## 3. Connect Claude
 
-**Claude Code** (machine that can reach the endpoint). The server is spawned from whatever directory Claude Code happens to run in, so pass explicit env vars with **absolute paths** — do not rely on `.env` or relative defaults:
+**Claude Code** (machine that can reach the endpoint). The server reads `.env` from its working directory, so start it from the checkout. That keeps the token in the owner-only `.env`, rather than on a command line that every local user can read, or in Claude's config:
 
 ```sh
-claude mcp add claude-messenger -s user \
-  --env BEEPER_ACCESS_TOKEN=... \
-  --env BEEPER_BASE_URL=http://localhost:23373 \
-  --env CLAUDE_MESSENGER_POLICY=/path/to/Claude-Messenger/policy.json \
-  --env CLAUDE_MESSENGER_AUDIT_DIR=/path/to/Claude-Messenger/audit \
-  --env CLAUDE_MESSENGER_STATE_DIR=/path/to/Claude-Messenger/state \
-  -- node /path/to/Claude-Messenger/dist/cli/main.js serve
+claude mcp add claude-messenger -s user -- \
+  sh -c 'cd /path/to/Claude-Messenger && exec node dist/cli/main.js serve'
 ```
 
-**Claude Desktop** — add to MCP settings:
+**Claude Desktop**: add to MCP settings, with node's absolute path (`command -v node`), since Claude Desktop may not start with your shell's `PATH`:
 
 ```json
 {
   "mcpServers": {
     "claude-messenger": {
-      "command": "node",
-      "args": ["/path/to/Claude-Messenger/dist/cli/main.js", "serve"],
-      "env": {
-        "BEEPER_ACCESS_TOKEN": "…",
-        "BEEPER_BASE_URL": "http://localhost:23373",
-        "CLAUDE_MESSENGER_POLICY": "/path/to/policy.json",
-        "CLAUDE_MESSENGER_AUDIT_DIR": "/path/to/audit",
-        "CLAUDE_MESSENGER_STATE_DIR": "/path/to/state"
-      }
+      "command": "sh",
+      "args": ["-c", "cd /path/to/Claude-Messenger && exec /path/to/node dist/cli/main.js serve"]
     }
   }
 }

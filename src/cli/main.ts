@@ -14,6 +14,12 @@ import { packageVersion } from '../version.js';
 /** The env file every command reads, in the working directory, and where `connect` saves the token. */
 const ENV_FILE = '.env';
 
+/**
+ * Whether the environment itself carries a Beeper token. It wins over the
+ * env file, so a token `connect` saves would go unused, and `connect` says so.
+ */
+const TOKEN_IN_ENVIRONMENT = process.env.BEEPER_ACCESS_TOKEN !== undefined;
+
 // Best-effort .env loading; explicit env vars always win. Requires Node
 // >= 20.12 (enforced via package.json engines).
 try {
@@ -46,10 +52,16 @@ function fail(err: unknown): never {
 
 const app = async () => createApp(loadConfig());
 
+/**
+ * At most a day. A longer wait gains nothing, and past 24.8 days Node's
+ * timers overflow, which would end the wait at once instead.
+ */
+const MAX_WAIT_MINUTES = 1440;
+
 function parseMinutes(value: string): number {
   const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) {
-    throw new InvalidArgumentError('must be a positive number of minutes');
+  if (!Number.isFinite(n) || n <= 0 || n > MAX_WAIT_MINUTES) {
+    throw new InvalidArgumentError(`must be a number of minutes, more than 0 and at most ${MAX_WAIT_MINUTES}`);
   }
   return n;
 }
@@ -57,8 +69,8 @@ function parseMinutes(value: string): number {
 /** One line per step of `connect`'s wait, in the person's terms. */
 function describeProgress(progress: AccessProgress): string {
   switch (progress.kind) {
-    case 'sign-in-required':
-      return 'Waiting for you to sign in...';
+    case 'action-required':
+      return `${progress.step} Waiting...`;
     case 'approval-requested':
       return progress.attempt === 1
         ? 'The approval box is open. Waiting for your answer...'
@@ -198,7 +210,7 @@ program
       );
       throw new Error(
         `Could not save the token to ${ENV_FILE} (${(err as Error).message}). ` +
-          (revoked ? 'It was revoked.' : 'It still works until you revoke it in Beeper.'),
+          (revoked ? 'It was revoked.' : `It still works until you revoke it ${requester.revokeByHand}.`),
         { cause: err },
       );
     }
@@ -208,7 +220,15 @@ program
     if (request.write && !grant.write) {
       console.log('  Sending was not allowed in the approval box, so it will not work even where the policy allows it.');
     }
-    if (replaced) console.log('  It replaced an earlier token, which still works until you revoke it in Beeper.');
+    if (replaced) {
+      console.log(`  It replaced an earlier token, which still works until you revoke it ${requester.revokeByHand}.`);
+    }
+    if (TOKEN_IN_ENVIRONMENT) {
+      console.log(
+        `⚠ BEEPER_ACCESS_TOKEN is also set in this command's environment, and that wins over ${ENV_FILE}. ` +
+          'Remove it there, or commands keep using the old token.',
+      );
+    }
     console.log('Next: claude-messenger doctor');
   });
 

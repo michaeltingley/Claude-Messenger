@@ -8,6 +8,7 @@ import type { ServerInfo } from './core/types.js';
 import { MessengerError } from './core/errors.js';
 import { BeeperAccessRequester } from './providers/beeper/access.js';
 import { BeeperMessenger } from './providers/beeper/index.js';
+import { GuardedAccessRequester } from './policy/access.js';
 import { JsonlAuditLogger } from './policy/audit.js';
 import { GuardedMessenger } from './policy/guarded.js';
 import { DEFAULT_POLICY, parsePolicy, PolicyEngine, type Policy } from './policy/policy.js';
@@ -91,9 +92,10 @@ export async function createApp(config: Config): Promise<App> {
 }
 
 /**
- * The provider's approval flow, for `connect`. It needs only the endpoint:
- * it runs before any credential exists, and it is how one comes to exist.
+ * The provider's approval flow, for `connect`, behind the guard that refuses
+ * credentials this app can't keep. It needs only the endpoint: it runs before
+ * any credential exists, and it is how one comes to exist.
  */
 export function createAccessRequester(endpoint: EndpointConfig): AccessRequester {
-  return new BeeperAccessRequester({ baseUrl: endpoint.beeperBaseUrl });
+  return new GuardedAccessRequester(new BeeperAccessRequester({ baseUrl: endpoint.beeperBaseUrl }));
 }

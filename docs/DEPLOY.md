@@ -77,8 +77,10 @@ SSH into the fresh machine and run:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/michaeltingley/Claude-Messenger/main/deploy/bootstrap.sh)"
 ```
 
-It never prompts, so a Claude session on the host can run it just as well.
-It prints two links and waits for you at each:
+It never prompts, so a Claude session on the host can run it just as well,
+in the background with a timeout above its 60-minute wait for you (Claude
+Code's Bash tool stops background commands after 30 minutes by default, so
+give it at least 65). It prints two links and waits for you at each:
 
 - the Tailscale login, on the first run only;
 - Beeper's screen, where you sign in and press Approve. The steps for the
@@ -97,19 +99,24 @@ What the script does:
       connect`. It waits for you to sign in and approve, then saves the
       Beeper token to `.env` without displaying it.
    3. Closes the screen again. It refuses to go on while anything is still
-      exposed, and it closes the screen however the run ends.
+      exposed, and it closes the screen on any exit but `kill -9` (after
+      one of those, run it again).
    4. Runs `doctor` end to end.
    5. Installs and restarts a boot-persistent systemd user service.
    6. Exposes the MCP endpoint on your tailnet over HTTPS via
       `tailscale serve`.
-   7. Adds the service to Claude Code on the host, if `claude` is installed.
+   7. If `claude` is installed, registers Claude Messenger with Claude Code
+      on the host over stdio: each session starts its own server from the
+      checkout, which reads `.env`, so no token goes on a command line.
 
 Re-running the script is safe: completed steps are skipped, and a token
 already in `.env` is kept.
 
-At the end it prints the exact `claude mcp add …` command (URL + bearer
-token) to connect Claude Code, and the same URL/header works for Claude
-Desktop and claude.ai custom connectors.
+At the end it prints the MCP URL, where its bearer token is
+(`CLAUDE_MESSENGER_MCP_TOKEN` in `.env`), and the `claude mcp add` command
+for Claude Code on another device in your tailnet. Claude Desktop takes the
+same URL and header. claude.ai's own connectors can't reach a tailnet-only
+endpoint.
 
 ## Security model of the hosted setup
 
@@ -189,3 +196,8 @@ for anything else, use the surface script directly:
   - `bootstrap.sh` and `configure.sh` make the home directory, and with it
     `.env`, unreadable to other users.
 - One Beeper account per host.
+- **Only Beeper Cloud connections come along.** A network you connected
+  On-Device runs on each device separately, so the host doesn't get it. The
+  host's Beeper lists those under Settings → Accounts → "On Other Devices",
+  each with a Connect button: open the sign-in surface, press it, and sign
+  in to that network there.

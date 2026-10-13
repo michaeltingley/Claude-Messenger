@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 148 tests / 17 files.
+- `npm test` must be green before any push. Currently 189 tests / 18 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -71,14 +71,18 @@ built for hypothetical futures.
 - Deploy scripts run as real subprocesses on a fake host (`test/fake-host.ts`):
   shims for `tailscale`, `systemctl`, `sudo`, `apt-get` and the rest reject
   any invocation they don't model, so a script can't drift to an untested
-  CLI form. Its `systemctl` really starts a unit's `ExecStart`, so
+  CLI form, and nothing a script gets wrong can install software on the
+  machine running the tests. Its `systemctl` really starts a unit's
+  `ExecStart`, with only the environment a unit gets, so
   `test/install.integration.test.ts` proves the installed MCP service answers
-  with the token `connect` saved. Install scripts run the way a Claude
-  session runs them: no terminal, nothing on stdin. A real provision still
-  needs a VM.
+  with the token `connect` saved. Its `sudo` resets the environment, as real
+  sudo does. Install scripts run the way a Claude session runs them: no
+  terminal, nothing on stdin, and signals to the script alone or to its whole
+  process group. A real provision still needs a VM.
 - The mock Beeper (`test/mock-beeper.ts`) models Beeper Desktop's OAuth
-  approval as read from its code: sign-in state, the two-minute box, decline,
-  and grants on other terms than asked. It also plays the person answering.
+  approval as read from its code: sign-in state, the Desktop API switched
+  off, the two-minute box, decline, and grants on other terms than asked. It
+  also plays the person answering.
 - Security properties of the host get proven against the real binaries, not
   config greps. `test/display-isolation.integration.test.ts` starts Xvfb and
   x11vnc exactly as `deploy/systemd/` runs them and speaks X11 and RFB to

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -24,7 +24,7 @@ describe('connect (subprocess integration)', () => {
   let dir: string;
   let envFile: string;
 
-  /** The CLI in `dir`, with no token in its environment: it must get one itself. */
+  /** The CLI in `dir`, with no token in its environment unless a test puts one there: it must get one itself. */
   const cli = async (args: string[], env: Record<string, string> = {}) => {
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
@@ -32,9 +32,9 @@ describe('connect (subprocess integration)', () => {
       CLAUDE_MESSENGER_POLICY: join(dir, 'policy.json'),
       CLAUDE_MESSENGER_AUDIT_DIR: join(dir, 'audit'),
       CLAUDE_MESSENGER_STATE_DIR: join(dir, 'state'),
-      ...env,
     };
     delete childEnv.BEEPER_ACCESS_TOKEN;
+    Object.assign(childEnv, env);
     try {
       const { stdout, stderr } = await exec(
         join(REPO, 'node_modules', '.bin', 'tsx'),
@@ -60,6 +60,8 @@ describe('connect (subprocess integration)', () => {
 
   afterEach(async () => {
     await mock.stop();
+    // Each holds a token, if only a mock's.
+    await rm(dir, { recursive: true, force: true });
   });
 
   it('saves an approved read-only token owner-only, never prints it, and doctor then works with it', async () => {
@@ -78,6 +80,7 @@ describe('connect (subprocess integration)', () => {
     expect(stdout).toMatch(/Expires in: choose Never[\s\S]*leave it off[\s\S]*Waiting up to 15 min/);
     expect(stdout).toMatch(/The approval box is open[\s\S]*✓ Approved \(read only\)/);
     expect(mock.approvalRequests[0]).toMatchObject({ clientInfo: { name: 'Claude Messenger' }, scopes: ['read'] });
+    expect(stdout).not.toContain('replaced an earlier token');
 
     expect(await readFile(envFile, 'utf8')).toBe(
       `# written by configure\nBEEPER_BASE_URL=${baseUrl}\nCLAUDE_MESSENGER_MCP_TOKEN=abc\nBEEPER_ACCESS_TOKEN=${token}\n`,
@@ -98,6 +101,7 @@ describe('connect (subprocess integration)', () => {
     expect(mock.approvalRequests[0]?.scopes).toEqual(['read', 'write']);
     expect(stdout).toContain('Allow sensitive actions: turn it on');
     expect(stdout).toContain('✓ Approved (read and write)');
+    expect(stdout).not.toContain('Sending was not allowed');
     // No env file existed, so connect created one holding only the token.
     expect(await readFile(envFile, 'utf8')).toBe(`BEEPER_ACCESS_TOKEN=${issued()[0]}\n`);
     expect((await stat(envFile)).mode & 0o777).toBe(0o600);
@@ -126,6 +130,20 @@ describe('connect (subprocess integration)', () => {
     );
   }, 60_000);
 
+  it('replaces every earlier assignment, tightens a readable file, and the new token is the one in effect', async () => {
+    // A later assignment wins when the file loads, so leaving one would keep the old token in use.
+    await writeFile(envFile, `BEEPER_ACCESS_TOKEN=old-1\nBEEPER_BASE_URL=${baseUrl}\nexport BEEPER_ACCESS_TOKEN=old-2\n`);
+    await chmod(envFile, 0o644);
+
+    const { code, stderr } = await cli(['connect']);
+
+    expect(code, stderr).toBe(0);
+    expect(await readFile(envFile, 'utf8')).toBe(`BEEPER_ACCESS_TOKEN=${issued()[0]}\nBEEPER_BASE_URL=${baseUrl}\n`);
+    expect((await stat(envFile)).mode & 0o777).toBe(0o600);
+    const doctor = await cli(['doctor']);
+    expect(doctor.code, doctor.stderr).toBe(0);
+  }, 60_000);
+
   it('tells the person to sign in, and waits for it before opening the box', async () => {
     mock.signedIn = false;
 
@@ -137,7 +155,9 @@ describe('connect (subprocess integration)', () => {
     const { stdout, stderr, code } = await run;
 
     expect(code, stderr).toBe(0);
-    expect(stdout).toMatch(/Waiting for you to sign in\.\.\.\n[\s\S]*The approval box is open/);
+    expect(stdout).toMatch(
+      /Sign in to Beeper: your emailed code, then your recovery key\. Waiting\.\.\.\n[\s\S]*The approval box is open/,
+    );
     expect(await readFile(envFile, 'utf8')).toBe(`BEEPER_ACCESS_TOKEN=${issued()[0]}\n`);
   }, 60_000);
 
@@ -164,7 +184,7 @@ describe('connect (subprocess integration)', () => {
 
     expect(code).toBe(1);
     expect(stderr).toContain('[access_mismatch]');
-    expect(stderr).toContain('choose Never under Expires in');
+    expect(stderr).toContain('approve it to never expire');
     expect(mock.issuedTokens.get(issued()[0]!)?.revoked).toBe(true);
     expect(stdout + stderr).not.toContain(issued()[0]);
     expect(await readFile(envFile, 'utf8')).toBe(before);
@@ -181,6 +201,76 @@ describe('connect (subprocess integration)', () => {
     expect(stderr).toContain('It was revoked');
     expect(mock.issuedTokens.get(issued()[0]!)?.revoked).toBe(true);
     expect(stdout + stderr).not.toContain(issued()[0]);
+  }, 60_000);
+
+  it('says where to revoke the token by hand when it can be neither saved nor revoked', async () => {
+    await mkdir(envFile);
+    mock.revokeFails = true;
+
+    const { stdout, stderr, code } = await cli(['connect']);
+
+    expect(code).toBe(1);
+    expect(stderr).toContain(
+      'It still works until you revoke it in Beeper, under Settings → Integrations → Approved connections.',
+    );
+    expect(stderr).not.toContain('It was revoked');
+    expect(mock.issuedTokens.get(issued()[0]!)?.revoked).toBe(false);
+    expect(stdout + stderr).not.toContain(issued()[0]);
+  }, 60_000);
+
+  it('replaces a token in a file with Windows line endings, and says the old one still works', async () => {
+    await writeFile(envFile, `BEEPER_BASE_URL=${baseUrl}\r\nBEEPER_ACCESS_TOKEN=old-token-123\r\n`);
+
+    const { stdout, stderr, code } = await cli(['connect']);
+
+    expect(code, stderr).toBe(0);
+    expect(stdout).toContain('replaced an earlier token');
+    expect(await readFile(envFile, 'utf8')).toBe(`BEEPER_BASE_URL=${baseUrl}\nBEEPER_ACCESS_TOKEN=${issued()[0]}\n`);
+  }, 60_000);
+
+  it('writes through a symlinked env file to where it points, owner-only', async () => {
+    const real = join(dir, 'secrets', 'claude-messenger.env');
+    await mkdir(join(dir, 'secrets'));
+    await writeFile(real, `BEEPER_BASE_URL=${baseUrl}\n`);
+    await symlink(real, envFile);
+
+    const { stderr, code } = await cli(['connect']);
+
+    expect(code, stderr).toBe(0);
+    expect((await lstat(envFile)).isSymbolicLink()).toBe(true);
+    expect(await readFile(real, 'utf8')).toBe(`BEEPER_BASE_URL=${baseUrl}\nBEEPER_ACCESS_TOKEN=${issued()[0]}\n`);
+    expect((await stat(real)).mode & 0o777).toBe(0o600);
+  }, 60_000);
+
+  it('saves nothing, and revokes the token, when the file would not load the token it was given', async () => {
+    // The assignment sits inside another value's quotes, where no line edit can make it load.
+    const before = `NOTE="first line\nBEEPER_ACCESS_TOKEN=inside-a-quote\nlast line"\n`;
+    await writeFile(envFile, before);
+
+    const { stdout, stderr, code } = await cli(['connect']);
+
+    expect(code).toBe(1);
+    expect(stderr).toContain('would load another token; nothing was saved');
+    expect(stderr).toContain('It was revoked');
+    expect(mock.issuedTokens.get(issued()[0]!)?.revoked).toBe(true);
+    expect(stdout + stderr).not.toContain(issued()[0]);
+    expect(await readFile(envFile, 'utf8')).toBe(before);
+  }, 60_000);
+
+  it('warns that a token in its environment wins over the one it saved', async () => {
+    const { stdout, stderr, code } = await cli(['connect'], { BEEPER_ACCESS_TOKEN: 'stale-token-from-a-client-config' });
+
+    expect(code, stderr).toBe(0);
+    expect(stdout).toContain("⚠ BEEPER_ACCESS_TOKEN is also set in this command's environment, and that wins over .env");
+    expect(await readFile(envFile, 'utf8')).toBe(`BEEPER_ACCESS_TOKEN=${issued()[0]}\n`);
+  }, 60_000);
+
+  it('refuses a wait longer than a day before asking Beeper for anything', async () => {
+    const { stderr, code } = await cli(['connect', '--timeout', '1441']);
+
+    expect(code).not.toBe(0);
+    expect(stderr).toContain('at most 1440');
+    expect(mock.requests).toEqual([]);
   }, 60_000);
 
   it('gives up when nobody answers the box in time, with nothing saved', async () => {

@@ -1,4 +1,7 @@
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createAccessRequester } from '../src/app.js';
 import type { AccessProgress, AccessRequest } from '../src/core/access.js';
 import {
   AccessDeniedError,
@@ -16,7 +19,9 @@ import { MockBeeperServer, wireChat } from './mock-beeper.js';
  * Integration: BeeperAccessRequester over real HTTP against the mock's model
  * of Beeper Desktop 4.3.176's OAuth server and approval box, including what
  * a person at the box can do: approve on any terms, decline, or not answer
- * until Beeper closes the box itself.
+ * until Beeper closes the box itself. The adapter reports the terms the owner
+ * approved; whether the app keeps them is GuardedAccessRequester's call
+ * (access-guard.test.ts), proven here once through the composition root.
  */
 describe('BeeperAccessRequester (HTTP integration)', () => {
   let mock: MockBeeperServer;
@@ -105,38 +110,118 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
     });
   });
 
-  describe('terms this app cannot keep', () => {
-    it('revokes and refuses write access the owner granted unasked', async () => {
+  describe('the terms the owner approved', () => {
+    it('reports write access granted unasked, without deciding about it', async () => {
       mock.decide = () => ({ approve: true, scopes: ['read', 'write'] });
 
-      const error = await requester.requestAccess(request()).catch((e: unknown) => e);
+      const grant = await requester.requestAccess(request());
 
-      expect(error).toBeInstanceOf(AccessMismatchError);
-      expect((error as Error).message).toContain('leave Allow sensitive actions off');
-      expect((error as Error).message).toContain('It was revoked and nothing was saved');
-      const [issued] = [...mock.issuedTokens.values()];
-      expect(issued).toEqual({ scope: 'read write', revoked: true });
+      expect(grant.write).toBe(true);
+      expect(mock.issuedTokens.get(grant.token)).toEqual({ scope: 'read write', revoked: false });
     });
 
-    it('revokes and refuses a token that expires, since nothing here renews it', async () => {
+    it('reports when the token expires', async () => {
       mock.decide = () => ({ approve: true, expiresInSeconds: 30 * 24 * 3600 });
 
-      const error = await requester.requestAccess(request()).catch((e: unknown) => e);
+      const before = Date.now();
+      const grant = await requester.requestAccess(request());
 
-      expect(error).toBeInstanceOf(AccessMismatchError);
-      expect((error as Error).message).toContain('choose Never under Expires in');
-      expect([...mock.issuedTokens.values()].map((t) => t.revoked)).toEqual([true]);
+      expect(grant.expiresAt!.getTime()).toBeGreaterThanOrEqual(before + 30 * 24 * 3600 * 1000);
+      expect(grant.expiresAt!.getTime()).toBeLessThanOrEqual(Date.now() + 30 * 24 * 3600 * 1000);
     });
 
-    it('never puts the refused token in its error', async () => {
+    it('counts a scope it does not know as write access, never as less', async () => {
+      mock.decide = () => ({ approve: true, scopes: ['read', 'admin'] });
+
+      const grant = await requester.requestAccess(request());
+
+      expect(grant.write).toBe(true);
+    });
+
+    it('reports no expiry when the owner chose Never', async () => {
+      const grant = await requester.requestAccess(request());
+
+      expect(grant.expiresAt).toBeUndefined();
+    });
+
+    it('is refused and revoked at Beeper when the app is wired as connect gets it', async () => {
       mock.decide = () => ({ approve: true, scopes: ['read', 'write'], expiresInSeconds: 3600 });
+
+      const error = await createAccessRequester({ beeperBaseUrl: baseUrl })
+        .requestAccess(request())
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AccessMismatchError);
+      const [[token, issued]] = [...mock.issuedTokens.entries()];
+      expect(issued).toEqual({ scope: 'read write', revoked: true });
+      expect((error as Error).message).not.toContain(token);
+      expect((error as Error).message).toContain('It was revoked, and nothing was saved.');
+    });
+  });
+
+  describe('token responses OAuth allows but Beeper 4.3.176 does not send', () => {
+    it('reads a scope left out as the scope asked for', async () => {
+      mock.shapeTokenResponse = ({ scope: _, ...rest }) => ({ status: 200, body: rest });
+
+      expect((await requester.requestAccess(request())).write).toBe(false);
+      expect((await requester.requestAccess(request({ write: true }))).write).toBe(true);
+    });
+
+    it('reads expires_in sent as a string of digits', async () => {
+      mock.shapeTokenResponse = (body) => ({ status: 200, body: { ...body, expires_in: '3600' } });
+
+      const grant = await requester.requestAccess(request());
+
+      expect(grant.expiresAt!.getTime() - Date.now()).toBeGreaterThan(3_590_000);
+    });
+
+    it('keeps a token issued under another success status', async () => {
+      mock.shapeTokenResponse = (body) => ({ status: 201, body });
+
+      const grant = await requester.requestAccess(request());
+
+      expect(mock.issuedTokens.get(grant.token)?.revoked).toBe(false);
+    });
+
+    it('revokes a token whose terms it cannot read, and says so without quoting it', async () => {
+      mock.shapeTokenResponse = (body) => ({ status: 200, body: { ...body, scope: 42 } });
 
       const error = (await requester.requestAccess(request()).catch((e: unknown) => e)) as Error;
 
-      const [token] = [...mock.issuedTokens.keys()];
-      expect(error.message).not.toContain(token);
-      // Both problems named, and both fixes.
-      expect(error.message).toMatch(/leave Allow sensitive actions off, and choose Never under Expires in/);
+      expect(error).toBeInstanceOf(ProviderError);
+      expect(error.message).toBe('Beeper sent an unexpected token response (scope). The token was revoked.');
+      expect([...mock.issuedTokens.values()]).toEqual([{ scope: 'read', revoked: true }]);
+    });
+
+    it('says where to revoke a token it could not read, when Beeper will not revoke it', async () => {
+      mock.shapeTokenResponse = (body) => ({ status: 200, body: { ...body, scope: 42 } });
+      mock.revokeFails = true;
+
+      const error = (await requester.requestAccess(request()).catch((e: unknown) => e)) as Error;
+
+      expect(error.message).toBe(
+        'Beeper sent an unexpected token response (scope). ' +
+          'The token still works until you revoke it in Beeper, under Settings → Integrations → Approved connections.',
+      );
+      expect([...mock.issuedTokens.values()].map((t) => t.revoked)).toEqual([false]);
+    });
+
+    it('revokes a token with a lifetime too long to represent', async () => {
+      mock.shapeTokenResponse = (body) => ({ status: 200, body: { ...body, expires_in: 1e300 } });
+
+      const error = (await requester.requestAccess(request()).catch((e: unknown) => e)) as Error;
+
+      expect(error.message).toContain('expires_in is out of range');
+      expect([...mock.issuedTokens.values()].map((t) => t.revoked)).toEqual([true]);
+    });
+
+    it('never quotes a failed token response, which can carry the token', async () => {
+      mock.shapeTokenResponse = (body) => ({ status: 500, body });
+
+      const error = (await requester.requestAccess(request()).catch((e: unknown) => e)) as Error;
+
+      expect(error.message).toBe('Beeper could not exchange the approval for a token (HTTP 500).');
+      expect(error.message).not.toContain([...mock.issuedTokens.keys()][0]);
     });
   });
 
@@ -151,7 +236,45 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
       const grant = await pending;
 
       expect(mock.issuedTokens.has(grant.token)).toBe(true);
-      expect(progress).toEqual([{ kind: 'sign-in-required' }, { kind: 'approval-requested', attempt: 1 }]);
+      expect(progress).toEqual([
+        { kind: 'action-required', step: 'Sign in to Beeper: your emailed code, then your recovery key.' },
+        { kind: 'approval-requested', attempt: 1 },
+      ]);
+    });
+
+    it("waits for Beeper's Desktop API to be switched on, then for sign-in, saying each step once", async () => {
+      mock.apiDisabled = true;
+      mock.signedIn = false;
+      const setupChecks = () => mock.requests.filter((r) => r.path === '/v1/app/setup').length;
+
+      const pending = requester.requestAccess(request());
+      await until(() => setupChecks() >= 2);
+      mock.apiDisabled = false;
+      const switchedOn = setupChecks();
+      await until(() => setupChecks() >= switchedOn + 2);
+      expect(oauthCalls()).toEqual([]);
+      mock.signedIn = true;
+      await pending;
+
+      expect(progress).toEqual([
+        {
+          kind: 'action-required',
+          step: "Beeper's Desktop API is switched off. Turn it on in Beeper, under Settings → Integrations → Beeper Desktop API.",
+        },
+        { kind: 'action-required', step: 'Sign in to Beeper: your emailed code, then your recovery key.' },
+        { kind: 'approval-requested', attempt: 1 },
+      ]);
+    }, 15_000);
+
+    it('gives up when the Desktop API stays switched off, saying where to turn it on', async () => {
+      mock.apiDisabled = true;
+
+      const error = await requester.requestAccess(request({ timeoutMs: 1_000 })).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AccessTimeoutError);
+      expect((error as Error).message).toBe(
+        "Beeper's Desktop API stayed switched off for 1 s. Turn it on under Settings → Integrations → Beeper Desktop API, then run this again.",
+      );
     });
 
     it('gives up when nobody signs in in time, without asking Beeper for anything', async () => {
@@ -165,8 +288,9 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
     });
 
     it('opens a fresh box when Beeper closes one nobody answered', async () => {
-      // Beeper's two minutes, shortened; still long enough to be a closed box, not a fault.
-      mock.boxLifetimeMs = 3_500;
+      // Beeper's two minutes, shortened on both sides.
+      mock.boxLifetimeMs = 1_500;
+      requester = new BeeperAccessRequester({ baseUrl, boxLifetimeMs: 1_500 });
       let boxes = 0;
       mock.decide = () => (++boxes === 1 ? 'no-answer' : { approve: true });
 
@@ -178,6 +302,21 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
         { kind: 'approval-requested', attempt: 1 },
         { kind: 'approval-requested', attempt: 2 },
       ]);
+    }, 15_000);
+
+    it('stops at its own deadline even while Beeper keeps closing unanswered boxes', async () => {
+      mock.boxLifetimeMs = 3_500;
+      requester = new BeeperAccessRequester({ baseUrl, boxLifetimeMs: 3_500 });
+      mock.decide = () => 'no-answer';
+      const started = Date.now();
+
+      const error = await requester.requestAccess(request({ timeoutMs: 5_000 })).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AccessTimeoutError);
+      // The second box gets what is left of the five seconds, not another five.
+      expect(Date.now() - started).toBeLessThan(6_500);
+      expect(mock.approvalRequests).toHaveLength(2);
+      await until(() => mock.openBoxes === 0);
     }, 15_000);
 
     it('gives up at its own deadline while the box is still open', async () => {
@@ -213,13 +352,71 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
       expect(mock.approvalRequests).toHaveLength(1);
     });
 
-    it("says to turn Beeper's API on when it is switched off", async () => {
-      mock.apiDisabled = true;
+    it('refuses an approval that answers some other request, exchanging nothing', async () => {
+      mock.decide = () => ({ approve: true, state: 'another-request' });
 
       const error = await requester.requestAccess(request()).catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(ProviderError);
-      expect((error as Error).message).toContain("Beeper Desktop's API is switched off");
+      expect((error as Error).message).toContain('state mismatch');
+      expect(oauthCalls().map((r) => r.path)).not.toContain('/oauth/token');
+      expect(mock.issuedTokens.size).toBe(0);
+    });
+
+    it("reports what Beeper's consent page refuses, without opening a box", async () => {
+      mock.refuseAuthorize = 'Requested scope exceeds registered scope for this client.';
+
+      const error = await requester.requestAccess(request()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ProviderError);
+      expect((error as Error).message).toMatch(
+        /^Beeper could not start the approval \(HTTP 400\): .*Requested scope exceeds registered scope for this client\.$/,
+      );
+      expect(mock.approvalRequests).toEqual([]);
+    });
+
+    it("says to turn Beeper's API back on when it goes off partway", async () => {
+      // The person approves, then switches the API off before the token is fetched.
+      mock.decide = () => {
+        mock.apiDisabled = true;
+        return { approve: true };
+      };
+
+      const error = await requester.requestAccess(request()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ProviderError);
+      expect((error as Error).message).toBe(
+        "Beeper Desktop's API is switched off, so it cannot exchange the approval for a token. " +
+          'Turn it on under Settings → Integrations → Beeper Desktop API, then run this again.',
+      );
+      expect(mock.issuedTokens.size).toBe(0);
+    });
+
+    it("refuses a sign-in answer that is not Beeper's, instead of waiting on it", async () => {
+      const impostor: Server = createServer((_req, res) => res.end('<html>a router login page</html>'));
+      await new Promise<void>((resolve) => impostor.listen(0, '127.0.0.1', resolve));
+      const { port } = impostor.address() as AddressInfo;
+      try {
+        const error = await new BeeperAccessRequester({ baseUrl: `http://127.0.0.1:${port}` })
+          .requestAccess(request())
+          .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ProviderError);
+        expect((error as Error).message).toBe(
+          'Beeper could not say whether it is signed in (HTTP 200): a router login page',
+        );
+      } finally {
+        await new Promise((resolve) => impostor.close(resolve));
+      }
+    });
+
+    it('works behind a base URL with a path prefix', async () => {
+      mock.pathPrefix = '/beeper';
+
+      const grant = await new BeeperAccessRequester({ baseUrl: `${baseUrl}/beeper/` }).requestAccess(request());
+
+      expect(mock.issuedTokens.get(grant.token)?.revoked).toBe(false);
+      expect(mock.requests.map((r) => r.path)).toContain('/oauth/token');
     });
 
     it('points to minting a token by hand when Beeper has no OAuth server', async () => {

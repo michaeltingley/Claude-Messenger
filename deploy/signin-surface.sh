@@ -19,8 +19,10 @@
 #   deploy/signin-surface.sh status  # exit 0 if exposed in any way, 1 if fully down
 #
 # `up` starts the units but never enables them, so a reboot always closes the
-# surface. This script is the one place that opens or closes it: configure.sh,
-# the runbook, and docs/DEPLOY.md all go through it.
+# surface, and if it can't publish them it closes them again: it opens the
+# surface on the tailnet or not at all. This script is the one place that
+# opens or closes it: configure.sh, the runbook, and docs/DEPLOY.md all go
+# through it.
 set -euo pipefail
 
 PORT=8443
@@ -124,19 +126,22 @@ up() {
   fi
   # restart, not start: a reopened surface must pick up the new password.
   systemctl --user restart "${UNITS[@]}"
+  # Under `timeout`, sudo runs outside the terminal's foreground and can't ask
+  # for a password, so it gets the chance to ask here first, when it needs one.
+  sudo -n true 2>/dev/null || sudo -v 2>/dev/null || true
   local out link
-  if ! out="$(timeout -k 2 "$SERVE_TIMEOUT" sudo tailscale serve --bg --https "$PORT" "$BACKEND" 2>&1)"; then
+  if ! out="$(timeout -k 2 "$SERVE_TIMEOUT" sudo -n tailscale serve --bg --https "$PORT" "$BACKEND" 2>&1)"; then
     link="$(printf '%s\n' "$out" | grep -o 'https://[^[:space:]]*' | grep -v ":${PORT}/" | head -n 1)" || true
     if [ -n "$link" ]; then
       err "Tailscale Serve is off on this tailnet, so the sign-in screen can't be published."
       err "Turn it on once by opening this link: $link"
-      err "Then run '${SELF} up' again."
     else
       err "could not publish the sign-in screen to the tailnet:"
       printf '%s\n' "$out" | sed 's/^/  /' >&2
     fi
-    err "Alternative: ssh -L 6080:127.0.0.1:6080 <this-host>, then open"
-    err "  http://127.0.0.1:6080/vnc.html#autoconnect=1&password=${password}"
+    # Unreachable on the tailnet means closed: nothing stays half open.
+    down >/dev/null || true
+    err "Then run '${SELF} up' again."
     return 1
   fi
   echo "Beeper sign-in is open, to your tailnet only, at:"
