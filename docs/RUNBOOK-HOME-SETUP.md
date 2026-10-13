@@ -24,7 +24,7 @@ The user's kickoff prompt points here — treat this file as your task list.*
 | VM + network creation | — | OCI CLI |
 | Host provisioning | — | cloud-init (already in repo) |
 | Tailscale join | Clicks one auth URL | Everything else |
-| Beeper login on host | Pastes emailed code + recovery key when prompted | Drives the prompts over SSH |
+| Beeper login + approval on host | Types emailed code + recovery key into Beeper's own window, presses Approve | Runs `deploy/configure.sh`, relays its link and steps |
 | MCP token, service, verification | — | Everything |
 
 ## Phase 0 — Preconditions
@@ -68,50 +68,37 @@ The user's kickoff prompt points here — treat this file as your task list.*
 
 ## Phase 3 — Finish on the host (you drive over SSH)
 
-SSH in and complete what cloud-init deliberately left interactive. Follow
-`deploy/bootstrap.sh` steps 3–7 semantics (the software is already
-installed — you are doing configuration and logins):
+SSH in and complete what cloud-init deliberately left to the user's
+logins. The software is already installed; what remains is `deploy/bootstrap.sh`
+step 3 (Tailscale) and step 6 (`deploy/configure.sh`):
 
 1. `sudo tailscale up` → give the user the printed URL to click.
-2. Sign Beeper Desktop in. **Do not run `beeper setup --server --install`** —
-   see the warning in docs/DEPLOY.md; it can delete the user's cloud bridge
-   connections across every device.
+2. Run `~/claude-messenger/deploy/configure.sh` (it never prompts; run it in
+   the background and read its output). **Do not run `beeper setup --server
+   --install`** — see the warning in docs/DEPLOY.md; it can delete the user's
+   cloud bridge connections across every device.
 
    cloud-init already has Beeper Desktop running headless under Xvfb, with
-   the sign-in surface installed but closed. So:
-   - Run `~/claude-messenger/deploy/signin-surface.sh up`. It starts the
-     loopback VNC/noVNC pair and publishes it to the tailnet only.
-   - Give the user the URL it prints. It carries a one-time viewer password
-     in its `#` fragment, which never reaches the server, and the password is
-     also printed on its own in case the page asks. They open it in a
-     browser, see the Beeper window, and sign in themselves, relaying
-     nothing. They type the
-     emailed login code and the recovery key directly into the app, so
-     neither passes through chat.
-   - Have them make sure "Beeper Desktop API" is switched on in Beeper's
-     settings.
-   - Confirm with them when the account list has finished syncing.
-3. Mint the Beeper access token in that same browser session: Beeper
-   Settings → Integrations → "+" next to Approved connections. The user
-   enters it into `.env` themselves; it never passes through chat. Then turn
-   Remote Access on (Settings → Integrations → Advanced) only if the endpoint
-   must be reached from off-box; for this topology Claude Messenger talks to
-   127.0.0.1:23373, so leave it off.
-4. In `~/claude-messenger`: write `.env` (umask 077) around the user's token,
-   with `BEEPER_BASE_URL=http://127.0.0.1:23373`, absolute policy/audit/state
-   paths, and a generated `CLAUDE_MESSENGER_MCP_TOKEN` (`openssl rand -hex 32`).
-   Run `node dist/cli/main.js policy-init` then `doctor` — must be green.
-5. Now that `doctor` is green, close the sign-in surface:
-   `~/claude-messenger/deploy/signin-surface.sh down`.
-   - It exists only for that one login, and a VNC view of a logged-in Beeper
-     is exactly what you don't want left running.
-   - The script verifies that nothing is left exposed. If it exits non-zero,
-     stop and fix that before going on.
-   - If the account ever needs re-authenticating, reopen it with `up`.
-6. Install the systemd user unit (see bootstrap.sh's sed line for the
-   `__NODE__`/`__INSTALL_DIR__`/`__PORT__` substitutions), enable + start,
-   verify `/healthz`, then `sudo tailscale serve --bg http://127.0.0.1:8484`.
-7. Optionally run `claude` on the host once (user signs in) so the box is
+   the sign-in surface installed but closed. The script:
+   - Writes `.env` (owner-only) with the policy, audit and state paths and a
+     generated `CLAUDE_MESSENGER_MCP_TOKEN`.
+   - Opens Beeper's screen to the tailnet with `signin-surface.sh up` and
+     prints its URL, then the steps for Beeper's approval box. Give the user
+     both in one message. The URL carries a one-time viewer password in its
+     `#` fragment, which never reaches the server.
+   - Waits while the user signs in (emailed code, then recovery key, typed
+     into the app, so neither passes through chat) and approves Claude
+     Messenger in Beeper's "Approve connection" box. `claude-messenger
+     connect` then saves the token straight into `.env`; nobody sees it.
+   - Closes the screen and verifies that nothing is left exposed, then runs
+     `doctor`, starts the systemd user service, publishes it with
+     `tailscale serve`, and adds it to Claude Code on the host.
+
+   If it stops, it says why and what to do; every step is safe to re-run.
+   If Tailscale Serve is off for the tailnet, it prints the link that turns
+   it on: give the user that link, then run the script again. Leave Beeper's
+   Remote Access setting off: Claude Messenger talks to 127.0.0.1:23373.
+3. Optionally run `claude` on the host once (user signs in) so the box is
    Claude-operable for all future maintenance — this is the intended end
    state (docs/DEPLOY.md, zero-terminal path).
 

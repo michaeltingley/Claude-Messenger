@@ -1,165 +1,21 @@
-import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FakeHost } from './fake-host.js';
 
 /**
  * deploy/signin-surface.sh is the only thing that opens or closes Beeper's
  * sign-in surface (VNC of a signed-in Beeper == holding the account). These
- * tests run the real script as a subprocess against a fake host: `tailscale`,
- * `systemctl`, and `sudo` are shims on PATH that model the real CLIs' exit
- * codes and JSON over a state directory. A shim rejects any invocation it
- * doesn't model (exit 64), so the script can't drift to a CLI form these
- * tests don't cover without failing them.
+ * tests run the real script as a subprocess against a fake host
+ * (test/fake-host.ts): `tailscale`, `systemctl`, and `sudo` are shims on PATH
+ * that model the real CLIs' exit codes and JSON over a state directory, and
+ * reject any invocation they don't model.
  */
 
 const SCRIPT = join(import.meta.dirname, '..', 'deploy', 'signin-surface.sh');
-const UNITS = ['x11vnc.service', 'novnc.service'] as const;
+const UNITS = FakeHost.SURFACE_UNITS;
 
-const TAILSCALE_SHIM = `#!/usr/bin/env bash
-S="$FAKE_HOST_STATE"
-echo "tailscale $*" >> "$S/calls.log"
-case "$*" in
-  "status") [ -e "$S/tailnet" ] ;;
-  "status --json")
-    [ -e "$S/tailnet" ] || exit 1
-    printf '{\\n  "Self": {\\n    "DNSName": "box.example-tailnet.ts.net."\\n  }\\n}\\n' ;;
-  "serve status --json")
-    if [ -e "$S/serve-status-broken" ]; then echo "serve: internal error" >&2; exit 1; fi
-    if [ -e "$S/serve-status-needs-root" ] && [ "\${FAKE_SUDO:-}" != 1 ]; then
-      echo "serve: access denied" >&2; exit 1
-    fi
-    if [ -e "$S/serve-8443" ]; then
-      printf '{\\n  "TCP": {\\n    "8443": {\\n      "HTTPS": true\\n    }\\n  },\\n  "Web": {\\n    "box.example-tailnet.ts.net:8443": {\\n      "Handlers": {\\n        "/": {\\n          "Proxy": "http://127.0.0.1:6080"\\n        }\\n      }\\n    }\\n  }\\n}\\n'
-    else
-      printf '{}\\n'
-    fi ;;
-  "serve --bg --https 8443 http://127.0.0.1:6080")
-    if [ -e "$S/fail-serve-on" ]; then echo "serve: access denied" >&2; exit 1; fi
-    touch "$S/serve-8443" ;;
-  "serve --https 8443 off")
-    if [ -e "$S/fail-serve-off" ]; then echo "serve: failed" >&2; exit 1; fi
-    rm -f "$S/serve-8443" ;;
-  *) echo "fake tailscale: unmodeled invocation: $*" >&2; exit 64 ;;
-esac
-`;
-
-const SYSTEMCTL_SHIM = `#!/usr/bin/env bash
-S="$FAKE_HOST_STATE"
-echo "systemctl $*" >> "$S/calls.log"
-if [ "\${1:-}" != "--user" ]; then echo "fake systemctl: only --user is modeled" >&2; exit 64; fi
-shift
-verb="$1"; shift
-case "$verb" in
-  cat) [ -e "$S/units/$1" ] ;;
-  is-active) [ "$1" = "--quiet" ] && shift; [ -e "$S/active/$1" ] ;;
-  is-enabled) [ "$1" = "--quiet" ] && shift; [ -e "$S/enabled/$1" ] ;;
-  start|restart)
-    for u in "$@"; do
-      if [ ! -e "$S/units/$u" ]; then echo "Unit $u not found." >&2; exit 5; fi
-    done
-    # Like the real unit: x11vnc -passwdfile exits when the file is missing.
-    for u in "$@"; do
-      if [ "$u" = x11vnc.service ] && [ ! -s "$XDG_RUNTIME_DIR/claude-messenger/vncpasswd" ]; then
-        echo "Job for x11vnc.service failed (cannot open passwdfile)." >&2; exit 1
-      fi
-    done
-    for u in "$@"; do touch "$S/active/$u"; done ;;
-  disable)
-    now=0
-    if [ "\${1:-}" = "--now" ]; then now=1; shift; fi
-    for u in "$@"; do
-      if [ ! -e "$S/units/$u" ]; then echo "Failed to disable unit: Unit file $u does not exist." >&2; exit 1; fi
-      rm -f "$S/enabled/$u"
-      if [ "$now" = 1 ]; then
-        if [ -e "$S/fail-stop" ]; then echo "Failed to stop $u" >&2; exit 1; fi
-        rm -f "$S/active/$u"
-      fi
-    done ;;
-  *) echo "fake systemctl: unmodeled invocation: $verb $*" >&2; exit 64 ;;
-esac
-`;
-
-const SUDO_SHIM = `#!/usr/bin/env bash
-echo "sudo $*" >> "$FAKE_HOST_STATE/calls.log"
-FAKE_SUDO=1 exec "$@"
-`;
-
-class FakeHost {
-  readonly root = mkdtempSync(join(tmpdir(), 'signin-surface-'));
-  private readonly bin = join(this.root, 'bin');
-  readonly state = join(this.root, 'state');
-  /** The user's runtime dir ($XDG_RUNTIME_DIR, /run/user/UID on a real host). */
-  readonly runtime = join(this.root, 'runtime');
-  readonly passwdFile = join(this.runtime, 'claude-messenger', 'vncpasswd');
-
-  constructor() {
-    for (const dir of [this.bin, this.state, ...['units', 'active', 'enabled'].map((d) => join(this.state, d))]) {
-      mkdirSync(dir, { recursive: true });
-    }
-    mkdirSync(this.runtime, { mode: 0o700 });
-    for (const [name, body] of [
-      ['tailscale', TAILSCALE_SHIM],
-      ['systemctl', SYSTEMCTL_SHIM],
-      ['sudo', SUDO_SHIM],
-    ] as const) {
-      writeFileSync(join(this.bin, name), body);
-      chmodSync(join(this.bin, name), 0o755);
-    }
-    writeFileSync(join(this.state, 'calls.log'), '');
-  }
-
-  /** A host that bootstrap provisioned and joined to a tailnet, surface closed. */
-  static provisioned(): FakeHost {
-    const host = new FakeHost();
-    host.set('tailnet');
-    for (const unit of UNITS) host.set(`units/${unit}`);
-    return host;
-  }
-
-  set(flag: string): this {
-    writeFileSync(join(this.state, flag), '');
-    return this;
-  }
-
-  has(flag: string): boolean {
-    return existsSync(join(this.state, flag));
-  }
-
-  /** Everything published, running, AND enabled at boot (pre-script hosts). */
-  exposeEverything(): this {
-    this.set('serve-8443');
-    for (const unit of UNITS) this.set(`active/${unit}`).set(`enabled/${unit}`);
-    return this;
-  }
-
-  calls(): string[] {
-    return readFileSync(join(this.state, 'calls.log'), 'utf8').split('\n').filter(Boolean);
-  }
-
-  run(...args: string[]): { code: number; stdout: string; stderr: string } {
-    const result = spawnSync('bash', [SCRIPT, ...args], {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        PATH: `${this.bin}:${process.env.PATH}`,
-        FAKE_HOST_STATE: this.state,
-        XDG_RUNTIME_DIR: this.runtime,
-      },
-    });
-    return { code: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
-  }
-
-  /** Nothing published, nothing running, nothing enabled. */
-  fullyClosed(): boolean {
-    return !this.has('serve-8443') && UNITS.every((u) => !this.has(`active/${u}`) && !this.has(`enabled/${u}`));
-  }
-
-  dispose(): void {
-    rmSync(this.root, { recursive: true, force: true });
-  }
-}
+const surface = (host: FakeHost, ...args: string[]) => host.run(SCRIPT, args);
 
 describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
   let host: FakeHost;
@@ -174,27 +30,27 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
 
   describe('up', () => {
     it('starts the loopback pair and publishes it to the tailnet, printing the noVNC URL', () => {
-      const { code, stdout } = host.run('up');
+      const { code, stdout } = surface(host, 'up');
 
       expect(code).toBe(0);
       expect(host.has('serve-8443')).toBe(true);
       for (const unit of UNITS) expect(host.has(`active/${unit}`)).toBe(true);
       expect(stdout).toContain('https://box.example-tailnet.ts.net:8443/vnc.html');
-      expect(host.run('status').code).toBe(0);
+      expect(surface(host, 'status').code).toBe(0);
     });
 
     it('is idempotent: reopening an open surface succeeds and reprints the URL', () => {
-      host.run('up');
+      surface(host, 'up');
 
-      const again = host.run('up');
+      const again = surface(host, 'up');
 
       expect(again.code).toBe(0);
       expect(again.stdout).toContain('https://box.example-tailnet.ts.net:8443/vnc.html');
-      expect(host.run('status').code).toBe(0);
+      expect(surface(host, 'status').code).toBe(0);
     });
 
     it('never enables the surface at boot, so a reboot always closes it', () => {
-      host.run('up');
+      surface(host, 'up');
 
       for (const unit of UNITS) expect(host.has(`enabled/${unit}`)).toBe(false);
       expect(host.calls().filter((c) => /\benable\b/.test(c))).toEqual([]);
@@ -204,11 +60,11 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
       const offTailnet = new FakeHost();
       for (const unit of UNITS) offTailnet.set(`units/${unit}`);
       try {
-        const { code, stderr } = offTailnet.run('up');
+        const { code, stderr } = surface(offTailnet, 'up');
 
         expect(code).not.toBe(0);
         expect(stderr).toContain('sudo tailscale up');
-        expect(offTailnet.fullyClosed()).toBe(true);
+        expect(offTailnet.surfaceClosed()).toBe(true);
       } finally {
         offTailnet.dispose();
       }
@@ -217,7 +73,7 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
     it('refuses when the sign-in units were never installed, pointing at bootstrap', () => {
       const bare = new FakeHost().set('tailnet');
       try {
-        const { code, stderr } = bare.run('up');
+        const { code, stderr } = surface(bare, 'up');
 
         expect(code).not.toBe(0);
         expect(stderr).toContain('bootstrap.sh');
@@ -228,7 +84,7 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
     });
 
     it('mints an owner-only viewer password and prints a one-tap URL that carries it', () => {
-      const { code, stdout } = host.run('up');
+      const { code, stdout } = surface(host, 'up');
 
       expect(code).toBe(0);
       const password = readFileSync(host.passwdFile, 'utf8').trim();
@@ -239,10 +95,10 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
     });
 
     it('rotates the password on every opening, so an old link stops working', () => {
-      const first = host.run('up');
+      const first = surface(host, 'up');
       const firstPassword = readFileSync(host.passwdFile, 'utf8').trim();
 
-      const second = host.run('up');
+      const second = surface(host, 'up');
       const secondPassword = readFileSync(host.passwdFile, 'utf8').trim();
 
       expect([first.code, second.code]).toEqual([0, 0]);
@@ -257,18 +113,18 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
       // A broken runtime dir: where the password's directory should be, a file.
       writeFileSync(join(host.runtime, 'claude-messenger'), '');
 
-      const { code, stderr } = host.run('up');
+      const { code, stderr } = surface(host, 'up');
 
       expect(code).not.toBe(0);
       expect(stderr).toContain('could not mint');
-      expect(host.fullyClosed()).toBe(true);
+      expect(host.surfaceClosed()).toBe(true);
       expect(host.calls().filter((c) => /restart|serve --bg/.test(c))).toEqual([]);
     });
 
     it('fails loudly with an SSH-tunnel fallback when the tailnet refuses to publish', () => {
       host.set('fail-serve-on');
 
-      const { code, stderr } = host.run('up');
+      const { code, stderr } = surface(host, 'up');
 
       expect(code).not.toBe(0);
       expect(stderr).toContain('ssh -L 6080:127.0.0.1:6080');
@@ -276,43 +132,56 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
       expect(stderr).toContain(`vnc.html#autoconnect=1&password=${readFileSync(host.passwdFile, 'utf8').trim()}`);
       expect(host.has('serve-8443')).toBe(false);
     });
+    it('stops waiting on a tailnet that has not allowed Tailscale Serve, and passes on the enable link', () => {
+      host.set('serve-disabled');
+
+      const started = Date.now();
+      const { code, stderr } = host.run(SCRIPT, ['up'], { CLAUDE_MESSENGER_SERVE_TIMEOUT: '1' });
+
+      expect(code).not.toBe(0);
+      // tailscale itself would wait until someone allowed Serve.
+      expect(Date.now() - started).toBeLessThan(15_000);
+      expect(stderr).toContain('Tailscale Serve is off on this tailnet');
+      expect(stderr).toContain('https://login.tailscale.com/f/serve?node=nFAKE7');
+      expect(host.has('serve-8443')).toBe(false);
+    });
   });
 
   describe('down', () => {
     it('closes a fully exposed surface, including boot-enablement left by older installs', () => {
-      host.exposeEverything();
+      host.exposeSurface();
 
-      const { code, stdout } = host.run('down');
+      const { code, stdout } = surface(host, 'down');
 
       expect(code).toBe(0);
       expect(stdout).toContain('sign-in surface: down');
-      expect(host.fullyClosed()).toBe(true);
-      expect(host.run('status').code).toBe(1);
+      expect(host.surfaceClosed()).toBe(true);
+      expect(surface(host, 'status').code).toBe(1);
     });
 
     it('deletes the viewer password, so nothing is left to reopen the surface with', () => {
-      host.run('up');
+      surface(host, 'up');
       expect(existsSync(host.passwdFile)).toBe(true);
 
-      const { code } = host.run('down');
+      const { code } = surface(host, 'down');
 
       expect(code).toBe(0);
       expect(existsSync(host.passwdFile)).toBe(false);
     });
 
     it('is idempotent: closing an already-closed surface succeeds without errors', () => {
-      const first = host.run('down');
-      const second = host.run('down');
+      const first = surface(host, 'down');
+      const second = surface(host, 'down');
 
       expect([first.code, second.code]).toEqual([0, 0]);
       expect(second.stderr).toBe('');
-      expect(host.fullyClosed()).toBe(true);
+      expect(host.surfaceClosed()).toBe(true);
     });
 
     it('succeeds on a host where the sign-in units were never installed', () => {
       const bare = new FakeHost().set('tailnet');
       try {
-        const { code, stderr } = bare.run('down');
+        const { code, stderr } = surface(bare, 'down');
 
         expect(code).toBe(0);
         expect(stderr).toBe('');
@@ -322,9 +191,9 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
     });
 
     it('fails closed when the tailnet handler cannot be removed, naming the manual fix', () => {
-      host.exposeEverything().set('fail-serve-off');
+      host.exposeSurface().set('fail-serve-off');
 
-      const { code, stderr } = host.run('down');
+      const { code, stderr } = surface(host, 'down');
 
       expect(code).not.toBe(0);
       expect(stderr).toContain('STILL exposed');
@@ -333,18 +202,18 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
     });
 
     it('still unpublishes when reading the tailnet serve config needs root', () => {
-      host.exposeEverything().set('serve-status-needs-root');
+      host.exposeSurface().set('serve-status-needs-root');
 
-      const { code } = host.run('down');
+      const { code } = surface(host, 'down');
 
       expect(code).toBe(0);
-      expect(host.fullyClosed()).toBe(true);
+      expect(host.surfaceClosed()).toBe(true);
     });
 
     it('fails closed when the tailnet serve config cannot be read at all', () => {
       host.set('serve-status-broken');
 
-      const { code, stderr } = host.run('down');
+      const { code, stderr } = surface(host, 'down');
 
       expect(code).not.toBe(0);
       expect(stderr).toContain('STILL exposed');
@@ -353,9 +222,9 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
     });
 
     it('fails closed when a unit keeps running after being told to stop', () => {
-      host.exposeEverything().set('fail-stop');
+      host.exposeSurface().set('fail-stop');
 
-      const { code, stderr } = host.run('down');
+      const { code, stderr } = surface(host, 'down');
 
       expect(code).not.toBe(0);
       expect(stderr).toContain('STILL exposed');
@@ -365,12 +234,12 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
 
   describe('status', () => {
     it('reports a closed surface with exit 1, and each kind of exposure with exit 0', () => {
-      expect(host.run('status')).toMatchObject({ code: 1, stdout: 'sign-in surface: down\n' });
+      expect(surface(host, 'status')).toMatchObject({ code: 1, stdout: 'sign-in surface: down\n' });
 
       for (const exposure of ['serve-8443', 'serve-status-broken', 'active/novnc.service', 'enabled/x11vnc.service']) {
         const exposed = FakeHost.provisioned().set(exposure);
         try {
-          expect(exposed.run('status').code, exposure).toBe(0);
+          expect(surface(exposed, 'status').code, exposure).toBe(0);
         } finally {
           exposed.dispose();
         }
@@ -379,15 +248,15 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
   });
 
   it('a full login cycle (up, then down) leaves nothing exposed and no password behind', () => {
-    expect(host.run('up').code).toBe(0);
-    expect(host.run('down').code).toBe(0);
+    expect(surface(host, 'up').code).toBe(0);
+    expect(surface(host, 'down').code).toBe(0);
 
-    expect(host.fullyClosed()).toBe(true);
+    expect(host.surfaceClosed()).toBe(true);
     expect(existsSync(host.passwdFile)).toBe(false);
   });
 
   it('rejects an unknown subcommand with usage and exit 2', () => {
-    const { code, stderr } = host.run('open');
+    const { code, stderr } = surface(host, 'open');
 
     expect(code).toBe(2);
     expect(stderr).toContain('usage:');

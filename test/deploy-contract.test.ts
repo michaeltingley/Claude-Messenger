@@ -24,7 +24,7 @@ const installedUnits = (source: string): string[] => {
 describe('deploy/ contracts', () => {
   it('every deploy shell script parses', () => {
     const scripts = readdirSync(DEPLOY).filter((f) => f.endsWith('.sh'));
-    expect(scripts).toEqual(expect.arrayContaining(['bootstrap.sh', 'signin-surface.sh']));
+    expect(scripts).toEqual(expect.arrayContaining(['bootstrap.sh', 'configure.sh', 'signin-surface.sh']));
 
     for (const script of scripts) {
       const { status, stderr } = spawnSync('bash', ['-n', join(DEPLOY, script)], { encoding: 'utf8' });
@@ -42,20 +42,20 @@ describe('deploy/ contracts', () => {
     }
   });
 
-  it('every unit file in deploy/systemd is installed by bootstrap.sh', () => {
-    const bootstrap = read('bootstrap.sh');
+  it('every unit file in deploy/systemd is installed by bootstrap.sh or the configure.sh it ends with', () => {
+    const scripts = read('bootstrap.sh') + read('configure.sh');
     const shipped = readdirSync(join(DEPLOY, 'systemd')).map((f) => f.replace(/\.service$/, ''));
-    const installed = new Set(installedUnits(bootstrap));
+    const installed = new Set(installedUnits(read('bootstrap.sh')));
 
     for (const unit of shipped) {
       const viaLoop = installed.has(unit);
-      const byPath = bootstrap.includes(`deploy/systemd/${unit}.service`);
+      const byPath = scripts.includes(`deploy/systemd/${unit}.service`);
       expect(viaLoop || byPath, `${unit}.service is shipped but never installed`).toBe(true);
     }
   });
 
   it('no install path enables the sign-in surface at boot', () => {
-    for (const file of ['bootstrap.sh', 'cloud-init.yaml']) {
+    for (const file of ['bootstrap.sh', 'configure.sh', 'cloud-init.yaml']) {
       const offending = read(file)
         .split('\n')
         .filter((line) => !line.trim().startsWith('#'))
@@ -98,7 +98,9 @@ describe('deploy/ contracts', () => {
     expect(read('cloud-init.yaml')).toMatch(/^\s+- xauth$/m);
   });
 
-  it('signin-surface.sh is executable, because the runbook and DEPLOY.md invoke it directly', () => {
-    expect(statSync(join(DEPLOY, 'signin-surface.sh')).mode & 0o111).not.toBe(0);
+  it('signin-surface.sh and configure.sh are executable, because the docs invoke them directly', () => {
+    for (const script of ['signin-surface.sh', 'configure.sh']) {
+      expect(statSync(join(DEPLOY, script)).mode & 0o111, script).not.toBe(0);
+    }
   });
 });

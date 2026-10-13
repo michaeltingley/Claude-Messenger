@@ -1,6 +1,6 @@
 # Project Status & Session Handoff
 
-_Last updated: 2026-10-12. This file is the pick-up point for any new session,
+_Last updated: 2026-10-13. This file is the pick-up point for any new session,
 cloud or local. Read `CLAUDE.md` first, then this, then `docs/SHARED-HOST.md`
 and `docs/HOSTING-OPTIONS.md`._
 
@@ -24,11 +24,29 @@ and `docs/HOSTING-OPTIONS.md`._
   - The one-time sign-in surface is opened and closed only by
     `deploy/signin-surface.sh`, published to the tailnet only.
     - It is never enabled at boot.
-    - Bootstrap closes it once `doctor` passes.
+    - `deploy/configure.sh` closes it as soon as the token is saved, however
+      the run ends.
   - Systemd units are single-sourced in `deploy/systemd/`.
   - Beeper Server / `beeper-cli` is gone everywhere.
     [beeper/cli#21](https://github.com/beeper/cli/issues/21) wiped a legacy
     account's bridges across all devices.
+- **Session-runnable install (#PR)**:
+  - `deploy/bootstrap.sh` never prompts, so a Claude session can run it.
+    apt runs non-interactively. The tty rebind and the token paste are gone.
+  - It ends in `deploy/configure.sh`, which also runs on its own (re-runs,
+    `--reconnect`): `.env`, Beeper access, `doctor`, the MCP unit,
+    `tailscale serve`, and `claude mcp add` on the host.
+  - `claude-messenger connect` gets the Beeper token through Beeper
+    Desktop's own approval box (OAuth with PKCE) and writes it straight into
+    `.env`, so no person, terminal or transcript ever holds it.
+    - It waits for sign-in, and re-asks when Beeper closes an unanswered box.
+    - A token with an expiry or with unasked write access is revoked, not
+      saved.
+    - The port is `core/access.ts`; the Beeper side is
+      `providers/beeper/access.ts`.
+  - Tests run both scripts with no terminal against a fake host whose
+    systemd really starts the built MCP service (`test/fake-host.ts`,
+    `test/install.integration.test.ts`).
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -92,44 +110,67 @@ passed end to end: config → connection → auth → policy.
 
 ## NEXT ACTION (for the picking-up session)
 
-1. **Install Claude Messenger on the VPS.** A first VPS session ran
-   preflight on 2026-10-12. It was then stopped partway through the install,
-   when the owner moved the work into a Project. Its last status line read
-   "Installing X helpers and writing token-capture script".
-   - Check what it left before redoing anything:
-     - `~/claude-messenger`, `/opt/beeper`, and the user units from
-       `deploy/systemd/`;
-     - `deploy/signin-surface.sh status`; close the surface if it's up;
-     - any token-capture script it wrote. Read it, then delete it; the next
-       bullet replaces it.
-   - **First, make the install runnable from a session, in the repo.**
-     `deploy/bootstrap.sh` expects a person at its terminal. It prompts there
-     for Enter once Beeper has synced, and for the token.
-     - Run by a Claude session, it exits before step 1. It rebinds stdin to
-       `/dev/tty`, and the session's shell has no terminal. (Checked in a
-       cloud session on 2026-10-12.)
-     - The token is the hard part. It must reach `.env` without passing
-       through chat; the plan is a terminal on the Beeper screen, where the
-       owner types it.
-     - Land this in `deploy/` with a test. Improvised on the box, it would be
-       improvised again on every reinstall.
-   - Then install, following `deploy/bootstrap.sh`:
-     - Beeper Desktop under Xvfb on :99.
-     - The owner signs in through `deploy/signin-surface.sh`'s tailnet link,
-       then enters the token on that same screen.
-     - Then `doctor` green, the surface closed, and the MCP service up.
-     - Then `claude mcp add` for sessions on the box.
-2. **Land the repo fixes it reports.** Expect apt package names that differ on
-   26.04, because bootstrap's list was written for 24.04.
-3. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
+1. **Run the MCP service as a system unit, so its sandbox applies.** Land
+   this in the repo before the VPS install.
+   - Found on the VPS on 2026-10-13: Ubuntu's AppArmor restriction on
+     unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns=1`,
+     the default since 24.04) denies the user manager the namespace that
+     `ProtectSystem`, `ProtectHome`, `PrivateTmp` and `ReadWritePaths` need.
+   - systemd 259 then starts the unit **without** that sandbox, and says
+     nothing. A probe there found the home directory, `/run/user` and the
+     host's `/tmp` all writable from inside. `NoNewPrivileges` and
+     `MemoryMax` did apply.
+   - So `deploy/systemd/claude-messenger-mcp.service`'s promise that the rest
+     of `$HOME` stays read-only is false on those hosts.
+   - The fix: install it in `/etc/systemd/system` with `User=`, where the
+     system manager builds the namespace with real privileges. Don't loosen
+     AppArmor host-wide; that would be the owner's call.
+   - Prove it with a test that starts the real unit under real systemd (CI
+     has it) and checks from inside that `$HOME` is read-only, as
+     `display-isolation` does for Xvfb. A config grep passed this bug.
+2. **Install Claude Messenger on the VPS, once the owner says go.** After
+   step 1, a session on the box can run the whole install.
+   - **Wait for the owner's go.** On 2026-10-13 the project coordinator
+     paused all installs until the owner confirms, after a warning about a
+     stale branch's `beeper setup --server` (never use
+     `claude/beeper-mcp-integration-ya9zk4`).
+   - **Tailscale Serve is off for the tailnet** (2026-10-13). The owner turns
+     it on once, from the link the scripts print when they stop for it.
+     `agent-surface` in ai-tools needs it too (ai-tools #36).
+   - **What the stopped install left**, checked 2026-10-12/13 by a Remote
+     Control session on the box:
+     - `~/claude-messenger` at a01ba4a, built; no `.env` or `policy.json`.
+     - Beeper Desktop 4.3.176 extracted in `/opt/beeper`. The xvfb and
+       beeper-desktop user units are enabled and running, and Beeper is
+       signed out.
+     - The sign-in surface had been left up; it is closed now.
+     - `~/.local/share/cm-setup/write-env.sh`, an improvised token helper.
+       Read it, then delete it: `connect` replaces it.
+     - That session also installed xdotool, xclip, x11-apps and
+       imagemagick, which the repo doesn't need. A newer kernel waits for a
+       reboot.
+   - **Then, on the box:** `git -C ~/claude-messenger pull`, then run
+     `~/claude-messenger/deploy/bootstrap.sh` in the background; it skips
+     what is already done.
+     - It prints the screen link, then the steps for Beeper's approval box.
+       Relay both to the owner in one message.
+     - It waits up to 60 minutes for sign-in and approval.
+     - The owner signs in and approves, nothing else. Decline any Beeper
+       prompt that would add, move or re-connect a chat network.
+3. **Measure memory after Beeper's first sync,** and write the numbers here.
+   - Baseline 2026-10-13 00:04Z, Beeper signed out: system used 2238 MB,
+     available 1575 MB, swap in use 625 MB. Beeper's process tree: 7
+     processes, PSS 444 MB, RSS 743 MB.
+   - Beeper's main process moves itself out of beeper-desktop.service into
+     its own `app-Beeper-<pid>.scope`. Count that cgroup too.
+4. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
    asked for this reminder, expecting 4 GB to be too tight for Beeper
    alongside the agent's Chrome and Claude sessions.
    - VPS-2 is 8 GB at $10/mo; OVH upgrades in place.
-   - Record memory after Beeper's first sync, so the reminder carries real
-     numbers.
-4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
+   - Give the reminder with the numbers from step 3.
+5. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
-5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
+6. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
    Orchestrator-started sessions on the VPS may make it unnecessary.
 
 ### Hosting history (kept short)
@@ -148,6 +189,26 @@ passed end to end: config → connection → auth → policy.
   - Anything a later session needs must be committed.
   - Keys belong with the user or on the host, never only in a container.
 - **Never install Beeper Server.** See above.
+- **What the VPS taught the install (2026-10-12/13):**
+  - Every apt package name in `bootstrap.sh` resolves on Ubuntu 26.04
+    (checked by the first VPS session).
+  - needrestart's "Pending kernel upgrade" dialog stalls apt when there is
+    no terminal. `bootstrap.sh` now runs apt with
+    `DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a`.
+  - Beeper Desktop 4.3.176 answers `/v1/info` whether or not it is signed
+    in. The sign-in signal is `GET /v1/app/setup` without a token: 200 while
+    signed out, 401 once signed in. It flips right after the emailed code,
+    before the recovery key.
+  - Beeper closes an approval box nobody answered after two minutes.
+    Signing out deletes its approved connections; restarts keep them.
+  - Beeper's own login token also works as an API token, so its data
+    directory is as sensitive as `.env`.
+  - While Serve is off, `tailscale serve` prints an enable link and waits
+    forever. Both scripts now stop after 20 s and pass the link on.
+  - On a fresh install the MCP unit could not have started: its
+    `ReadWritePaths` names `state/`, which nothing creates under a read-only
+    policy, and systemd refuses to start a unit whose listed path is missing
+    (226/NAMESPACE). `configure.sh` creates it.
 - **Cloud sessions can't add GitHub deploy keys.** That API path is blocked
   through their proxy. Add deploy keys in the GitHub UI.
 - The user wants maximum autonomy ("do everything I can't"). The irreducibly
