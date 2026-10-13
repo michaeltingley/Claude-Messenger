@@ -72,6 +72,20 @@ and `docs/HOSTING-OPTIONS.md`._
     runners, under real systemd with Ubuntu's restriction on, across both
     24.04 (systemd 255) and 26.04 (259): the /proc escape closed on 259 and
     still open on 255, each asserted in turn.
+- **Read-only @Claude listener (#PR)**: phase 1's first step of the @Claude
+  assistant (see "@Claude assistant" below). `claude-messenger mentions`
+  prints each message the owner sends that mentions `@Claude`, live, one
+  JSON line each. Nothing answers yet.
+  - `Messenger.watchMessages` is the streaming extension point, landed with
+    its Beeper implementation, guarded wrapper and first consumer.
+  - Beeper's WebSocket is experimental, so the provider polls message
+    search (`providers/watch-by-polling.ts`), with a 10-minute window for
+    messages that reach Beeper late.
+  - The guard hands on only the owner's own messages and audits each one by
+    ID, never its text.
+  - Only the owner's own words trigger it: not a quote, a reply's copy of
+    another message, a reaction, or a pill naming a contact called Claude
+    (`assistant/mentions.ts`).
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -142,6 +156,39 @@ and `docs/HOSTING-OPTIONS.md`._
 
   Anything that checks the box, such as a scheduled health check, has to run
   on the box too. A cloud thread can't reach it.
+
+## @Claude assistant (thread "Talk to Claude inside Beeper")
+
+The owner wants to write `@Claude` in any of his chats and have Claude
+answer or act, on his Claude Max login, never the API. Plan he chose
+(2026-10-13): Claude gets its own Beeper account and answers in a private
+"Claude" chat in his inbox. Phase 1 "On call" answers and drafts, and
+nothing reaches other people. Phase 2 "Knows you" indexes his messages,
+Gmail and Calendar. Phase 3 "Acts for you" sends as him, each send
+approved in the Claude chat.
+
+1. **Done:** the read-only listener (#PR, above).
+2. **Next: Claude's own Beeper account**, so answers come from Claude, not
+   from the owner. Creating an account is the owner's call, and Beeper
+   emails a sign-up code. The plan is a Matrix bot on the VPS through
+   Beeper's `@beeper/chat-adapter-matrix`; his own token stays read-only.
+3. **Then the runtime, as a service on the VPS.** For each mention, read
+   the message again (it may have been edited or deleted since), answer
+   with `claude -p` on the owner's Max login, and post the answer in
+   Claude's chat.
+   - It needs a durable checkpoint: resume from where the watch had
+     reached and skip the message IDs it already answered, so a restart
+     neither misses a mention nor answers one twice. `mentions --since`
+     alone can't do that.
+   - As PID 1 in a `PrivatePIDs` unit it gets only signals it handles;
+     `mentions` handles SIGTERM and SIGINT (see #23's note on `serve`).
+4. **Follow-ups the listener's review found, all older than it:**
+   - `search_messages` and the CLI's `search` leave out low-priority chats,
+     Beeper's default, and their descriptions don't say so.
+   - The audit's `error` field keeps the provider's error text as it came,
+     with the token redacted.
+   - Read visibility skips the account allowlist for a chat or message
+     whose provider gives no account ID: it fails open there.
 
 ## NEXT ACTION (for the picking-up session)
 
