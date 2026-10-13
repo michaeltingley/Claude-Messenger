@@ -108,6 +108,17 @@ and `docs/HOSTING-OPTIONS.md`._
     within minutes and runs nothing there. His first try at Telegram set it
     up on-device on his laptop instead, so check where a re-added network
     lands.
+- **2026-10-13, the VPS — MCP service install complete.** `configure.sh`
+  (from `main` at 062ba74, #22 + #23) installed the `claude-messenger-mcp`
+  **system** unit (`User=tingley`), enabled and active, answering
+  `http://127.0.0.1:8484/healthz` and `/mcp`, published to the tailnet over
+  HTTPS (tailnet-only), and registered as the `claude-messenger` MCP server
+  for Claude Code on the box. `doctor` green, policy read-only, 11 accounts.
+  The sandbox was proven on the box (systemd 259): writes blocked read-only
+  except `audit/`; home, `~/.ssh`, `~/.claude`, `~/.config` and `/run/user`
+  hidden; the same-uid `/proc` escape **closed** (own PID namespace);
+  `systemctl restart` clean in 0.045s, `/healthz` back in ~1.5s. Nothing is
+  exposed beyond the tailnet.
 
 ## Daily digest (project thread "Daily message digest")
 
@@ -179,85 +190,55 @@ and `docs/HOSTING-OPTIONS.md`._
 
 ## NEXT ACTION (for the picking-up session)
 
-1. **Finish the VPS install.** Beeper is signed in and the token is in
-   place, so what is left is unattended.
-   - **Where it stands** (2026-10-13, done by a Remote Control session on
-     the box, with the owner's go):
-     - Beeper Desktop 4.3.176 in `/opt/beeper`, its xvfb and beeper-desktop
-       user units running, **signed in** since 02:11Z.
-     - `~/claude-messenger/.env` (mode 600) holds the MCP token and a
-       read-only Beeper token that never expires, saved by `connect` from a
-       build of #22 in the worktree `~/cm-pr22`. No `policy.json` and no MCP
-       unit yet; `doctor` passes.
-     - The sign-in surface is closed.
-     - Still there from the July attempt: `~/.local/share/cm-setup/write-env.sh`,
-       an improvised token helper (read it, then delete it: `connect`
-       replaces it), and xdotool, xclip, x11-apps and imagemagick, which the
-       repo doesn't need. A newer kernel waits for a reboot.
-   - **Then, on the box:** `git worktree remove ~/cm-pr22`, put
-     `~/claude-messenger` on `main` and pull, `npm ci && npm run build`, then
-     run `deploy/configure.sh` in the background. It keeps the token (no
-     approval needed), writes `policy.json`, runs `doctor`, installs the MCP
-     service as a system unit and publishes it, and registers it with Claude
-     Code on the box.
-     - The system unit needs sudo without a password prompt (nobody can
-       type one into a background run); check `sudo -n true` first.
-     - It stops first if `.env` keeps the policy, audit trail or rate window
-       outside `~/claude-messenger`, as a `.env` written for `~/cm-pr22`
-       might: `grep -E '^CLAUDE_MESSENGER_(POLICY|AUDIT_DIR|STATE_DIR)=' .env`
-       shows them.
-   - **Then check it on the box.** CI proves the sandbox on both systemd 255
-     and 259; the box has 259, so `PrivatePIDs` applies and the /proc escape
-     must be closed.
-     - `systemctl show -p User --value claude-messenger-mcp` is the owner,
-       and `systemctl is-enabled claude-messenger-mcp` says `enabled`.
-     - One authenticated MCP call (`list_accounts`) answers, and today's
-       file in `audit/` grows.
-     - From inside the service, writing to the home or the install fails
-       with "Read-only file system", and `~/.ssh` isn't there:
-       `sudo nsenter -t "$(systemctl show -p MainPID --value claude-messenger-mcp)" -m -S "$(id -u)" -G "$(id -g)" -- sh -c 'touch "$1/probe"; touch "$1/claude-messenger/probe"; ls "$1/.ssh"' sh "$HOME"`
-     - And the /proc escape is closed: from inside, another of the owner's
-       processes (e.g. a Beeper pid) is not visible, so its root is
-       unreachable. With `bpid` a Beeper Desktop pid,
-       `sudo nsenter -t "$(systemctl show -p MainPID --value claude-messenger-mcp)" -m -S "$(id -u)" -G "$(id -g)" -- sh -c 'ls /proc/'"$bpid"'/root'$HOME'/.ssh'` must fail (no such process / path).
-   - Whatever runs `configure.sh` or `bootstrap.sh` in the background must
-     allow more than their 60-minute wait for sign-in and approval. Claude
-     Code's Bash tool stops background commands after 30 minutes unless
-     given a longer timeout (at most 120): pass at least 65.
-   - Decline any Beeper prompt that would add, move or re-connect a chat
-     network, or sign out another device, unless the owner asked for it.
-2. **Memory after Beeper's first sync: measured 2026-10-13.** Signed in at
-   02:11Z, settled by 02:25Z (Beeper's PSS flat within 4% for 9 minutes,
-   CPU about 2%). Against the signed-out baseline at 00:04Z:
+1. **Finish the VPS install — DONE 2026-10-13** (see VERIFIED LIVE above).
+   A Remote Control session on the box removed the `~/cm-pr22` worktree and
+   the July `~/.local/share/cm-setup` helper, put `~/claude-messenger` on
+   `main` (062ba74), and ran `deploy/configure.sh`: it kept the existing
+   read-only token (no approval), wrote `policy.json`, installed and
+   published the system-unit MCP service, and registered it with Claude Code
+   on the box. Every check passed, the `/proc` escape included. A newer
+   kernel still waits for a reboot — put to the owner (item 6).
+2. **Memory, measured 2026-10-13.** Signed in at 02:11Z, settled by 02:25Z
+   (Beeper's PSS flat within 4% for 9 minutes, CPU about 2%). The last
+   column is with everything running at 08:58Z — MCP service up, 11 accounts.
 
-   | | Signed out (00:04Z) | Synced (02:25Z) |
-   |---|---|---|
-   | Beeper, whole tree (7 processes), PSS | 444 MB | 664 MB |
-   | Beeper, whole tree, RSS | 743 MB | 951 MB |
-   | Beeper's two cgroups (service + `app-Beeper-*.scope`) | 592 MB | 900 MB |
-   | System used / available (`free -m`) | 2238 / 1575 MB | 1901 / 1913 MB |
-   | Swap in use | 625 MB | 1351 MB |
+   | | Signed out (00:04Z) | Synced (02:25Z) | All running (08:58Z) |
+   |---|---|---|---|
+   | Beeper, whole tree, PSS | 444 MB | 664 MB | 670 MB |
+   | Beeper, whole tree, RSS | 743 MB | 951 MB | 955 MB |
+   | Beeper's two cgroups (service + `app-Beeper-*.scope`) | 592 MB | 900 MB | ~871 MB |
+   | System used / available (`free -m`) | 2238 / 1575 MB | 1901 / 1913 MB | 2209 / 1605 MB |
+   | Swap in use | 625 MB | 1351 MB | 1117 MB |
 
+   - **MCP service** (always on), idle after one call: PSS 39.6 MB, RSS
+     89.7 MB; cgroup current 35.6 / peak 36.1 MB — so ~36–40 MB.
+   - **Per-session stdio server**: each Claude Code session on the box starts
+     its own `serve` over stdio — PSS 34.2 MB, RSS 83.8 MB; it exits when
+     stdin closes, and running sessions pick it up only on restart.
+   - Xvfb adds about 16 MB PSS (cgroup current 10.6 / peak 24.1).
    - The first sync peaked right after sign-in at 829 MB PSS (1067 MB of
-     cgroup), then settled.
-   - "Used" fell only because that peak pushed about 730 MB of idle pages
-     (the agent's Chrome, Claude sessions) into swap.
-   - Xvfb adds about 16 MB PSS. The MCP service isn't running yet. Google
-     Voice and Telegram arrived later, as Cloud connections, which add no
-     bridge on the host.
+     cgroup), then settled; "used" fell then only because the peak pushed
+     ~730 MB of idle pages (the agent's Chrome, Claude sessions) into swap.
    - Beeper's main process moves itself out of beeper-desktop.service into
-     its own `app-Beeper-<pid>.scope`. Count that cgroup too.
-3. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
-   asked for this reminder, expecting 4 GB to be too tight for Beeper
-   alongside the agent's Chrome and Claude sessions.
-   - VPS-2 is 8 GB at $10/mo; OVH upgrades in place.
-   - Give the reminder with the numbers from step 2: Beeper settles at
-     about 0.66 GB, and the box keeps 1.9 GB available only by holding
-     1.35 GB in swap.
+     its own `app-Beeper-<pid>.scope`; count that cgroup too. Google Voice
+     and Telegram arrived later as Cloud connections, which add no bridge on
+     the host.
+3. **Upgrade to VPS-2 — reminder given 2026-10-13; owner's call.** Told the
+   owner the numbers: the MCP service is cheap (~36–40 MB), but the box runs
+   at ~1.6 GB available with ~1.1 GB in swap before the digest or
+   mention-listener land, so sizing up is worth it before adding more. VPS-2
+   is 8 GB at $10/mo; OVH upgrades in place. **Ask before any purchase; card
+   entry is the owner's.** Awaiting his go.
 4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
 5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
    Orchestrator-started sessions on the VPS may make it unnecessary.
+6. **Pending kernel-update reboot — put to the owner 2026-10-13 (his call).**
+   A reboot restarts the whole box (Beeper, the MCP service, the automation
+   agent), so it was offered as a decision, recommended to hold until he
+   picks the timing. If he says go: confirm Beeper + Xvfb auto-start on boot
+   (user-unit lingering) before rebooting, then verify `/healthz` and
+   `doctor` after.
 
 ### Hosting history (kept short)
 
