@@ -1,10 +1,18 @@
-# systemd user unit for the hosted Claude Messenger MCP endpoint.
-# Installed by deploy/configure.sh (placeholders substituted); enable with:
-#   systemctl --user enable --now claude-messenger-mcp
+# systemd SYSTEM unit for the hosted Claude Messenger MCP endpoint, run as
+# the user who owns the install. deploy/configure.sh installs it into
+# /etc/systemd/system, with the placeholders substituted.
+#
+# A system unit, though the rest of deploy/systemd/ are user units: the
+# sandbox below needs a mount namespace, and a user manager can only build
+# one inside an unprivileged user namespace. Ubuntu 24.04+ restricts those
+# through AppArmor by default, and systemd then starts a user unit WITHOUT
+# its sandbox, silently (seen on the VPS, 2026-10-13). The system manager
+# builds the namespace with real privileges.
 [Unit]
 Description=Claude Messenger MCP server (HTTP)
 
 [Service]
+User=__USER__
 WorkingDirectory=__INSTALL_DIR__
 ExecStart=__NODE__ dist/cli/main.js serve --http --port __PORT__ --host 127.0.0.1
 Restart=on-failure
@@ -20,4 +28,4 @@ ReadWritePaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state
 MemoryMax=512M
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

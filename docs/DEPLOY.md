@@ -79,7 +79,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/michaeltingley/Claude-Me
 ```
 
 It never prompts, so a Claude session on the host can run it just as well,
-in the background with a timeout above its 60-minute wait for you (Claude
+given a sudo there that needs no password (as cloud images' default user
+has), in the background with a timeout above its 60-minute wait for you (Claude
 Code's Bash tool stops background commands after 30 minutes by default, so
 give it at least 65). It prints two links and waits for you at each:
 
@@ -103,7 +104,9 @@ What the script does:
       exposed, and it closes the screen on any exit but `kill -9` (after
       one of those, run it again).
    4. Runs `doctor` end to end.
-   5. Installs and restarts a boot-persistent systemd user service.
+   5. Installs and restarts the MCP service: a boot-persistent system unit
+      that runs as you, sandboxed so that it can write only its audit trail
+      and rate window.
    6. Exposes the MCP endpoint on your tailnet over HTTPS via
       `tailscale serve`.
    7. If `claude` is installed, registers Claude Messenger with Claude Code
@@ -141,12 +144,12 @@ endpoint.
 ## Operations
 
 ```sh
-systemctl --user status claude-messenger-mcp     # service state
-journalctl --user -u claude-messenger-mcp -f     # logs
+systemctl status claude-messenger-mcp            # service state
+sudo journalctl -u claude-messenger-mcp -f       # logs
 systemctl --user status beeper-desktop xvfb      # Beeper Desktop health
 curl -fsS localhost:23373/v1/info                # Client API is answering
 cd ~/claude-messenger && git pull && npm ci && npm run build \
-  && systemctl --user restart claude-messenger-mcp   # upgrade
+  && sudo systemctl restart claude-messenger-mcp     # upgrade
 ```
 
 Re-running `deploy/bootstrap.sh` is the full upgrade: it also refreshes the

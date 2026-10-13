@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   copyFileSync,
@@ -12,7 +12,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -23,6 +22,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { FakeHost, type DetachedRun, type ScriptResult } from './fake-host.js';
 import { MockBeeperServer, wireChat } from './mock-beeper.js';
+import { unusedPort } from './ports.js';
 
 const REPO = join(import.meta.dirname, '..');
 
@@ -61,23 +61,6 @@ beforeAll(() => {
 afterAll(() => {
   rmSync(build, { recursive: true, force: true });
 });
-
-/**
- * A port nothing listens on, below Linux's ephemeral range (32768 and up), so
- * that no other test's listen(0) or outgoing connection takes it before the
- * MCP service binds it.
- */
-const unusedPort = async (): Promise<number> => {
-  for (;;) {
-    const port = 20_000 + Math.floor(Math.random() * 12_000);
-    const free = await new Promise<boolean>((resolve) => {
-      const server = createServer()
-        .once('error', () => resolve(false))
-        .listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
-    });
-    if (free) return port;
-  }
-};
 
 /** Each of `markers` appears in `text`, in this order. */
 const expectInOrder = (text: string, ...markers: string[]) => {
@@ -243,11 +226,7 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       );
       expect(host.surfaceClosed()).toBe(true);
       // Closed before anything else runs, not only on the way out.
-      expectInOrder(
-        host.calls().join('\n'),
-        'tailscale serve --https 8443 off',
-        'systemctl --user restart claude-messenger-mcp.service',
-      );
+      expectInOrder(host.calls().join('\n'), 'tailscale serve --https 8443 off', 'systemctl restart claude-messenger-mcp.service');
 
       const token = envValue('BEEPER_ACCESS_TOKEN');
       expect(token).toBeDefined();
@@ -264,6 +243,8 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       const before = audited().length;
       expect(await listAccountsOverHttp()).toContain('whatsapp-1');
       expect(audited().length).toBeGreaterThan(before);
+      // Under the system manager, where its sandbox holds (deploy/systemd/), from boot on.
+      expect(host.has('system/enabled/claude-messenger-mcp.service')).toBe(true);
       expect(host.read('serve-443').trim()).toBe(String(mcpPort));
       expect(run.stdout).toContain('URL:    https://box.example-tailnet.ts.net/mcp');
 
@@ -290,8 +271,11 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expect(envValue('BEEPER_ACCESS_TOKEN')).toBeUndefined();
       // Holding the MCP token, it was owner-only from the moment it existed.
       expect(statSync(join(install, '.env')).mode & 0o777).toBe(0o600);
-      expect(existsSync(join(host.unitDir, 'claude-messenger-mcp.service'))).toBe(false);
+      for (const dir of [host.unitDir, host.systemUnitDir]) {
+        expect(existsSync(join(dir, 'claude-messenger-mcp.service'))).toBe(false);
+      }
       expect(readdirSync(join(host.state, 'pids'))).toEqual([]);
+      expect(readdirSync(join(host.state, 'system', 'pids'))).toEqual([]);
     }, 90_000);
 
     it('closes the screen and gives up at once when only the script is stopped mid-wait', async () => {
@@ -355,7 +339,7 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expectInOrder(
         host.calls().slice(earlier).join('\n'),
         'tailscale serve --https 8443 off',
-        'systemctl --user restart claude-messenger-mcp.service',
+        'systemctl restart claude-messenger-mcp.service',
       );
     }, 120_000);
 
@@ -398,15 +382,17 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expect(await listAccountsOverHttp()).toContain('whatsapp-1');
     }, 90_000);
 
-    it('still serves this host when sudo wants a password nobody can type, saying so', async () => {
+    it('stops before anyone is asked to approve when sudo wants a password nobody can type', async () => {
+      managedBeeper();
       host.set('sudo-needs-password');
 
       const run = await configure();
 
-      expect(run.code, why(run)).toBe(0);
-      expect(run.stdout).toContain('sudo: a password is required');
-      expect(run.stdout).toContain(`URL:    http://127.0.0.1:${mcpPort}/mcp`);
-      expect(await listAccountsOverHttp()).toContain('whatsapp-1');
+      expect(run.code).toBe(1);
+      // sudo's own reason, then what to do about it.
+      expectInOrder(run.stderr, 'a terminal is required to read the password', 'let this user use sudo without one');
+      expect(host.calls().filter((c) => c.includes('8443'))).toEqual([]);
+      expect(mock.approvalRequests).toEqual([]);
     }, 90_000);
 
     it('publishes to the tailnet when sudo asks for a password first', async () => {
@@ -482,6 +468,54 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expect(existsSync(join(install, '.env'))).toBe(false);
       expect(statSync(host.home).mode & 0o777).toBe(homeMode);
       expect(mock.requests).toEqual([]);
+    }, 90_000);
+
+    /** A user unit as earlier installs left the MCP service: installed, enabled and running. */
+    const earlierUserUnit = (service: string) => {
+      mkdirSync(host.unitDir, { recursive: true });
+      writeFileSync(join(host.unitDir, 'claude-messenger-mcp.service'), service);
+      const start = spawnSync('systemctl', ['--user', 'enable', '--now', 'claude-messenger-mcp.service'], {
+        env: host.env(),
+        encoding: 'utf8',
+      });
+      expect(start.status, start.stderr).toBe(0);
+    };
+
+    it('moves an MCP service an earlier install ran as a user unit to the system manager', async () => {
+      // A stand-in for the earlier service, holding the port and answering
+      // its health check, but not MCP.
+      const standIn = join(host.root, 'earlier-service.mjs');
+      const listening = join(host.root, 'earlier-service-listening');
+      writeFileSync(
+        standIn,
+        `import { createServer } from 'node:http';
+import { writeFileSync } from 'node:fs';
+createServer((_, res) => res.end('ok')).listen(${mcpPort}, '127.0.0.1', () => writeFileSync(${JSON.stringify(listening)}, ''));
+`,
+      );
+      earlierUserUnit(`[Service]\nExecStart=${process.execPath} ${standIn}\n`);
+      await until(() => existsSync(listening), 'the earlier service to listen');
+
+      const run = await configure();
+
+      expect(run.code, why(run)).toBe(0);
+      expect(existsSync(join(host.unitDir, 'claude-messenger-mcp.service'))).toBe(false);
+      expect(host.has('enabled/claude-messenger-mcp.service')).toBe(false);
+      expect(host.has('system/enabled/claude-messenger-mcp.service')).toBe(true);
+      // Only the new service speaks MCP, and it could bind only a freed port.
+      expect(await listAccountsOverHttp()).toContain('whatsapp-1');
+    }, 90_000);
+
+    it('starts no second MCP service while one an earlier install ran as a user unit will not stop', async () => {
+      earlierUserUnit('[Service]\n');
+      host.set('fail-stop');
+
+      const run = await configure();
+
+      expect(run.code).toBe(1);
+      expect(run.stderr).toContain('ran as a user unit did not stop');
+      expect(existsSync(join(host.systemUnitDir, 'claude-messenger-mcp.service'))).toBe(false);
+      expect(host.has('system/active/claude-messenger-mcp.service')).toBe(false);
     }, 90_000);
 
     it('asks for nothing on a re-run, and gets a new token only when told to reconnect', async () => {

@@ -52,6 +52,12 @@ and `docs/HOSTING-OPTIONS.md`._
   - Tests run both scripts with no terminal against a fake host whose
     systemd really starts the built MCP service (`test/fake-host.ts`,
     `test/install.integration.test.ts`).
+- **MCP service sandbox (#23)**: the MCP service is a system unit run as the
+  install's owner (`User=`), not a user unit. On Ubuntu 24.04+ a user
+  unit's filesystem sandbox is silently dropped (see Notes), so this is what
+  keeps a compromised server out of the rest of `$HOME`.
+  `test/mcp-sandbox.integration.test.ts` proves it in CI under real systemd,
+  with Ubuntu's restriction on.
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -125,26 +131,8 @@ and `docs/HOSTING-OPTIONS.md`._
 
 ## NEXT ACTION (for the picking-up session)
 
-1. **Run the MCP service as a system unit, so its sandbox applies.** Land
-   this in the repo before the MCP service starts on the VPS.
-   - Found on the VPS on 2026-10-13: Ubuntu's AppArmor restriction on
-     unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns=1`,
-     the default since 24.04) denies the user manager the namespace that
-     `ProtectSystem`, `ProtectHome`, `PrivateTmp` and `ReadWritePaths` need.
-   - systemd 259 then starts the unit **without** that sandbox, and says
-     nothing. A probe there found the home directory, `/run/user` and the
-     host's `/tmp` all writable from inside. `NoNewPrivileges` and
-     `MemoryMax` did apply.
-   - So `deploy/systemd/claude-messenger-mcp.service`'s promise that the rest
-     of `$HOME` stays read-only is false on those hosts.
-   - The fix: install it in `/etc/systemd/system` with `User=`, where the
-     system manager builds the namespace with real privileges. Don't loosen
-     AppArmor host-wide; that would be the owner's call.
-   - Prove it with a test that starts the real unit under real systemd (CI
-     has it) and checks from inside that `$HOME` is read-only, as
-     `display-isolation` does for Xvfb. A config grep passed this bug.
-2. **Finish the VPS install once step 1 has merged.** Beeper is signed in
-   and the token is in place, so what is left is unattended.
+1. **Finish the VPS install.** Beeper is signed in and the token is in
+   place, so what is left is unattended.
    - **Where it stands** (2026-10-13, done by a Remote Control session on
      the box, with the owner's go):
      - Beeper Desktop 4.3.176 in `/opt/beeper`, its xvfb and beeper-desktop
@@ -161,15 +149,18 @@ and `docs/HOSTING-OPTIONS.md`._
    - **Then, on the box:** `git worktree remove ~/cm-pr22`, put
      `~/claude-messenger` on `main` and pull, `npm ci && npm run build`, then
      run `deploy/configure.sh` in the background. It keeps the token (no
-     approval needed), writes `policy.json`, runs `doctor`, starts and
-     publishes the MCP service, and registers it with Claude Code on the box.
+     approval needed), writes `policy.json`, runs `doctor`, installs the MCP
+     service as a system unit and publishes it, and registers it with Claude
+     Code on the box. The system unit needs sudo without a password prompt
+     (nobody can type one into a background run); check `sudo -n true`
+     first.
    - Whatever runs `configure.sh` or `bootstrap.sh` in the background must
      allow more than their 60-minute wait for sign-in and approval. Claude
      Code's Bash tool stops background commands after 30 minutes unless
      given a longer timeout (at most 120): pass at least 65.
    - Decline any Beeper prompt that would add, move or re-connect a chat
      network, or sign out another device, unless the owner asked for it.
-3. **Memory after Beeper's first sync: measured 2026-10-13.** Signed in at
+2. **Memory after Beeper's first sync: measured 2026-10-13.** Signed in at
    02:11Z, settled by 02:25Z (Beeper's PSS flat within 4% for 9 minutes,
    CPU about 2%). Against the signed-out baseline at 00:04Z:
 
@@ -190,16 +181,16 @@ and `docs/HOSTING-OPTIONS.md`._
      bridge on the host.
    - Beeper's main process moves itself out of beeper-desktop.service into
      its own `app-Beeper-<pid>.scope`. Count that cgroup too.
-4. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
+3. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
    asked for this reminder, expecting 4 GB to be too tight for Beeper
    alongside the agent's Chrome and Claude sessions.
    - VPS-2 is 8 GB at $10/mo; OVH upgrades in place.
-   - Give the reminder with the numbers from step 3: Beeper settles at
+   - Give the reminder with the numbers from step 2: Beeper settles at
      about 0.66 GB, and the box keeps 1.9 GB available only by holding
      1.35 GB in swap.
-5. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
+4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
-6. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
+5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
    Orchestrator-started sessions on the VPS may make it unnecessary.
 
 ### Hosting history (kept short)
@@ -247,6 +238,16 @@ and `docs/HOSTING-OPTIONS.md`._
     `ReadWritePaths` names `state/`, which nothing creates under a read-only
     policy, and systemd refuses to start a unit whose listed path is missing
     (226/NAMESPACE). `configure.sh` creates it.
+  - Ubuntu's AppArmor restriction on unprivileged user namespaces
+    (`kernel.apparmor_restrict_unprivileged_userns=1`, the default since
+    24.04) denies a user manager the namespace that `ProtectSystem`,
+    `ProtectHome`, `PrivateTmp` and `ReadWritePaths` need. systemd 259 then
+    starts a user unit without that sandbox and says nothing: a probe from
+    inside one found the home directory, `/run/user` and the host's `/tmp`
+    writable. `NoNewPrivileges` and `MemoryMax` did apply. The unit file
+    reads the same either way, so only a probe from inside can tell; a
+    config grep passed this bug. Hence the system unit (#23). Loosening
+    AppArmor host-wide would be the owner's call.
 - **Cloud sessions can't add GitHub deploy keys.** That API path is blocked
   through their proxy. Add deploy keys in the GitHub UI.
 - The user wants maximum autonomy ("do everything I can't"). The irreducibly

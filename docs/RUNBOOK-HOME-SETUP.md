@@ -96,9 +96,8 @@ step 3 (Tailscale) and step 6 (`deploy/configure.sh`):
      After the code, Beeper first offers to verify with another device; the
      user picks "Try another way", then "Enter Recovery Key".
    - Closes the screen and verifies that nothing is left exposed, then runs
-     `doctor`, starts the systemd user service, publishes it with
-     `tailscale serve`, and registers it with Claude Code on the host over
-     stdio.
+     `doctor`, starts the MCP service, publishes it with `tailscale serve`,
+     and registers it with Claude Code on the host over stdio.
 
    If it stops, it says why and what to do; every step is safe to re-run.
    If Tailscale Serve is off for the tailnet, it prints the link that turns

@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 198 tests / 18 files.
+- `npm test` must be green before any push. Currently 205 tests / 19 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -88,6 +88,10 @@ built for hypothetical futures.
   x11vnc exactly as `deploy/systemd/` runs them and speaks X11 and RFB to
   them. CI installs those binaries, and a missing one fails CI rather than
   skipping.
+  `test/mcp-sandbox.integration.test.ts` runs the real `configure.sh` with
+  real sudo and systemd, then tries writes from inside the running MCP
+  service as its user. It runs only in CI, with Ubuntu 24.04+'s user
+  namespace restriction switched on as on a real host.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene
