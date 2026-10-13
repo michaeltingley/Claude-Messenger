@@ -24,12 +24,16 @@ NoNewPrivileges=true
 # is a full API token) or the sign-in screen's X cookie and VNC password. It
 # can change only its audit trail and rate window: every other file it sees is
 # read-only, apart from a /tmp of its own. The home directories, /run/user,
-# and the host's shared memory and message queues are swapped for empty,
-# read-only stand-ins. Not ProtectHome=tmpfs: systemd 255 and 256 (Ubuntu
-# 24.04 has 255) make its stand-ins writable. configure.sh refuses a .env that
-# keeps the policy, audit trail or rate window anywhere else.
+# and the host's lock directory, shared memory and message queues are swapped
+# for empty, read-only stand-ins. /run/lock, /dev/shm and /dev/mqueue are
+# world-writable scratch that ProtectSystem=strict does not reliably cover
+# (systemd 256+ keeps /run/lock a writable tmpfs under it); standing them in
+# read-only keeps the "writes only audit/ and state/" invariant exact. Not
+# ProtectHome=tmpfs: systemd 255 and 256 (Ubuntu 24.04 has 255) make its
+# stand-ins writable. configure.sh refuses a .env that keeps the policy, audit
+# trail or rate window anywhere else.
 ProtectSystem=strict
-TemporaryFileSystem=/home:ro /root:ro /run/user:ro /dev/shm:ro /dev/mqueue:ro
+TemporaryFileSystem=/home:ro /root:ro /run/user:ro /run/lock:ro /dev/shm:ro /dev/mqueue:ro
 BindReadOnlyPaths=__INSTALL_DIR__ __NODE__
 BindPaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state
 PrivateTmp=true
