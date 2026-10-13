@@ -4,7 +4,9 @@ import { Command, InvalidArgumentError } from 'commander';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
 import { createAccessRequester, createApp } from '../app.js';
+import { watchMentions } from '../assistant/mentions.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
+import type { Message } from '../core/types.js';
 import { createMcpServer } from '../mcp/server.js';
 import { startHttpMcpServer } from '../mcp/http.js';
 import { DEFAULT_POLICY } from '../policy/policy.js';
@@ -76,6 +78,24 @@ function describeProgress(progress: AccessProgress): string {
         ? 'The approval box is open. Waiting for your answer...'
         : 'The unanswered approval box closed. A new one is open...';
   }
+}
+
+/**
+ * An ISO 8601 date and time with its zone, so it names the same moment on
+ * every machine. Date.parse alone reads far more ("5" is May 2001) and
+ * rolls an impossible date over (February 30 is March 2).
+ */
+const ISO_TIME = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function parseTime(value: string): string {
+  const parts = ISO_TIME.exec(value);
+  const ms = Date.parse(value);
+  const dayExists = (year: number, month: number, day: number) =>
+    new Date(Date.UTC(year, month - 1, day)).getUTCDate() === day;
+  if (parts === null || Number.isNaN(ms) || !dayExists(Number(parts[1]), Number(parts[2]), Number(parts[3]))) {
+    throw new InvalidArgumentError('must be a date and time with its zone, like 2026-10-13T09:00:00Z or 2026-10-13T05:00:00-04:00');
+  }
+  return new Date(ms).toISOString();
 }
 
 function parseLimit(value: string): number {
@@ -177,6 +197,29 @@ program
     const { messenger } = await app();
     const result = await messenger.sendMessage({ chatId, text });
     console.log(`✓ Sent (pending ID ${result.pendingMessageId}) — recorded in audit log`);
+  });
+
+/** What `mentions` prints for each one: where it is, when, and what it says. */
+function mentionLine({ id, chatId, accountId, timestamp, text, replyToMessageId }: Message): string {
+  return JSON.stringify({ id, chatId, accountId, timestamp, text, replyToMessageId });
+}
+
+program
+  .command('mentions')
+  .description('Follow the messages you send that mention @Claude, one JSON line each, until stopped')
+  .option('--since <time>', 'also catch up on mentions after this time, like 2026-10-13T09:00:00Z (default: now)', parseTime)
+  .action(async (opts: { since?: string }) => {
+    const { messenger } = await app();
+    const since = opts.since ?? new Date().toISOString();
+    const stop = new AbortController();
+    // Once each: a second Ctrl-C finds no handler and ends the process at once.
+    process.once('SIGINT', () => stop.abort());
+    process.once('SIGTERM', () => stop.abort());
+    console.error(`Watching for @Claude in messages you send after ${since}. Ctrl-C stops.`);
+    for await (const message of watchMentions(messenger, since, stop.signal)) {
+      console.log(mentionLine(message));
+    }
+    console.error('Stopped.');
   });
 
 program

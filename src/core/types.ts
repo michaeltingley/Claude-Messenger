@@ -59,6 +59,24 @@ export interface Reaction {
   participantId: string;
 }
 
+/**
+ * What a message is. A reaction, a notice or a sticker is not something a
+ * person wrote, which matters to anything that acts on what was said.
+ * 'other' is a kind this app does not know yet.
+ */
+export type MessageKind =
+  | 'text'
+  | 'notice'
+  | 'image'
+  | 'video'
+  | 'voice'
+  | 'audio'
+  | 'file'
+  | 'sticker'
+  | 'location'
+  | 'reaction'
+  | 'other';
+
 export interface Message {
   id: string;
   chatId: string;
@@ -68,11 +86,27 @@ export interface Message {
   isFromMe: boolean;
   /** ISO 8601 timestamp. */
   timestamp: string;
+  /** Left out when the provider doesn't say. */
+  kind?: MessageKind;
+  /** The text as the provider gives it, which may carry markup such as HTML. */
   text?: string;
+  /**
+   * What the sender wrote in this message themselves, as plain text, read
+   * cautiously: anything that may be someone else's words is left out, such
+   * as the copy of another message a reply carries, a quoted passage, or the
+   * name in a link to a person, which that person chose. So it can miss some
+   * of the sender's own words too: it is for deciding whether they addressed
+   * someone, not a stand-in for `text`. What the text can't tell apart, such
+   * as a message they forward, reads as theirs. Left out when the message
+   * has no text.
+   */
+  ownText?: string;
   attachments: AttachmentSummary[];
   reactions: Reaction[];
   isUnread?: boolean;
   isDeleted?: boolean;
+  /** Kept out of the chat's normal display by the provider. */
+  isHidden?: boolean;
   /** ID of the message this one replies to, if any. */
   replyToMessageId?: string;
 }
@@ -126,6 +160,16 @@ export interface MessageSearchQuery {
   includeMuted?: boolean;
   limit?: number;
   cursor?: string;
+}
+
+/**
+ * Which messages a watch delivers. Only the user's own messages for now:
+ * other senders are added with the first watch that needs them.
+ */
+export interface MessageWatchQuery {
+  sender: 'me';
+  /** ISO 8601: deliver only messages timestamped strictly after this. */
+  since: string;
 }
 
 export interface SendMessageInput {

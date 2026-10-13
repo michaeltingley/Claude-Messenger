@@ -7,12 +7,14 @@ import type {
   Message,
   MessageListQuery,
   MessageSearchQuery,
+  MessageWatchQuery,
   Page,
   SendMessageInput,
   SendMessageResult,
   ServerInfo,
 } from '../../core/types.js';
 import { AuthError, ConnectionError, NotFoundError, ProviderError } from '../../core/errors.js';
+import { watchByPolling } from '../watch-by-polling.js';
 import { toAccount, toChat, toMessage, toPage } from './mapper.js';
 
 export interface BeeperMessengerOptions {
@@ -24,17 +26,24 @@ export interface BeeperMessengerOptions {
   baseUrl?: string;
   /** Transport-level retries for connection failures/5xx (default 2). */
   maxRetries?: number;
+  /** How often a message watch asks Beeper for new messages (default 5 s). */
+  pollIntervalMs?: number;
 }
+
+/** The largest page Beeper's message search serves, per its published API reference. */
+const SEARCH_PAGE_LIMIT = 20;
 
 /** Messenger adapter for the Beeper Client API (Desktop app or headless Server). */
 export class BeeperMessenger implements Messenger {
   private readonly client: BeeperDesktop;
   private readonly baseUrl: string;
   private readonly accessToken: string;
+  private readonly pollIntervalMs: number;
 
   constructor(options: BeeperMessengerOptions) {
     this.baseUrl = options.baseUrl ?? 'http://localhost:23373';
     this.accessToken = options.accessToken;
+    this.pollIntervalMs = options.pollIntervalMs ?? 5_000;
     this.client = new BeeperDesktop({
       accessToken: options.accessToken,
       baseURL: this.baseUrl,
@@ -104,11 +113,48 @@ export class BeeperMessenger implements Messenger {
           dateBefore: query.dateBefore,
           mediaTypes: query.mediaTypes,
           includeMuted: query.includeMuted,
-          limit: query.limit ?? 20,
+          // A larger limit gets fewer, with a cursor to the rest, as paging allows.
+          limit: Math.min(query.limit ?? SEARCH_PAGE_LIMIT, SEARCH_PAGE_LIMIT),
           cursor: query.cursor,
         }),
         toMessage,
       ),
+    );
+  }
+
+  /**
+   * Beeper's push events (`/v1/ws`) are experimental, so a watch polls message
+   * search instead: see watchByPolling for what it delivers, and how late.
+   */
+  watchMessages(query: MessageWatchQuery, signal: AbortSignal): AsyncIterable<Message> {
+    return watchByPolling(
+      {
+        since: query.since,
+        intervalMs: this.pollIntervalMs,
+        fetchPage: (request) =>
+          this.wrap(async () =>
+            toPage(
+              await this.client.messages.search(
+                {
+                  sender: query.sender,
+                  dateAfter: request.dateAfter,
+                  // Search leaves out low-priority chats by default. A watch
+                  // reads every chat the policy shows, so it asks for them too.
+                  excludeLowPriority: false,
+                  includeMuted: true,
+                  limit: SEARCH_PAGE_LIMIT,
+                  cursor: request.cursor,
+                },
+                // No retries: the SDK waits between them as long as Beeper's
+                // Retry-After says, and an abort can't cut that wait short. A
+                // failure ends the watch instead, as its contract says.
+                { signal: request.signal, maxRetries: 0 },
+              ),
+              toMessage,
+            ),
+          ),
+      },
+      signal,
     );
   }
 

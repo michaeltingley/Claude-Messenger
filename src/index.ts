@@ -13,6 +13,7 @@ export type { RateWindow } from './policy/rate.js';
 export { BeeperMessenger } from './providers/beeper/index.js';
 export { BeeperAccessRequester } from './providers/beeper/access.js';
 export type { BeeperAccessRequesterOptions } from './providers/beeper/access.js';
+export { mentionsClaude, watchMentions } from './assistant/mentions.js';
 export { createMcpServer } from './mcp/server.js';
 export { startHttpMcpServer } from './mcp/http.js';
 export type { HttpServerOptions, RunningHttpServer } from './mcp/http.js';

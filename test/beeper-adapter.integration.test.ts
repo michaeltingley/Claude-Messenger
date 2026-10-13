@@ -103,6 +103,18 @@ describe('BeeperMessenger (HTTP integration)', () => {
     expect(page.items[0]!.isFromMe).toBe(true);
   });
 
+  it('searchMessages asks Beeper for no more than the 20 a page holds, and hands back a cursor to the rest', async () => {
+    mock.messages = Array.from({ length: 30 }, (_, i) =>
+      wireMessage({ id: `m${i}`, text: 'needle in the haystack', timestamp: new Date(Date.UTC(2026, 9, 1, 0, i)).toISOString() }),
+    );
+    const page = await messenger.searchMessages({ query: 'needle', limit: 50 });
+    expect(page.items).toHaveLength(20);
+    expect(page.hasMore).toBe(true);
+    const rest = await messenger.searchMessages({ query: 'needle', limit: 50, cursor: page.nextCursor });
+    expect(rest.items).toHaveLength(10);
+    expect(new Set([...page.items, ...rest.items].map((m) => m.id)).size).toBe(30);
+  });
+
   it('sendMessage POSTs text and returns the pending ID', async () => {
     const result = await messenger.sendMessage({
       chatId: '!chat1:beeper.com',

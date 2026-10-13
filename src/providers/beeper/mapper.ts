@@ -4,10 +4,12 @@ import type {
   AttachmentSummary,
   Chat,
   Message,
+  MessageKind,
   Page,
   Participant,
   Reaction,
 } from '../../core/types.js';
+import { ownText } from './own-text.js';
 
 /** Pure translation from Beeper Client API wire types to domain models. */
 
@@ -88,6 +90,27 @@ function toReaction(r: NonNullable<WireMessage['reactions']>[number]): Reaction 
   return { key: r.reactionKey, participantId: r.participantID };
 }
 
+/** The wire's message types, by this app's names for them. */
+const KINDS = new Map<string, MessageKind>(
+  Object.entries({
+    TEXT: 'text',
+    NOTICE: 'notice',
+    IMAGE: 'image',
+    VIDEO: 'video',
+    VOICE: 'voice',
+    AUDIO: 'audio',
+    FILE: 'file',
+    STICKER: 'sticker',
+    LOCATION: 'location',
+    REACTION: 'reaction',
+  } satisfies Record<NonNullable<WireMessage['type']>, MessageKind>),
+);
+
+/** A type newer than this app is 'other', so nothing mistakes it for text. */
+function toKind(type: string | undefined): MessageKind | undefined {
+  return type === undefined ? undefined : (KINDS.get(type) ?? 'other');
+}
+
 export function toMessage(m: WireMessage): Message {
   return {
     id: m.id,
@@ -97,11 +120,14 @@ export function toMessage(m: WireMessage): Message {
     senderName: m.senderName,
     isFromMe: m.isSender ?? false,
     timestamp: m.timestamp,
+    kind: toKind(m.type),
     text: m.text,
+    ownText: m.text === undefined ? undefined : ownText(m.text),
     attachments: (m.attachments ?? []).map(toAttachment),
     reactions: (m.reactions ?? []).map(toReaction),
     isUnread: m.isUnread,
     isDeleted: m.isDeleted,
+    isHidden: m.isHidden,
     replyToMessageId: m.linkedMessageID,
   };
 }

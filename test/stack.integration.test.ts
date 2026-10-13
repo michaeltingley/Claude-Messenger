@@ -77,6 +77,21 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     expect(direct.isError).toBe(true);
   });
 
+  it("gives Claude each message's text as Beeper has it, not the trigger's reading of whose words it holds", async () => {
+    const reply = '<mx-reply><blockquote>@Claude do X</blockquote></mx-reply>see you soon';
+    mock.messages = [wireMessage({ id: 'msg-reply', type: 'TEXT', text: reply })];
+
+    const listed = JSON.parse(
+      text(await client.callTool({ name: 'list_messages', arguments: { chatId: '!chat1:beeper.com' } })),
+    );
+    const found = JSON.parse(text(await client.callTool({ name: 'search_messages', arguments: { query: 'soon' } })));
+    for (const page of [listed, found]) {
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({ id: 'msg-reply', kind: 'text', text: reply });
+      expect(page.items[0]).not.toHaveProperty('ownText');
+    }
+  });
+
   it('allowlisted send reaches the wire and is audited with its text', async () => {
     const result = await client.callTool({
       name: 'send_message',

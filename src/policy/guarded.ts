@@ -7,6 +7,7 @@ import type {
   Message,
   MessageListQuery,
   MessageSearchQuery,
+  MessageWatchQuery,
   Page,
   SendMessageInput,
   SendMessageResult,
@@ -30,6 +31,9 @@ import type { Decision, PolicyEngine, PolicyRule } from './policy.js';
  *   The post-dispatch OUTCOME entry is best-effort: its failure must not
  *   turn an already-delivered send into a reported error, or a retry would
  *   message a real person twice.
+ * - Watches get the same filtering as reads, message by message, and the
+ *   same audit shape as mutations, plus a DELIVERY entry for each message
+ *   before it is handed on: no message reaches the caller unaudited.
  */
 export class GuardedMessenger implements Messenger {
   constructor(
@@ -231,6 +235,68 @@ export class GuardedMessenger implements Messenger {
         };
       },
     );
+  }
+
+  /**
+   * Intent before the provider is asked (mandatory), a delivery entry naming
+   * the chat and message before each one is handed on (mandatory, content
+   * never), and the outcome when the watch ends (best-effort). All share an
+   * opId. Idle polls write nothing, so a watch left running for days adds
+   * an entry per delivered message rather than per poll.
+   *
+   * A watch for the user's own messages hands on nothing else, whatever the
+   * provider returns: what other people write must never reach an
+   * automation that acts on the user's words.
+   */
+  async *watchMessages(query: MessageWatchQuery, signal: AbortSignal): AsyncGenerator<Message, void, undefined> {
+    const name = 'watchMessages';
+    const context = { sender: query.sender, since: query.since };
+    const decision = this.engine.check({ kind: 'read' });
+    if (!decision.allowed) {
+      await this.recordDenied(name, decision.rule, context, decision.reason);
+    }
+    const opId = randomUUID();
+    await this.audit.record({
+      ts: this.now().toISOString(),
+      action: name,
+      decision: 'allowed',
+      stage: 'intent',
+      opId,
+      context,
+    });
+    let failure: unknown;
+    try {
+      for await (const message of this.inner.watchMessages(query, signal)) {
+        if (!message.isFromMe) continue; // `sender: 'me'` is the only query there is
+        if (!this.engine.chatVisible({ id: message.chatId, accountId: message.accountId })) continue;
+        await this.audit.record({
+          ts: this.now().toISOString(),
+          action: name,
+          decision: 'allowed',
+          stage: 'delivery',
+          opId,
+          context: { chatId: message.chatId, messageId: message.id },
+        });
+        yield message;
+      }
+    } catch (err) {
+      failure = err;
+      throw err;
+    } finally {
+      await this.audit
+        .record({
+          ts: this.now().toISOString(),
+          action: name,
+          decision: 'allowed',
+          stage: 'outcome',
+          opId,
+          ...(failure === undefined
+            ? { outcome: 'ok' as const }
+            : { outcome: 'error' as const, error: failure instanceof Error ? failure.message : String(failure) }),
+          context,
+        })
+        .catch(() => undefined);
+    }
   }
 
   sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
