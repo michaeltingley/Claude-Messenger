@@ -57,11 +57,20 @@ describe('BeeperMessenger (HTTP integration)', () => {
       unreadCount: 2,
       participants: [{ id: 'alice', fullName: 'Alice' }],
     });
-    expect(page.nextCursor).toBe('cursor-oldest');
+    expect(page.hasMore).toBe(false);
 
     const req = mock.requests.find((r) => r.path === '/v1/chats/search')!;
     expect(req.query.get('query')).toBe('ali');
     expect(req.query.get('limit')).toBe('5');
+  });
+
+  it('searchChats pages: the cursor it returns fetches the chats after the page', async () => {
+    const first = await messenger.searchChats({ limit: 1 });
+    expect(first.items.map((c) => c.title)).toEqual(['Alice']);
+    expect(first.hasMore).toBe(true);
+    const second = await messenger.searchChats({ limit: 1, cursor: first.nextCursor });
+    expect(second.items.map((c) => c.title)).toEqual(['Bob']);
+    expect(second.hasMore).toBe(false);
   });
 
   it('getChat fetches by ID including IDs that need URL encoding', async () => {
@@ -85,6 +94,14 @@ describe('BeeperMessenger (HTTP integration)', () => {
       text: 'hello from alice',
       attachments: [{ type: 'img', fileName: 'photo.jpg' }],
     });
+    expect(page.items[0]).not.toHaveProperty('html');
+  });
+
+  it("listMessages gives a formatted message's words as the chat shows them, and its HTML apart", async () => {
+    const html = '<mx-reply><blockquote>In reply to Bob<br>old words</blockquote></mx-reply>Dinner on <b>Friday</b>?';
+    mock.messages = [wireMessage({ text: html })];
+    const [message] = (await messenger.listMessages('!chat1:beeper.com')).items;
+    expect(message).toMatchObject({ text: 'Dinner on Friday?', html });
   });
 
   it('listMessages returns newest first regardless of wire order', async () => {
@@ -95,6 +112,17 @@ describe('BeeperMessenger (HTTP integration)', () => {
     ];
     const page = await messenger.listMessages('!chat1:beeper.com');
     expect(page.items.map((m) => m.id)).toEqual(['new', 'mid', 'old']);
+  });
+
+  it('listMessages orders by the moment, however it is written, and messages sent the same moment by their sort keys', async () => {
+    mock.messages = [
+      wireMessage({ id: 'later-in-the-second', timestamp: '2026-07-09T00:00:00.500Z', sortKey: '5' }),
+      wireMessage({ id: 'first', timestamp: '2026-07-09T00:00:00Z', sortKey: '1' }),
+      wireMessage({ id: 'third', timestamp: '2026-07-09T00:00:00.000Z', sortKey: '3' }),
+      wireMessage({ id: 'second', timestamp: '2026-07-08T17:00:00-07:00', sortKey: '2' }),
+    ];
+    const page = await messenger.listMessages('!chat1:beeper.com');
+    expect(page.items.map((m) => m.id)).toEqual(['later-in-the-second', 'third', 'second', 'first']);
   });
 
   it('searchMessages filters by word query over the wire', async () => {

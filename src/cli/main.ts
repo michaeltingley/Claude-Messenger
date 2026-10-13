@@ -3,7 +3,10 @@ import { writeFile } from 'node:fs/promises';
 import { Command, InvalidArgumentError } from 'commander';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
-import { createAccessRequester, createApp } from '../app.js';
+import { createAccessRequester, createApp, createLanguageModel, DEFAULT_LANGUAGE_MODEL } from '../app.js';
+import { ActivityCollector } from '../assistant/digest/activity.js';
+import { dayBefore, DigestWriter, isDigestWindow, MAX_DIGEST_DAYS } from '../assistant/digest/digest.js';
+import { hostTimeZone, isTimeZone } from '../assistant/digest/time.js';
 import { watchMentions } from '../assistant/mentions.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
 import type { Message } from '../core/types.js';
@@ -106,6 +109,20 @@ function parseLimit(value: string): number {
   return n;
 }
 
+/** Where a digest starts: a time with its zone, in the past, no further back than a digest reads. */
+function parseSince(value: string): Date {
+  const since = new Date(parseTime(value));
+  if (!isDigestWindow({ since, until: new Date() })) {
+    throw new InvalidArgumentError(`must be in the past, at most ${MAX_DIGEST_DAYS} days back`);
+  }
+  return since;
+}
+
+function parseTimeZone(value: string): string {
+  if (!isTimeZone(value)) throw new InvalidArgumentError('must be an IANA time zone, such as America/Los_Angeles');
+  return value;
+}
+
 program
   .command('doctor')
   .description('Verify config, connectivity, auth, and policy end to end')
@@ -173,7 +190,7 @@ program
     for (const m of [...page.items].reverse()) {
       const who = m.isFromMe ? 'me' : (m.senderName ?? m.senderId);
       const attachments = m.attachments.length ? ` [${m.attachments.map((a) => a.type).join(', ')}]` : '';
-      console.log(`[${m.timestamp}] ${who}: ${m.text ?? ''}${attachments}`);
+      console.log(`[${m.timestamp}] ${who}: ${m.text}${attachments}`);
     }
   });
 
@@ -186,8 +203,26 @@ program
     const page = await messenger.searchMessages({ query, limit: opts.limit });
     for (const m of page.items) {
       const who = m.isFromMe ? 'me' : (m.senderName ?? m.senderId);
-      console.log(`[${m.timestamp}] (${m.chatId}) ${who}: ${m.text ?? ''}`);
+      console.log(`[${m.timestamp}] (${m.chatId}) ${who}: ${m.text}`);
     }
+  });
+
+program
+  .command('digest')
+  .description('Write a digest of your recent chats: what needs you first, then the rest (needs Claude Code signed in here)')
+  .option(
+    '--since <time>',
+    `where it starts, like 2026-10-12T07:46:00-07:00, at most ${MAX_DIGEST_DAYS} days back (default: 24 hours ago)`,
+    parseSince,
+  )
+  .option('--time-zone <zone>', "the IANA time zone to give times in (default: this host's)", parseTimeZone)
+  .option('--model <name>', 'the Claude model that writes it', DEFAULT_LANGUAGE_MODEL)
+  .action(async (opts: { since?: Date; timeZone?: string; model: string }) => {
+    const until = new Date();
+    const window = opts.since === undefined ? dayBefore(until) : { since: opts.since, until };
+    const { messenger } = await app();
+    const writer = new DigestWriter(new ActivityCollector(messenger), createLanguageModel({ model: opts.model }));
+    console.log(await writer.write(window, opts.timeZone ?? hostTimeZone()));
   });
 
 program

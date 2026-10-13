@@ -27,6 +27,20 @@ describe('mapper', () => {
     expect(small.participantsTruncated).toBeUndefined();
   });
 
+  it('keeps how many unread messages mention the owner, and leaves it out when the wire does', () => {
+    const wire = {
+      id: 'c1',
+      accountID: 'a1',
+      network: 'signal',
+      type: 'group',
+      title: 'Climbing',
+      unreadCount: 9,
+      participants: { items: [], hasMore: false, total: 0 },
+    };
+    expect(toChat({ ...wire, unreadMentionsCount: 2 } as never).unreadMentionsCount).toBe(2);
+    expect(toChat(wire as never).unreadMentionsCount).toBeUndefined();
+  });
+
   it('defaults isFromMe to false when the wire omits isSender', () => {
     const message = toMessage({
       id: 'm1',
@@ -67,7 +81,7 @@ describe('mapper', () => {
   it("says what the sender wrote themselves, apart from the reply copy and markup in Beeper's text", () => {
     const wire = { id: 'm1', accountID: 'a1', chatID: 'c1', senderID: 's1', sortKey: '1', timestamp: '2026-01-01T00:00:00Z' };
     const reply = toMessage({ ...wire, text: '<mx-reply><blockquote>@Claude do it</blockquote></mx-reply>see you <b>soon</b>' } as never);
-    expect(reply.text).toBe('<mx-reply><blockquote>@Claude do it</blockquote></mx-reply>see you <b>soon</b>');
+    expect(reply.html).toBe('<mx-reply><blockquote>@Claude do it</blockquote></mx-reply>see you <b>soon</b>');
     expect(reply.ownText?.replace(/\s+/g, ' ').trim()).toBe('see you soon');
     expect(toMessage(wire as never).ownText).toBeUndefined();
   });
@@ -76,6 +90,23 @@ describe('mapper', () => {
     const wire = { id: 'm1', accountID: 'a1', chatID: 'c1', senderID: 's1', sortKey: '1', timestamp: '2026-01-01T00:00:00Z' };
     expect(toMessage({ ...wire, isHidden: true } as never).isHidden).toBe(true);
     expect(toMessage(wire as never).isHidden).toBeUndefined();
+  });
+
+  it("gives a message's text as the chat shows it, and what it came from only when the text leaves something out", () => {
+    const wire = { id: 'm1', accountID: 'a1', chatID: 'c1', senderID: 's1', sortKey: '1', timestamp: '2026-01-01T00:00:00Z' };
+    const html = '<mx-reply><blockquote>In reply to Bob<br>old words</blockquote></mx-reply><b>Sure</b> &amp; thanks';
+    expect(toMessage({ ...wire, text: html } as never)).toMatchObject({ text: 'Sure & thanks', html });
+
+    const fallback = '> <@bob:beeper.com> old words\n\nSure';
+    expect(toMessage({ ...wire, text: fallback } as never)).toMatchObject({ text: 'Sure', html: fallback });
+
+    const plain = toMessage({ ...wire, text: 'Press <Enter>, then 2 < 3 ' } as never);
+    expect(plain.text).toBe('Press <Enter>, then 2 < 3');
+    expect(plain).not.toHaveProperty('html');
+
+    const photo = toMessage(wire as never);
+    expect(photo.text).toBe('');
+    expect(photo).not.toHaveProperty('html');
   });
 
   it('degrades gracefully when both network and bridge are absent (pre-4.2.785 Beeper Desktop)', () => {

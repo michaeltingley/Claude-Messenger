@@ -31,6 +31,8 @@ export interface Chat {
   type: ChatType;
   title: string;
   unreadCount: number;
+  /** Unread messages that mention the account's user, or everyone in the chat. */
+  unreadMentionsCount?: number;
   participants: Participant[];
   /** True when the participant list was truncated by the provider. */
   participantsTruncated?: boolean;
@@ -88,8 +90,18 @@ export interface Message {
   timestamp: string;
   /** Left out when the provider doesn't say. */
   kind?: MessageKind;
-  /** The text as the provider gives it, which may carry markup such as HTML. */
-  text?: string;
+  /**
+   * What the message says, as plain text, as the chat shows it: no markup,
+   * and not the copy of the message it answers that a reply can carry.
+   * Empty when it says nothing in words, as a photo or a reaction can.
+   */
+  text: string;
+  /**
+   * The message as the provider gives it, read as HTML, when its plain text
+   * leaves something out: markup, such as where its links point, or the
+   * copy of the message a reply answers.
+   */
+  html?: string;
   /**
    * What the sender wrote in this message themselves, as plain text, read
    * cautiously: anything that may be someone else's words is left out, such
@@ -97,8 +109,8 @@ export interface Message {
    * name in a link to a person, which that person chose. So it can miss some
    * of the sender's own words too: it is for deciding whether they addressed
    * someone, not a stand-in for `text`. What the text can't tell apart, such
-   * as a message they forward, reads as theirs. Left out when the message
-   * has no text.
+   * as a message they forward, reads as theirs. Left out when the provider
+   * has no text for the message.
    */
   ownText?: string;
   attachments: AttachmentSummary[];

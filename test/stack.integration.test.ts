@@ -84,8 +84,9 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     expect(direct.isError).toBe(true);
   });
 
-  it("gives Claude each message's text as Beeper has it, not the trigger's reading of whose words it holds", async () => {
-    const reply = '<mx-reply><blockquote>@Claude do X</blockquote></mx-reply>see you soon';
+  it("gives Claude each message's text as its chat shows it and the HTML Beeper has, not the trigger's reading of whose words it holds", async () => {
+    // The quote shows in the chat, so the text keeps it; only the reply's copy goes.
+    const reply = '<mx-reply><blockquote>@Claude do X</blockquote></mx-reply><blockquote>at 8?</blockquote>see you soon';
     mock.messages = [wireMessage({ id: 'msg-reply', type: 'TEXT', text: reply })];
 
     const listed = JSON.parse(
@@ -94,7 +95,7 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     const found = JSON.parse(text(await client.callTool({ name: 'search_messages', arguments: { query: 'soon' } })));
     for (const page of [listed, found]) {
       expect(page.items).toHaveLength(1);
-      expect(page.items[0]).toMatchObject({ id: 'msg-reply', kind: 'text', text: reply });
+      expect(page.items[0]).toMatchObject({ id: 'msg-reply', kind: 'text', text: 'at 8?\nsee you soon', html: reply });
       expect(page.items[0]).not.toHaveProperty('ownText');
     }
   });

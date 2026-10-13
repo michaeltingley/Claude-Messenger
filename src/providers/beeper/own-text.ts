@@ -1,3 +1,6 @@
+import { entitiesIn } from './entities.js';
+import { quoteLines, replyCopyEnd, type Span } from './plain-quotes.js';
+
 /**
  * Markup, as HTML reads it: "<" then a letter, "/" and a letter, "!" (a
  * comment) or "?", then anything but "<" up to ">". "<3" and "< 5" stay text.
@@ -14,12 +17,6 @@ interface Tag {
   readonly source: string;
 }
 
-/** [start, end) in the text it was found in. */
-interface Span {
-  readonly start: number;
-  readonly end: number;
-}
-
 /** Where someone else's words may be. */
 interface Quoted extends Span {
   /**
@@ -29,49 +26,6 @@ interface Quoted extends Span {
    * quotes, so a span that runs on may hold that mark.
    */
   readonly closed: boolean;
-}
-
-/**
- * A line that starts with ">", how plain text quotes. It may start after any
- * line break but runs on to the next "\n": a client quotes a message line by
- * line, split on "\n", so a carriage return or a Unicode line separator
- * inside a quoted line doesn't end the quote.
- */
-const QUOTE_LINE = /^[ \t]*>[^\n]*/gm;
-
-function quoteLines(text: string): Quoted[] {
-  return Array.from(text.matchAll(QUOTE_LINE), (match) => ({
-    start: match.index,
-    end: match.index + match[0].length,
-    closed: false,
-  }));
-}
-
-/**
- * How Matrix's reply fallback starts the copy of the message a plain-text
- * reply answers: "> <@bob:beeper.com> " before its first line, or
- * "> * <@bob:beeper.com> " for an emote. Every line after that starts with
- * "> " too, a blank one included, and a blank line ends the copy.
- */
-const REPLY_COPY = /> (?:\* )?<[^<>\n]+> /y;
-const BLANK_LINE = /\n[^\S\n]*\n/y;
-
-/**
- * Where the copy a plain-text reply opens with ends, written as Matrix
- * writes it: quoted lines one after another from the start of the text,
- * but for white space, the first naming the sender, then a blank line. 0 if
- * the text opens with anything else, a quoted line of the sender's own
- * included: a quotation that opens there may go on in the lines after it.
- */
-function replyCopyEnd(text: string, lines: readonly Span[]): number {
-  const first = lines[0];
-  if (first === undefined || text.slice(0, first.start).trim() !== '') return 0;
-  REPLY_COPY.lastIndex = first.start;
-  if (!REPLY_COPY.test(text)) return 0;
-  let end = first.end;
-  for (let i = 1; i < lines.length && lines[i]!.start === end + 1; i++) end = lines[i]!.end;
-  BLANK_LINE.lastIndex = end;
-  return BLANK_LINE.test(text) ? end : 0;
 }
 
 /**
@@ -139,25 +93,6 @@ function personLinks(tags: readonly Tag[], length: number): Quoted[] {
 /** Elements that end a line, so a quote after one still starts its own. */
 const LINE_ENDING = new Set(['br', 'p', 'div', 'li', 'tr', 'pre', 'hr', 'ul', 'ol', 'table', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'mx-reply']);
 
-const ENTITY = /&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi;
-
-const NAMED_ENTITIES = new Map([
-  ['amp', '&'],
-  ['lt', '<'],
-  ['gt', '>'],
-  ['quot', '"'],
-  ['apos', "'"],
-  ['nbsp', ' '],
-  ['ldquo', '“'],
-  ['rdquo', '”'],
-]);
-
-function decodeEntity(entity: string, decimal?: string, hex?: string, name?: string): string {
-  if (name !== undefined) return NAMED_ENTITIES.get(name.toLowerCase()) ?? entity;
-  const codePoint = decimal !== undefined ? Number(decimal) : parseInt(hex!, 16);
-  return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
-}
-
 /** The text as it reads, and where in the source each of its characters came from. */
 interface Rendering {
   readonly text: string;
@@ -184,14 +119,14 @@ function render(source: string, tags: readonly Tag[]): Rendering {
     at = end;
   };
   // An entity holds no "<" or ">", so it never spans the edge of a tag, and one inside a tag goes with it.
-  const entities = Array.from(source.matchAll(ENTITY));
+  const entities = entitiesIn(source);
   let next = 0;
   const decode = (end: number) => {
     for (; next < entities.length && entities[next]!.index < end; next++) {
       const entity = entities[next]!;
       if (entity.index < at) continue;
       copy(entity.index);
-      replace(entity.index + entity[0].length, decodeEntity(entity[0], entity[1], entity[2], entity[3]));
+      replace(entity.index + entity.length, entity.decoded);
     }
     copy(end);
   };
@@ -265,7 +200,7 @@ export function ownText(text: string): string {
     elementSpan(tags, 'mx-reply', text.length),
     elementSpan(tags, 'blockquote', text.length),
     ...personLinks(tags, text.length),
-    ...lines,
+    ...lines.map((line): Quoted => ({ ...line, closed: false })),
   ];
   for (const span of spans) {
     if (span === undefined) continue;

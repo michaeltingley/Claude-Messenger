@@ -14,9 +14,11 @@ export interface WireChat {
   accountID: string;
   network: string;
   type: 'single' | 'group';
+  isArchived?: boolean;
   title: string;
   unreadCount: number;
-  participants: { items: Array<{ id: string; fullName?: string }>; hasMore: boolean; total: number };
+  unreadMentionsCount?: number;
+  participants: { items: Array<{ id: string; fullName?: string; isSelf?: boolean }>; hasMore: boolean; total: number };
   lastActivity?: string;
   isMuted?: boolean;
   isLowPriority?: boolean;
@@ -36,6 +38,7 @@ export interface WireMessage {
   isDeleted?: boolean;
   isHidden?: boolean;
   attachments?: Array<{ type: 'unknown' | 'img' | 'video' | 'audio'; fileName?: string }>;
+  reactions?: Array<{ id: string; participantID: string; reactionKey: string }>;
 }
 
 export interface RecordedRequest {
@@ -154,6 +157,8 @@ export class MockBeeperServer {
   readonly token = 'test-token-123';
   chats: WireChat[] = [];
   messages: WireMessage[] = [];
+  /** The most messages one page of a chat holds; a longer chat pages, older messages on later pages. */
+  messagePageSize = Infinity;
   requests: RecordedRequest[] = [];
   /** When set, every route responds with this status and an error body. */
   forcedError: { status: number; code?: string } | undefined;
@@ -188,6 +193,12 @@ export class MockBeeperServer {
   revokeFails = false;
   /** Routes that never answer, as a hung Beeper would: only the client can end the request. */
   stalls: ((path: string) => boolean) | undefined;
+  /**
+   * Runs as each chat search arrives, before it is answered: what happens in
+   * the chats while the list is paged through, such as a message moving a
+   * chat to the top.
+   */
+  onChatSearch: (() => void) | undefined;
 
   private clients = new Map<string, RegisteredClient>();
   private codes = new Map<string, PendingCode>();
@@ -307,16 +318,16 @@ export class MockBeeperServer {
       return send(200, accounts);
     }
     if (req.method === 'GET' && path === '/v1/chats/search') {
-      const q = url.searchParams.get('query')?.toLowerCase();
-      const items = q ? this.chats.filter((c) => c.title.toLowerCase().includes(q)) : this.chats;
-      return send(200, cursorEnvelope(items));
+      this.onChatSearch?.();
+      const page = this.searchChats(url.searchParams);
+      return page ? send(200, page) : error(400, 'unmodeled', `mock: unmodeled chat search ${url.search}`);
     }
     if (req.method === 'GET' && path === '/v1/messages/search') {
       return this.searchMessages(url.searchParams, send, error);
     }
     if (req.method === 'GET' && messagesMatch) {
-      const items = this.messages.filter((m) => m.chatID === messagesMatch[1]);
-      return send(200, cursorEnvelope(items));
+      const page = this.listMessages(messagesMatch[1]!, url.searchParams);
+      return page ? send(200, page) : error(400, 'unmodeled', `mock: unmodeled message list ${url.search}`);
     }
     if (req.method === 'POST' && messagesMatch) {
       return send(200, { chatID: messagesMatch[1], pendingMessageID: `pending-${this.requests.length}` });
@@ -578,5 +589,68 @@ export class MockBeeperServer {
     } catch {
       return text;
     }
+  }
+
+  /**
+   * Chat search with the filters this app's reads use: title words, the
+   * main inbox (neither archived nor low priority) and activity strictly
+   * after lastActivityAfter. Any other parameter, or any other inbox, is
+   * refused, so a read can't drift to a filter no test covers. Pages hold
+   * `limit` chats (50 when it isn't given), the most recently active first,
+   * and each `oldestCursor` fed back as `cursor` fetches the page after it,
+   * as the SDK pages them.
+   */
+  private searchChats(params: URLSearchParams) {
+    const modelled = ['query', 'inbox', 'lastActivityAfter', 'limit', 'cursor'];
+    if ([...params.keys()].some((key) => !modelled.includes(key))) return undefined;
+    const inbox = params.get('inbox');
+    if (inbox !== null && inbox !== 'primary') return undefined;
+    const q = params.get('query')?.toLowerCase();
+    const after = params.has('lastActivityAfter') ? Date.parse(params.get('lastActivityAfter')!) : -Infinity;
+    const activity = (c: WireChat) => (c.lastActivity === undefined ? -Infinity : Date.parse(c.lastActivity));
+    const found = this.chats
+      .filter(
+        (c) =>
+          (!q || c.title.toLowerCase().includes(q)) &&
+          (inbox === null || (!c.isArchived && !c.isLowPriority)) &&
+          (c.lastActivity === undefined ? after === -Infinity : activity(c) > after),
+      )
+      .sort((a, b) => activity(b) - activity(a) || (a.id < b.id ? -1 : 1));
+    const cursor = params.get('cursor');
+    const start = cursor === null ? 0 : found.findIndex((c) => c.id === cursor) + 1;
+    if (cursor !== null && start === 0) return undefined;
+    const page = found.slice(start, start + Number(params.get('limit') ?? 50));
+    return {
+      items: page,
+      hasMore: start + page.length < found.length,
+      oldestCursor: page.at(-1)?.id ?? null,
+      newestCursor: page[0]?.id ?? null,
+    };
+  }
+
+  /**
+   * A chat's messages a page at a time, as the SDK pages them: the newest
+   * page first, then each `oldestCursor` fed back as `cursor` fetches the
+   * page before it. Messages sent the same moment are in the order of their
+   * sort keys. Within a page they run oldest first, so nothing above the
+   * provider can count on a page's order. Paging toward newer messages isn't
+   * modelled, and is refused.
+   */
+  private listMessages(chatID: string, params: URLSearchParams) {
+    const direction = params.get('direction');
+    if (direction !== null && direction !== 'before') return undefined;
+    const newestFirst = this.messages
+      .filter((m) => m.chatID === chatID)
+      .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp) || (a.sortKey < b.sortKey ? 1 : -1));
+    const cursor = params.get('cursor');
+    const start = cursor === null ? 0 : newestFirst.findIndex((m) => m.id === cursor) + 1;
+    if (cursor !== null && start === 0) return undefined;
+    const page = newestFirst.slice(start, start + this.messagePageSize);
+    return {
+      items: [...page].reverse(),
+      hasMore: start + page.length < newestFirst.length,
+      oldestCursor: page.at(-1)?.id ?? null,
+      newestCursor: page[0]?.id ?? null,
+    };
   }
 }

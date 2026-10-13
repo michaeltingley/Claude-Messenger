@@ -10,6 +10,7 @@ import type {
   Reaction,
 } from '../../core/types.js';
 import { ownText } from './own-text.js';
+import { plainText } from './plain-text.js';
 
 /** Pure translation from Beeper Client API wire types to domain models. */
 
@@ -65,6 +66,7 @@ export function toChat(c: WireChat): Chat {
     type: c.type,
     title: c.title,
     unreadCount: c.unreadCount,
+    unreadMentionsCount: c.unreadMentionsCount,
     participants: c.participants.items.map(toParticipant),
     participantsTruncated: c.participants.hasMore || undefined,
     isArchived: c.isArchived,
@@ -111,6 +113,27 @@ function toKind(type: string | undefined): MessageKind | undefined {
   return type === undefined ? undefined : (KINDS.get(type) ?? 'other');
 }
 
+/**
+ * Newest first, as the domain's pages run: by time, then, for messages sent
+ * the same moment, by the sort key Beeper orders a chat by.
+ */
+export function newestFirst(a: WireMessage, b: WireMessage): number {
+  const time = (m: WireMessage) => Date.parse(m.timestamp) || 0;
+  return time(b) - time(a) || (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0);
+}
+
+/**
+ * A message's words as the chat shows them, and what they came from when
+ * the words leave something out: markup, or a reply's copy of the message it
+ * answers. Beeper's `text` is a message's HTML formatted body when it has
+ * one, else its plain body, and doesn't say which.
+ */
+function readable(text: string | undefined): Pick<Message, 'text' | 'html'> {
+  if (text === undefined) return { text: '' };
+  const shown = plainText(text);
+  return shown === text.trim() ? { text: shown } : { text: shown, html: text };
+}
+
 export function toMessage(m: WireMessage): Message {
   return {
     id: m.id,
@@ -121,7 +144,7 @@ export function toMessage(m: WireMessage): Message {
     isFromMe: m.isSender ?? false,
     timestamp: m.timestamp,
     kind: toKind(m.type),
-    text: m.text,
+    ...readable(m.text),
     ownText: m.text === undefined ? undefined : ownText(m.text),
     attachments: (m.attachments ?? []).map(toAttachment),
     reactions: (m.reactions ?? []).map(toReaction),

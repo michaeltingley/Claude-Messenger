@@ -4,10 +4,12 @@ import { ZodError } from 'zod';
 import type { Config, EndpointConfig } from './config.js';
 import type { AccessRequester } from './core/access.js';
 import type { Messenger } from './core/messenger.js';
+import type { LanguageModel } from './core/model.js';
 import type { ServerInfo } from './core/types.js';
 import { MessengerError } from './core/errors.js';
 import { BeeperAccessRequester } from './providers/beeper/access.js';
 import { BeeperMessenger } from './providers/beeper/index.js';
+import { ClaudeCodeModel } from './providers/claude-code/model.js';
 import { GuardedAccessRequester } from './policy/access.js';
 import { JsonlAuditLogger } from './policy/audit.js';
 import { GuardedMessenger } from './policy/guarded.js';
@@ -99,4 +101,25 @@ export async function createApp(config: Config): Promise<App> {
  */
 export function createAccessRequester(endpoint: EndpointConfig): AccessRequester {
   return new GuardedAccessRequester(new BeeperAccessRequester({ baseUrl: endpoint.beeperBaseUrl }));
+}
+
+/**
+ * The Claude model automations write with unless told otherwise. A summary
+ * or a draft doesn't need the largest model, and a smaller one spends less
+ * of the subscription's usage limits.
+ */
+export const DEFAULT_LANGUAGE_MODEL = 'sonnet';
+
+export interface LanguageModelOptions {
+  /** Which Claude model writes, by alias (`sonnet`) or full name. Defaults to `DEFAULT_LANGUAGE_MODEL`. */
+  model?: string;
+}
+
+/**
+ * The model automations write with: Claude Code as installed and signed in
+ * on this host, so it runs on the owner's Claude subscription, never an API
+ * key. It is given no tools: it only ever writes text.
+ */
+export function createLanguageModel({ model = DEFAULT_LANGUAGE_MODEL }: LanguageModelOptions = {}): LanguageModel {
+  return new ClaudeCodeModel({ model });
 }

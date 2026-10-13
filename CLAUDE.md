@@ -29,8 +29,8 @@ The layering rules in `docs/ARCHITECTURE.md` are the contract. The three that
 break the design if violated:
 
 1. **Nothing above `providers/` imports a provider SDK.** `core/messenger.ts` is
-   the seam. If a change makes `policy/`, `mcp/`, or `cli/` aware of Beeper
-   specifically, it is wrong.
+   the seam. If a change makes `policy/`, `assistant/`, `mcp/`, or `cli/`
+   aware of Beeper specifically, it is wrong.
 2. **The tool layer only ever sees `GuardedMessenger`.** Policy is checked
    in-process *before* any provider call. The unguarded provider never leaves
    the composition root — diagnostics get the narrow `ConnectivityProbe`
@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 439 tests / 26 files.
+- `npm test` must be green before any push. Currently 608 tests / 34 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -102,6 +102,16 @@ built for hypothetical futures.
   CI runs it on both Ubuntu 24.04 (systemd 255, too old for `PrivatePIDs`)
   and 26.04 (259), and it asserts the /proc escape open on the first and
   closed on the second.
+  `test/claude-code-binary.integration.test.ts` runs the installed Claude
+  Code, as the digest's model runs it, against a stand-in Anthropic API,
+  and proves a message's @-mention can't make it read a file, the host's
+  MCP servers, CLAUDE.md and hooks stay out, and nothing of the input is
+  left on disk. Where two guards cover one thing, each is proven alone,
+  with the other taken out, beside a control without both that shows the
+  thing happen. CI installs the latest Claude Code. The one guard it can't
+  prove is the one for the subscription's claude.ai connectors: Claude Code
+  fetches them from claude.ai, where no stand-in can answer, so that they
+  stay out rests on Claude Code's code and what its debug log says.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene

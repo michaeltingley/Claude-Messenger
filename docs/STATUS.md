@@ -91,8 +91,9 @@ and `docs/HOSTING-OPTIONS.md`._
     `providers/beeper/own-text.ts`, linear in the message's length), and
     `assistant/mentions.ts` looks for `@claude` in them. #24's description
     lists the shapes that still fire and the mentions missed on purpose;
-    change `own-text.ts` only with a test for each, fuzzing and mutation
-    testing, as every review of it found a new way in.
+    change `own-text.ts`, or the `entities.ts` and `plain-quotes.ts` it
+    reads with, only with a test for each, fuzzing and mutation testing, as
+    every review of it found a new way in.
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -101,6 +102,14 @@ and `docs/HOSTING-OPTIONS.md`._
 - **Research**:
   - Context engine: `docs/CONTEXT-ENGINE-RESEARCH.md` and `docs/research/`.
   - Hosting: `docs/HOSTING-OPTIONS.md`, re-verified 2026-10-08.
+- **Daily digest**: `claude-messenger digest` reads a window of the main
+  inbox (the last 24 hours unless `--since` says where it starts) through
+  the policy layer and has Claude Code write what needs the owner first,
+  then the rest. It runs on the owner's Claude subscription (Claude Code
+  signed in on the host), never an API key, and its model has no tools and
+  can't be made to read a file or act. Design: `docs/ARCHITECTURE.md`
+  (Language model, Daily digest). How it is to run and reach the owner:
+  "Daily digest" below.
 
 ## VERIFIED LIVE
 
@@ -132,6 +141,43 @@ and `docs/HOSTING-OPTIONS.md`._
   hidden; the same-uid `/proc` escape **closed** (own PID namespace);
   `systemctl restart` clean in 0.045s, `/healthz` back in ~1.5s. Nothing is
   exposed beyond the tailnet.
+
+## Daily digest (project thread "Daily message digest")
+
+- **Not on the VPS yet**: the box's checkout predates it. Once `main` is
+  pulled and built there, with Claude Code signed in to the owner's Max
+  plan, each morning's run is:
+  `cd ~/claude-messenger && node dist/cli/main.js digest --since "$(TZ=America/Los_Angeles date -d 'yesterday 07:46' -Iseconds)" --time-zone America/Los_Angeles`.
+  - `--since` starts it where the day before's run started, so a late run
+    leaves no gap after the day before's. A morning that fails leaves its
+    day out of the next, and a message dated before the window it reached
+    Beeper in, as a bridge catching up can make, falls outside both.
+  - It writes with Sonnet (`--model` to change), which spends less of the
+    plan's usage limits than Opus.
+  - It needs a Claude Code new enough for `--safe-mode` (the box has
+    2.1.295). One too old, such as 2.1.42, rejects the flag, so the digest
+    fails with `model_failed` before Claude sees anything.
+  - It prints the digest and keeps no copy. The audit log gets its reads,
+    never the words.
+  - Failing, it prints the reason and no digest: `model_failed` with Claude
+    Code's own words, or Beeper's checklist when Beeper is unreachable. A
+    lapsed sign-in fails at once (`Failed to authenticate. API Error: 401
+    …`: sign in again with `claude`, then `/login`). A rate limit Claude
+    Code retries for about three minutes first; the run gives up after ten.
+- **Delivery, being set up 2026-10-13:** each morning at 7:46 AM Pacific a
+  routine wakes the thread's session. It hands the thread's Remote Control
+  session on the VPS the morning's run, which pipes the command's output
+  through `gzip` and `base64` and sends that back with its SHA-256. The
+  thread's session checks the hash, decodes it and posts it in the thread.
+  The Remote Control session stays between mornings: stopping it would end
+  the owner's approval of it.
+  - The session on the VPS has tools within reach of the token, so it never
+    sees the digest as text, and a message can't steer it through the
+    digest. The thread's session reads the digest to post it, so the words
+    are in its transcript; a digest names no link, web address, email
+    address or phone number for it to follow, but for the few forms the
+    filter can't tell from words (`docs/ARCHITECTURE.md`, Daily digest).
+  - Nothing is written to Beeper, so the read-only token stays read-only.
 
 ## Decided (2026-10-12): Claude Messenger runs on the automation VPS
 
@@ -314,6 +360,11 @@ owner, each send approved in the Claude chat.
    Each step runs only if the one before it worked, so a failed fetch can't
    reinstall the old unit and a failed `git show` can't empty the live one.
    It's a production change, so it waits for the owner's go.
+8. **Put the digest on the VPS and schedule it** (thread "Daily message
+   digest"). Bring `~/claude-messenger` to `main` and rebuild it, through the
+   install's thread, which owns that checkout; run one digest from a Remote
+   Control session and post it in the thread; then create the daily routine
+   and record its id here. See "Daily digest" above.
 
 ### Hosting history (kept short)
 
