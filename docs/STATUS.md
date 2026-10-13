@@ -141,12 +141,24 @@ and `docs/HOSTING-OPTIONS.md`._
   hidden; the same-uid `/proc` escape **closed** (own PID namespace);
   `systemctl restart` clean in 0.045s, `/healthz` back in ~1.5s. Nothing is
   exposed beyond the tailnet.
+- **2026-10-13 22:52Z, the VPS — redeployed to `main` (9ceacaa).** For the
+  daily digest, the install thread fast-forwarded `~/claude-messenger` from
+  062ba74 to `main` (the digest #25 and read-only mention listener #24, plus
+  #28/#29), ran `npm ci` (no new packages — same 148) and `npm run build`, and
+  restarted `claude-messenger-mcp` (clean, `/healthz` back). The diff was
+  verified read-only first: no dependency change; `.env`, `policy.json` and the
+  units untouched (only an optional `BEEPER_POLL_INTERVAL_MS` knob added to
+  `.env.example`); the new guarded message-watch is read-gated,
+  own-messages-only and audited. `doctor` green, 11 accounts, policy still
+  `send:false` / `markRead:false`; `digest --help` and `mentions --help` work.
+  Neither the digest nor the mention listener runs yet — their threads
+  schedule them.
 
 ## Daily digest (project thread "Daily message digest")
 
-- **Not on the VPS yet**: the box's checkout predates it. Once `main` is
-  pulled and built there, with Claude Code signed in to the owner's Max
-  plan, each morning's run is:
+- **On the VPS at `main` (9ceacaa) since 2026-10-13 22:52Z** (see VERIFIED
+  LIVE). With Claude Code signed in to the owner's Max plan, each morning's
+  run is:
   `cd ~/claude-messenger && node dist/cli/main.js digest --since "$(TZ=America/Los_Angeles date -d 'yesterday 07:46' -Iseconds)" --time-zone America/Los_Angeles`.
   - `--since` starts it where the day before's run started, so a late run
     leaves no gap after the day before's. A morning that fails leaves its
@@ -360,11 +372,11 @@ owner, each send approved in the Claude chat.
    Each step runs only if the one before it worked, so a failed fetch can't
    reinstall the old unit and a failed `git show` can't empty the live one.
    It's a production change, so it waits for the owner's go.
-8. **Put the digest on the VPS and schedule it** (thread "Daily message
-   digest"). Bring `~/claude-messenger` to `main` and rebuild it, through the
-   install's thread, which owns that checkout; run one digest from a Remote
-   Control session and post it in the thread; then create the daily routine
-   and record its id here. See "Daily digest" above.
+8. **Schedule the digest on the VPS** (thread "Daily message digest"). The
+   checkout is on `main` and built (9ceacaa, 2026-10-13 22:52Z — see VERIFIED
+   LIVE), so the deploy half is done. What remains, in that thread: run one
+   digest from a Remote Control session and post it in the thread, then create
+   the daily routine and record its id here. See "Daily digest" above.
 
 ### Hosting history (kept short)
 
