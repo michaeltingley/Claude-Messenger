@@ -1,3 +1,4 @@
+import { shownAs } from './elements.js';
 import { entitiesIn } from './entities.js';
 import { quoteLines, replyCopyEnd, type Span } from './plain-quotes.js';
 
@@ -90,9 +91,6 @@ function personLinks(tags: readonly Tag[], length: number): Quoted[] {
   return spans;
 }
 
-/** Elements that end a line, so a quote after one still starts its own. */
-const LINE_ENDING = new Set(['br', 'p', 'div', 'li', 'tr', 'pre', 'hr', 'ul', 'ol', 'table', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'mx-reply']);
-
 /** The text as it reads, and where in the source each of its characters came from. */
 interface Rendering {
   readonly text: string;
@@ -100,9 +98,12 @@ interface Rendering {
 }
 
 /**
- * Markup becomes a line break or a space, and entities are decoded. Neither
- * is ever longer than what it replaces, so the rendering is never longer
- * than its source.
+ * Markup becomes what it shows as in the chat, so a word partly in bold
+ * stays one word and a quote after a line break still starts a line of its
+ * own. Anything else shaped like a tag becomes a space, as "<" and ">" keep
+ * the words on either side apart in text, and nothing it holds is read.
+ * Entities are decoded. Nothing is ever longer than what it replaces, so the
+ * rendering is never longer than its source.
  */
 function render(source: string, tags: readonly Tag[]): Rendering {
   const parts: string[] = [];
@@ -132,7 +133,7 @@ function render(source: string, tags: readonly Tag[]): Rendering {
   };
   for (const tag of tags) {
     decode(tag.start);
-    replace(tag.end, LINE_ENDING.has(tag.name) ? '\n' : ' ');
+    replace(tag.end, shownAs(tag.name) ?? ' ');
   }
   decode(source.length);
   return { text: parts.join(''), origin: origin.subarray(0, length) };
