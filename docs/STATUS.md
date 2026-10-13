@@ -293,6 +293,18 @@ owner, each send approved in the Claude chat.
    held (home write blocked, `/proc` escape still closed), and the tailnet
    serve was unchanged (`:443` → `127.0.0.1:8484` only, surfaces down). The
    reboot-required flag cleared, and it flushed the swap (see item 2).
+7. **Land the x11vnc stop fix on the VPS before the next sign-in.** Since
+   2026-10-13, `deploy/systemd/x11vnc.service` stops x11vnc with SIGINT: on
+   SIGTERM it exits 2, which systemd counts as a failed stop, and its signal
+   handler can hang until the 90 s stop timeout. Units reach the host only
+   when `deploy/bootstrap.sh` reruns (`configure.sh` doesn't reinstall them),
+   so until then `signin-surface.sh down`, and `configure.sh --reconnect`,
+   which calls it, leave `x11vnc.service` failed, sometimes after a 90 s wait.
+   To land just this unit, leaving alone the checkout the MCP service runs
+   from: `git -C ~/claude-messenger fetch origin main`, then
+   `git -C ~/claude-messenger show origin/main:deploy/systemd/x11vnc.service > ~/.config/systemd/user/x11vnc.service`
+   and `systemctl --user daemon-reload`. It's a production change, so it
+   waits for the owner's go.
 
 ### Hosting history (kept short)
 

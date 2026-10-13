@@ -1,9 +1,10 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { connect, createServer } from 'node:net';
+import { connect } from 'node:net';
 import { constants, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { unusedPort } from './ports.js';
 
 /**
  * On a shared host (docs/SHARED-HOST.md), loopback and the X socket are
@@ -22,12 +23,14 @@ const has = (bin: string) => spawnSync('sh', ['-c', `command -v ${bin}`]).status
 const toolsPresent = ['Xvfb', 'xauth', 'mcookie', 'x11vnc'].every(has);
 if (!toolsPresent && process.env.CI) throw new Error('CI must install xvfb, xauth and x11vnc for these tests');
 
-/** The value of a unit's first KEY= line, as written. */
+/** The value of a unit's KEY= line, as written. A key set twice is refused: this test doesn't model which one wins. */
 function setting(unit: string, key: string): string | undefined {
-  return readFileSync(join(SYSTEMD, unit), 'utf8')
+  const values = readFileSync(join(SYSTEMD, unit), 'utf8')
     .split('\n')
-    .find((l) => l.startsWith(`${key}=`))
-    ?.slice(key.length + 1);
+    .filter((l) => l.startsWith(`${key}=`))
+    .map((l) => l.slice(key.length + 1));
+  if (values.length > 1) throw new Error(`${unit} sets ${key}= more than once, which this test does not model`);
+  return values[0];
 }
 
 /** A unit's Exec*= command line, with systemd's specifiers expanded the way a real host would. */
@@ -37,17 +40,34 @@ function execLine(unit: string, key: 'ExecStartPre' | 'ExecStart', runtimeDir: s
   return line.replaceAll('%t', runtimeDir).replaceAll('$$', '$').replaceAll(':99', `:${display}`);
 }
 
+/** Settings that change how systemd stops a unit, which `stop` does not model. */
+const UNMODELED_STOP_SETTINGS = [
+  'ExecStop',
+  'ExecStopPost',
+  'KillMode',
+  'RestartKillSignal',
+  'FinalKillSignal',
+  'SendSIGHUP',
+  'SendSIGKILL',
+  'SuccessExitStatus',
+  'TimeoutSec',
+  'TimeoutStopSec',
+];
+
 /** The signal systemd stops a unit with: its KillSignal=, else SIGTERM. */
 function killSignal(unit: string): NodeJS.Signals {
+  const unmodeled = UNMODELED_STOP_SETTINGS.filter((key) => setting(unit, key) !== undefined);
+  if (unmodeled.length > 0) throw new Error(`${unit} sets ${unmodeled.join(', ')}, which this test does not model`);
   const signal = setting(unit, 'KillSignal') ?? 'SIGTERM';
   if (!(signal in constants.signals)) throw new Error(`${unit}: KillSignal=${signal} is a form this test does not read`);
   return signal as NodeJS.Signals;
 }
 
-/** A unit's main process, started as systemd starts it. */
+/** A unit's main process, started as systemd starts it, and the signal systemd stops it with. */
 interface Service {
   readonly unit: string;
   readonly process: ChildProcess;
+  readonly killSignal: NodeJS.Signals;
 }
 
 /** How long a stop waits after the unit's KillSignal before it kills the process, as systemd does after TimeoutStopSec. */
@@ -67,14 +87,15 @@ const CLEAN_SIGNALS = new Set<NodeJS.Signals>(['SIGHUP', 'SIGINT', 'SIGTERM', 'S
  * Stops a unit's process as systemd stops the unit: with its KillSignal, then
  * SIGKILL if it is still running after a grace period.
  */
-async function stop({ unit, process: child }: Service): Promise<StopOutcome> {
+async function stop(service: Service): Promise<StopOutcome> {
+  const child = service.process;
   const judge = (code: number | null, signal: NodeJS.Signals | null): StopOutcome =>
     code === 0 || (signal !== null && CLEAN_SIGNALS.has(signal)) ? 'clean' : 'failed';
   const exited = new Promise<StopOutcome>((resolve) => {
     if (child.exitCode !== null || child.signalCode !== null) resolve(judge(child.exitCode, child.signalCode));
     else child.once('exit', (code, signal) => resolve(judge(code, signal)));
   });
-  child.kill(killSignal(unit));
+  child.kill(service.killSignal);
   let timer: NodeJS.Timeout | undefined;
   const outcome = await Promise.race([
     exited,
@@ -93,15 +114,6 @@ function freeDisplay(): number {
     if (!existsSync(`/tmp/.X11-unix/X${n}`) && !existsSync(`/tmp/.X${n}-lock`)) return n;
   }
   throw new Error('no free X display');
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve) => {
-    const server = createServer().listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as { port: number };
-      server.close(() => resolve(port));
-    });
-  });
 }
 
 async function until(check: () => boolean, ms: number): Promise<boolean> {
@@ -140,6 +152,8 @@ function rfbSecurityTypes(port: number): Promise<number[]> {
     const socket = connect(port, '127.0.0.1');
     let buffer = Buffer.alloc(0);
     let versionSent = false;
+    socket.setTimeout(5_000, () => socket.destroy(new Error('no RFB handshake within 5 s')));
+    socket.on('close', () => reject(new Error('closed before offering security types')));
     socket.on('data', (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
       if (!versionSent && buffer.length >= 12) {
@@ -179,11 +193,16 @@ describe.skipIf(!toolsPresent)('Beeper display isolation (real Xvfb + x11vnc fro
   let display: number;
   const services: Service[] = [];
 
-  /** Starts a unit's ExecStart on this test's display, with x11vnc on `port`. */
+  /**
+   * Starts a unit's ExecStart on this test's display, with x11vnc on `port`.
+   * A unit stopped in a way `stop` doesn't model is refused before it runs.
+   */
   const start = (unit: string, port?: number): Service => {
+    const signal = killSignal(unit);
     let commandLine = execLine(unit, 'ExecStart', runtimeDir, display);
     if (port !== undefined) commandLine = commandLine.replace('-rfbport 5900', `-rfbport ${port}`);
-    const service = { unit, process: spawn('sh', ['-c', `exec ${commandLine}`], { stdio: 'ignore' }) };
+    const child = spawn('sh', ['-c', `exec ${commandLine}`], { stdio: 'ignore' });
+    const service = { unit, process: child, killSignal: signal };
     services.push(service);
     return service;
   };
@@ -200,10 +219,17 @@ describe.skipIf(!toolsPresent)('Beeper display isolation (real Xvfb + x11vnc fro
   });
 
   afterEach(async () => {
-    // Last started, first stopped, as systemd orders the stop: x11vnc before
-    // the display it shows. Xvfb removes its /tmp/.X<n>-lock on the way out.
-    for (const service of services.splice(0).reverse()) await stop(service);
+    // Whatever still runs is stopped as systemd would stop it, last started
+    // first: x11vnc before the display it shows. Each must stop cleanly; a
+    // stop that hangs or fails is how the hang in x11vnc's SIGTERM showed up.
+    const stops: string[] = [];
+    for (const service of services.splice(0).reverse()) {
+      const { exitCode, signalCode } = service.process;
+      if (exitCode === null && signalCode === null) stops.push(`${service.unit}: ${await stop(service)}`);
+    }
     rmSync(runtimeDir, { recursive: true, force: true });
+
+    expect(stops.filter((outcome) => !outcome.endsWith(': clean'))).toEqual([]);
   }, 20_000);
 
   const cookie = (): string => {
@@ -230,7 +256,7 @@ describe.skipIf(!toolsPresent)('Beeper display isolation (real Xvfb + x11vnc fro
 
   it('with a password file, the VNC hop offers password auth and never "None"', async () => {
     writeFileSync(join(runtimeDir, 'claude-messenger', 'vncpasswd'), 'Pw7xQ2kz\n', { mode: 0o600 });
-    const port = await freePort();
+    const port = await unusedPort();
     start('x11vnc.service', port);
 
     expect(await offeredOnceListening(port)).toEqual([2]);
@@ -238,14 +264,14 @@ describe.skipIf(!toolsPresent)('Beeper display isolation (real Xvfb + x11vnc fro
 
   it('the VNC hop stops cleanly on its stop signal, even just after a viewer leaves, as at `signin-surface.sh down`', async () => {
     // Stopping x11vnc.service stops noVNC first, which drops any viewer, so
-    // x11vnc gets its stop signal while it is still restoring the display
+    // x11vnc can get its stop signal while it is still restoring the display
     // after them. On SIGTERM it exits 2, which systemd counts as a failed
-    // stop, and about half of these rounds hang there, so ten all but always
-    // catch a hang. The signal goes out before anything is checked, as
-    // systemd sends it as soon as noVNC has stopped.
+    // stop, so this fails in the first round; it also hung in some rounds,
+    // which is why there are ten. The signal goes out before anything is
+    // checked, as systemd sends it as soon as noVNC has stopped.
     writeFileSync(join(runtimeDir, 'claude-messenger', 'vncpasswd'), 'Pw7xQ2kz\n', { mode: 0o600 });
     for (let round = 1; round <= 10; round++) {
-      const port = await freePort();
+      const port = await unusedPort();
       const x11vnc = start('x11vnc.service', port);
       const offered = await offeredOnceListening(port);
       const outcome = await stop(x11vnc);
@@ -256,7 +282,7 @@ describe.skipIf(!toolsPresent)('Beeper display isolation (real Xvfb + x11vnc fro
   }, 60_000);
 
   it('without a password file, the VNC hop does not start at all', async () => {
-    const port = await freePort();
+    const port = await unusedPort();
     const x11vnc = start('x11vnc.service', port);
     const outcome = await new Promise<string>((resolve) => {
       x11vnc.process.on('exit', (code) => resolve(`exited ${code}`));
