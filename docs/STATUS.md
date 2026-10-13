@@ -204,8 +204,8 @@ and `docs/HOSTING-OPTIONS.md`._
    `main` (062ba74), and ran `deploy/configure.sh`: it kept the existing
    read-only token (no approval), wrote `policy.json`, installed and
    published the system-unit MCP service, and registered it with Claude Code
-   on the box. Every check passed, the `/proc` escape included. A newer
-   kernel still waits for a reboot — put to the owner (item 6).
+   on the box. Every check passed, the `/proc` escape included. The box was
+   later rebooted onto the newer kernel and recovered on its own (item 6).
 2. **Memory, measured 2026-10-13.** Signed in at 02:11Z, settled by 02:25Z
    (Beeper's PSS flat within 4% for 9 minutes, CPU about 2%). The last
    column is with everything running at 08:58Z — MCP service up, 11 accounts.
@@ -231,22 +231,34 @@ and `docs/HOSTING-OPTIONS.md`._
      its own `app-Beeper-<pid>.scope`; count that cgroup too. Google Voice
      and Telegram arrived later as Cloud connections, which add no bridge on
      the host.
+   - **After the 14:23Z reboot** (item 6), everything running again: `free -m`
+     2093 used / 1721 available, swap down to **78 MB** — the reboot flushed
+     the ~1.1 GB of stale idle pages that had piled into swap. Beeper's tree
+     settled at ~729 MB PSS. So the box now has real headroom; the swap
+     pressure that argued for VPS-2 (item 3) is off for the moment.
 3. **Upgrade to VPS-2 — reminder given 2026-10-13; owner's call.** Told the
-   owner the numbers: the MCP service is cheap (~36–40 MB), but the box runs
-   at ~1.6 GB available with ~1.1 GB in swap before the digest or
-   mention-listener land, so sizing up is worth it before adding more. VPS-2
-   is 8 GB at $10/mo; OVH upgrades in place. **Ask before any purchase; card
-   entry is the owner's.** Awaiting his go.
+   owner the numbers: the MCP service is cheap (~36–40 MB). The box had been
+   running at ~1.6 GB available with ~1.1 GB in swap, but the 2026-10-13
+   reboot (item 6) cleared the swap (now ~1.7 GB available, 78 MB swap), so
+   the pressure is off for now — 4 GB is still tight once the digest and
+   mention-listener land, so sizing up is worth doing before that. VPS-2 is
+   8 GB at $10/mo; OVH upgrades in place. **Ask before any purchase; card
+   entry is the owner's.** Awaiting his go; less pressing after the reboot.
 4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
 5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
    Orchestrator-started sessions on the VPS may make it unnecessary.
-6. **Pending kernel-update reboot — put to the owner 2026-10-13 (his call).**
-   A reboot restarts the whole box (Beeper, the MCP service, the automation
-   agent), so it was offered as a decision, recommended to hold until he
-   picks the timing. If he says go: confirm Beeper + Xvfb auto-start on boot
-   (user-unit lingering) before rebooting, then verify `/healthz` and
-   `doctor` after.
+6. **Pending kernel-update reboot — DONE 2026-10-13.** The owner gave the go
+   ("as long as you're certain that you'll be able to restart the session
+   post-reboot without me doing anything"), and the box was rebooted onto the
+   newer kernel (7.0.0-38). It came back in about 7 seconds with nothing
+   needed from him: `tingley` has lingering on, so the user units (the
+   automation agent, `beeper-desktop`, Xvfb) start at boot, and
+   `claude-messenger-mcp` and `tailscaled` are system units. After the reboot
+   `doctor` was green with all 11 accounts, `/healthz` answered, the sandbox
+   held (home write blocked, `/proc` escape still closed), and the tailnet
+   serve was unchanged (`:443` → `127.0.0.1:8484` only, surfaces down). The
+   reboot-required flag cleared, and it flushed the swap (see item 2).
 7. **Put the digest on the VPS and schedule it** (thread "Daily message
    digest"). Bring `~/claude-messenger` to `main` and rebuild it, through the
    install's thread, which owns that checkout; run one digest from a Remote
