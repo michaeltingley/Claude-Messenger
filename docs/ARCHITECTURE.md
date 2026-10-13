@@ -20,6 +20,7 @@ Claude (Claude Code / Desktop / claude.ai)
 │         + JSONL audit log       │   read filters, send gates, rate limits
 ├─────────────────────────────────┤
 │ core/   Messenger port          │   provider-agnostic domain models
+│         AccessRequester port    │   how the credential comes to exist
 ├─────────────────────────────────┤
 │ providers/beeper/               │   @beeper/desktop-api adapter
 └──┬──────────────────────────────┘
@@ -50,11 +51,13 @@ Beeper Desktop's *Remote Access* setting (Settings → Integrations → Advanced
 ## Extension points (deliberate, not speculative)
 
 - **Streaming/triggers**: the Client API has an experimental WebSocket (`/v1/ws`, `message.upserted` etc.). Streaming will be added to the `Messenger` port together with its first provider implementation *and* a guarded wrapper in the same change, so pushed events pass through the same visibility filtering and audit as pulled reads. Until then, poll `searchChats({unreadOnly: true})`.
-- **New providers**: implement `Messenger`, add a branch in `app.ts`.
+- **New providers**: implement `Messenger` and `AccessRequester`, add a branch in `app.ts`.
+- **Credentials**: `AccessRequester` (`core/access.ts`) is how this app gets its provider credential. A Claude session drives installs and its transcript is readable, so the credential must never pass through a terminal, a chat or a screen: the owner approves in the provider's own window, and the credential travels from the provider straight into `.env` (`claude-messenger connect`). The Beeper implementation (`providers/beeper/access.ts`) drives Beeper Desktop's OAuth approval box (dynamic client registration + PKCE), waiting for sign-in first and re-asking when Beeper closes an unanswered box. The CLI sees only the port.
 - **Automations**: build on `GuardedMessenger` only, so every automated action inherits policy + audit for free. Diagnostics get a deliberately narrow `ConnectivityProbe` (checkConnection only) — the unguarded provider is never handed out of the composition root.
 
 ## Security notes
 
-- The Beeper token is all-powerful; treat it like a password. It lives in `.env` (gitignored) or the process environment, is never logged, and can be revoked any time in Beeper (Settings → Integrations → Approved connections).
+- The Beeper token is all-powerful; treat it like a password. It lives in `.env` (gitignored, owner-only) or the process environment, is never logged or displayed, and can be revoked any time in Beeper (Settings → Integrations → Approved connections).
+- `connect` asks for a read-only token unless told otherwise (`--allow-send`). Beeper's approval box lets the owner grant more than was asked; a token with write access nobody asked for, or with an expiry nothing renews, is revoked rather than saved. Fail closed: an app that can't keep a credential's terms must not leave it working.
 - Policy is enforced in this process, not by Beeper. Anyone with the raw token can bypass it — the layer protects against a confused/overreaching *agent*, not a malicious *human*.
 - Defense in depth for reads Claude never needs: `read.chatDenylist` + account allowlists shrink the blast radius of prompt injection from message content (a message can't talk Claude into leaking a chat it cannot see).

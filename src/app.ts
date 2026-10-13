@@ -1,10 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ZodError } from 'zod';
-import type { Config } from './config.js';
+import type { Config, EndpointConfig } from './config.js';
+import type { AccessRequester } from './core/access.js';
 import type { Messenger } from './core/messenger.js';
 import type { ServerInfo } from './core/types.js';
 import { MessengerError } from './core/errors.js';
+import { BeeperAccessRequester } from './providers/beeper/access.js';
 import { BeeperMessenger } from './providers/beeper/index.js';
 import { JsonlAuditLogger } from './policy/audit.js';
 import { GuardedMessenger } from './policy/guarded.js';
@@ -86,4 +88,12 @@ export async function createApp(config: Config): Promise<App> {
     policy,
     policySource: filePolicy ? 'file' : 'default',
   };
+}
+
+/**
+ * The provider's approval flow, for `connect`. It needs only the endpoint:
+ * it runs before any credential exists, and it is how one comes to exist.
+ */
+export function createAccessRequester(endpoint: EndpointConfig): AccessRequester {
+  return new BeeperAccessRequester({ baseUrl: endpoint.beeperBaseUrl });
 }

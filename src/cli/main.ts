@@ -2,18 +2,22 @@
 import { writeFile } from 'node:fs/promises';
 import { Command, InvalidArgumentError } from 'commander';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { loadConfig } from '../config.js';
-import { createApp } from '../app.js';
+import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
+import { createAccessRequester, createApp } from '../app.js';
+import type { AccessProgress, AccessRequest } from '../core/access.js';
 import { createMcpServer } from '../mcp/server.js';
 import { startHttpMcpServer } from '../mcp/http.js';
 import { DEFAULT_POLICY } from '../policy/policy.js';
-import { ConnectionError, MessengerError, PolicyDeniedError } from '../core/errors.js';
+import { AuthError, ConnectionError, MessengerError, PolicyDeniedError } from '../core/errors.js';
 import { packageVersion } from '../version.js';
+
+/** The env file every command reads, in the working directory, and where `connect` saves the token. */
+const ENV_FILE = '.env';
 
 // Best-effort .env loading; explicit env vars always win. Requires Node
 // >= 20.12 (enforced via package.json engines).
 try {
-  process.loadEnvFile('.env');
+  process.loadEnvFile(ENV_FILE);
 } catch {
   // no .env file — fine
 }
@@ -33,6 +37,7 @@ function fail(err: unknown): never {
     console.error('  3. BEEPER_BASE_URL points where the API is reachable from this machine');
   } else if (err instanceof MessengerError) {
     console.error(`✗ [${err.code}] ${err.message}`);
+    if (err instanceof AuthError) console.error('  Get a new token with: claude-messenger connect');
   } else {
     console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -40,6 +45,26 @@ function fail(err: unknown): never {
 }
 
 const app = async () => createApp(loadConfig());
+
+function parseMinutes(value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new InvalidArgumentError('must be a positive number of minutes');
+  }
+  return n;
+}
+
+/** One line per step of `connect`'s wait, in the person's terms. */
+function describeProgress(progress: AccessProgress): string {
+  switch (progress.kind) {
+    case 'sign-in-required':
+      return 'Waiting for you to sign in...';
+    case 'approval-requested':
+      return progress.attempt === 1
+        ? 'The approval box is open. Waiting for your answer...'
+        : 'The unanswered approval box closed. A new one is open...';
+  }
+}
 
 function parseLimit(value: string): number {
   const n = Number(value);
@@ -140,6 +165,51 @@ program
     const { messenger } = await app();
     const result = await messenger.sendMessage({ chatId, text });
     console.log(`✓ Sent (pending ID ${result.pendingMessageId}) — recorded in audit log`);
+  });
+
+program
+  .command('connect')
+  .description(`Get a Beeper access token through Beeper's own approval box and save it to ${ENV_FILE}, never displayed`)
+  .option('--allow-send', 'also ask for write access (sending, marking read); the policy still decides')
+  .option('--timeout <minutes>', 'how long to wait for sign-in and approval', parseMinutes, 15)
+  .action(async (opts: { allowSend?: boolean; timeout: number }) => {
+    const requester = createAccessRequester(loadEndpointConfig());
+    const request: AccessRequest = {
+      clientName: 'Claude Messenger',
+      write: Boolean(opts.allowSend),
+      timeoutMs: opts.timeout * 60_000,
+      onProgress: (progress) => console.log(describeProgress(progress)),
+    };
+    // The token goes from the provider straight into the env file. The person
+    // sees only the provider's own window, so the token never passes through
+    // a terminal, a chat or a screen, and a session's transcript never holds it.
+    for (const line of requester.instructions(request)) console.log(line);
+    console.log(`Waiting up to ${opts.timeout} min...`);
+    const grant = await requester.requestAccess(request);
+
+    let replaced: boolean;
+    try {
+      ({ replaced } = await saveAccessToken(ENV_FILE, grant.token));
+    } catch (err) {
+      // A token this command could not keep must not keep working either.
+      const revoked = await grant.revoke().then(
+        () => true,
+        () => false,
+      );
+      throw new Error(
+        `Could not save the token to ${ENV_FILE} (${(err as Error).message}). ` +
+          (revoked ? 'It was revoked.' : 'It still works until you revoke it in Beeper.'),
+        { cause: err },
+      );
+    }
+    console.log(
+      `✓ Approved (${grant.write ? 'read and write' : 'read only'}). The token is in ${ENV_FILE}; it was never displayed.`,
+    );
+    if (request.write && !grant.write) {
+      console.log('  Sending was not allowed in the approval box, so it will not work even where the policy allows it.');
+    }
+    if (replaced) console.log('  It replaced an earlier token, which still works until you revoke it in Beeper.');
+    console.log('Next: claude-messenger doctor');
   });
 
 program
