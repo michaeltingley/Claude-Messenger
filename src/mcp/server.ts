@@ -1,7 +1,18 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { Messenger } from '../core/messenger.js';
+import type { Message, Page } from '../core/types.js';
 import { MessengerError, PolicyDeniedError } from '../core/errors.js';
+
+/**
+ * Messages as the tools show them: without `ownText`, the cautious reading of
+ * what a sender wrote themselves that decides whether they addressed Claude.
+ * It leaves out whatever may be someone else's words, so it can't stand in
+ * for the text, and an agent reading a chat reads the text itself.
+ */
+function forTools(page: Page<Message>): Page<Omit<Message, 'ownText'>> {
+  return { ...page, items: page.items.map(({ ownText: _, ...message }) => message) };
+}
 
 /**
  * Curated MCP tool surface over a (policy-guarded) Messenger.
@@ -98,7 +109,8 @@ export function createMcpServer(messenger: Messenger, version: string): McpServe
         cursor: z.string().optional().describe('nextCursor from a previous page'),
       },
     },
-    ({ chatId, cursor }) => run(() => messenger.listMessages(chatId, cursor !== undefined ? { cursor } : undefined)),
+    ({ chatId, cursor }) =>
+      run(async () => forTools(await messenger.listMessages(chatId, cursor !== undefined ? { cursor } : undefined))),
   );
 
   server.registerTool(
@@ -119,7 +131,7 @@ export function createMcpServer(messenger: Messenger, version: string): McpServe
         cursor: z.string().optional(),
       },
     },
-    (args) => run(() => messenger.searchMessages(args)),
+    (args) => run(async () => forTools(await messenger.searchMessages(args))),
   );
 
   server.registerTool(
