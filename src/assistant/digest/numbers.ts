@@ -1,15 +1,26 @@
 /**
- * Digits a number could be written with, and what can group them: any run
- * of spaces, or up to three signs that aren't a letter, a digit or a space
- * (dots, dashes, slashes, brackets, dots in the middle), between two digits.
- * A letter or a line break ends a number, and so do a comma or a semicolon
- * and a space, as they end an item of a list. A digit's marks go with it, as
- * a keycap's do ("4️⃣"), and so does a "+", "(" or currency sign right before
- * the first digit. A run of spaces is one group, matched whole, and each
- * number is matched from its start, so this takes time linear in the text.
+ * A line break inside a paragraph, which a renderer shows as a space: one
+ * before a line that doesn't start something of its own, as a blank line, a
+ * quote, a heading or an item of a list does. (A fence would take more
+ * signs than can group a number.)
  */
-const DIGITS =
-  /(?:[+(\p{Sc}][^\S\n]?)?\p{N}\p{M}*(?:(?:[^\S\n]+(?![^\S\n])|(?:[,;](?![^\S\n])|[^\p{L}\p{N}\p{M}\s,;])\p{M}*){0,3}\p{N}\p{M}*)*/gu;
+const SOFT_BREAK = String.raw`\n(?![^\S\n]*(?:\n|>|#{1,6}(?!\S)|[-+*](?!\S)|\d{1,9}[.)](?!\S)))`;
+
+/**
+ * Digits a number could be written with, and what can group them: up to
+ * three runs of spaces, line breaks inside a paragraph (which show as
+ * spaces) and signs that aren't a letter, a digit or a space (dots, dashes,
+ * slashes, brackets, dots in the middle), between two digits. A letter ends
+ * a number, and so do a comma or a semicolon and a space or a line break,
+ * as they end an item of a list. A digit's marks go with it, as a keycap's
+ * do ("4️⃣"), and so does a "+", "(" or currency sign right before the
+ * first digit. A run of spaces is one group, matched whole, and each number
+ * is matched from its start, so this takes time linear in the text.
+ */
+const DIGITS = new RegExp(
+  String.raw`(?:[+(\p{Sc}][^\S\n]?)?\p{N}\p{M}*(?:(?:[^\S\n]+(?![^\S\n])|${SOFT_BREAK}|(?:[,;](?!\s)|[^\p{L}\p{N}\p{M}\s,;])\p{M}*){0,3}\p{N}\p{M}*)*`,
+  'gu',
+);
 
 /** The most digits a number may show: fewer than a code, a phone number or an account number has. */
 const MAX_DIGITS_SHOWN = 5;

@@ -164,8 +164,14 @@ describe('safeMarkdown', () => {
     expect(safeMarkdown('Call +1 (415) 555-0199, 415-555-0199, 415.555.0199 or 1-800-555-0199.')).toBe(
       'Call (number), (number), (number) or (number).',
     );
-    // Numbers on lines of their own, as a list's items, or with more between them than a phone number's groups, are apart.
-    expect(safeMarkdown('- Order 12345\n- 678 items, up 12.5% \u2192 14.2%')).toBe('- Order 12345\n- 678 items, up 12.5% \u2192 14.2%');
+    // A line break inside a paragraph shows as a space, so a number across one is one number.
+    expect(safeMarkdown('Call 415\n555\n0199 or 415\n   -555-0199.')).toBe('Call (number) or (number).');
+    // One before a list's next item, a quote, a heading or a blank line, or after a comma, ends it, as do more signs than a phone number's groups have.
+    const apart = [
+      '- Order 12345\n- 678 items\n1. Pay 12345\n2. 678 left\nOwe 12345\n  >678 more\nDue 12345\n# 678 more',
+      'Got 12345\n\n678, rooms 12345,\n678 up 12.5% \u2192 14.2%',
+    ].join('\n');
+    expect(safeMarkdown(apart)).toBe(apart);
   });
 
   it('escapes what could still open a link, an autolink, raw HTML, an entity or a code span', () => {
@@ -216,7 +222,7 @@ describe('safeMarkdown', () => {
   it('takes time linear in the text, whatever the text is', () => {
     const pieces = [
       '[', '![', '[a](', 'a.', 'a-', 'a_', '1.', 'a@', 'a.b:', 'www.', '//.', '+1 ', 'a.bc/.', '\u200d', 'a\u3002', 'a\u3002b.',
-      '1 - ', '1,', '(1', '$1', '12 ', '1:2', 'a*', '*a', 'a.*', 'a_.', 'xn--', '--a', 'a.b?', '\u0301', '\u0301\u0316', 'a\u034f',
+      '1 - ', '1,', '(1', '$1', '12 ', '1:2', '1\n', '1\n -', '1,\n', 'a*', '*a', 'a.*', 'a_.', 'xn--', '--a', 'a.b?', '\u0301', '\u0301\u0316', 'a\u034f',
       '1\u20e3', '\ufe0f', '\u{e0100}', `${'A'.repeat(19)}1 `,
       // Numbers of dates that each read more than one way, each ending in one that is none.
       `${'10.10 '.repeat(10)}1234, `,

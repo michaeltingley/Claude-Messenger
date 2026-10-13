@@ -118,6 +118,10 @@ const SPLITTING_MARKERS =
  * address, so nothing left can open a link, raw HTML, an entity or a code
  * span. Bold, italics, lists and headings stay as written. Each step takes
  * time linear in the text, whatever the text is.
+ *
+ * Words can't be told from words: a number spelled out, or written in
+ * letters that look like digits, still gets through, so the instructions
+ * are the first guard and this is the second.
  */
 export function safeMarkdown(markdown: string): string {
   const plain = markdown.replace(MARK_RUN, '$1').replace(FOLDABLE, (run) => run.normalize('NFKC'));
