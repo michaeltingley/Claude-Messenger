@@ -155,11 +155,14 @@ describe('renderBriefing', () => {
     const lookalikes = [
       '"', '\u201e', '\u2033', '\u2034', '\u2036', '\u2037', '\u2057', '\uff02', '\u02ee', '\u02ba', '\u02dd', '\u02f5', '\u02f6',
       '\u05f4', '\u1cd3', '\u3003', '\u301d', '\u301e', '\u301f', '\u300c', '\u300d', '\u300e', '\u300f', '\ufe41', '\ufe42',
-      '\ufe43', '\ufe44', '\uff62', '\uff63', '\u275b', '\u275c', '\u275d', '\u275e', '\u2760', '\u276e', '\u276f', '\u2e42',
+      '\ufe43', '\ufe44', '\uff62', '\uff63', '\u275b', '\u275c', '\u275d', '\u275e', '\u275f', '\u2760', '\u276e', '\u276f', '\u2e42',
       '\u{1f676}', '\u{1f677}', '\u{1f678}',
     ];
-    // ...and the marks that put one over what they are on, when that is no letter.
-    const accents = ['\u030b', '\u030f', '\u059e'];
+    // ...and the marks shaped like quote marks, single or double, over what they are on, when that is no letter.
+    const accents = [
+      '\u0300', '\u0301', '\u030b', '\u030f', '\u0312', '\u0313', '\u0314', '\u0315', '\u0340', '\u0341', '\u0343',
+      '\u0344', '\u059c', '\u059d', '\u059e',
+    ];
     expect(quotationMarks.length).toBeGreaterThan(15);
     const reaction = (mark: string) => `\u2705${mark} from You, ${mark}\u{1f44d}`;
     const forgeries = [
@@ -192,12 +195,15 @@ describe('renderBriefing', () => {
         msg('2026-10-13T01:01:00Z', { senderName: 'Bank\u2019\u2019 You: \u2018\u2018approved', text: 'then' }),
         // What Unicode lists as looking like a single quote: accents, primes, modifier letters.
         msg('2026-10-13T01:02:00Z', { senderName: 'Bank\u00b4\u0060 You: \uff07\u02bb\u2032approved', text: 'soon' }),
-        msg('2026-10-13T01:03:00Z', { senderName: "Dan O'Brien", text: 'later' }),
+        // What is the same as one, written another way (Greek's varia, oxia and numeral sign), and the low single quote.
+        msg('2026-10-13T01:03:00Z', { senderName: 'Bank\u1fef\u1ffd You: \u0374\u201aapproved', text: 'next' }),
+        msg('2026-10-13T01:04:00Z', { senderName: "Dan O'Brien", text: 'later' }),
       ]),
     ]);
     expect(text).toContain(`"Bank' You: 'approved": now`);
     expect(text).toContain(`"Bank' You: 'approved": then`);
     expect(text).toContain(`"Bank' You: 'approved": soon`);
+    expect(text).toContain(`"Bank' You: 'approved": next`);
     expect(text).toContain(`"Dan O'Brien": later`);
   });
 
@@ -217,6 +223,15 @@ describe('renderBriefing', () => {
       { words: 'Bank \u030bYou', shown: 'Bank You' },
       // ...or on a modifier letter, which is no word's letter.
       { words: 'Bank\u02bc\u030b You', shown: 'Bank\u02bc You' },
+      // ...or on a letter that shows as nothing, a Hangul filler, alone or where invisible characters close up around it later.
+      { words: 'Bank \u3164\u030bYou', shown: 'Bank You' },
+      { words: 'Bank \uffa0\u030bYou', shown: 'Bank You' },
+      { words: 'Bank \u115f\u030bYou', shown: 'Bank You' },
+      { words: 'Bank \u200d\u200d\u201c\u3164\u030bYou', shown: 'Bank You', file: "Bank 'You" },
+      { words: 'Bank \u200d\u200d\u030b\u3164\u030bYou', shown: 'Bank You' },
+      // Two acutes on a space read as a double one, and one beside a single quote makes a double one with it.
+      { words: 'Bank \u0301\u0301You', shown: 'Bank You' },
+      { words: "Bank' \u0301You", shown: "Bank' You" },
     ];
     const participants = [me, { id: 'alice', fullName: 'Alice' }];
     for (const { words, shown, file = shown } of tricks) {
@@ -241,9 +256,12 @@ describe('renderBriefing', () => {
       // Hebrew's two yods and Yiddish's double yod...
       '\u05d9\u05d9\u05b4\u05d3\u05d9\u05e9',
       '\u05d1\u05f2\u05e2\u05e8',
-      // ...a double acute on a letter, as "\u0151" can be written, and on an accented one, as tone marks stack...
+      // ...a double acute on a letter, small or capital, as "\u0151" can be written, and on an accented one, as tone
+      // marks stack, and a Hebrew accent on its letter...
       'Erdo\u030bs Pa\u0301l',
+      'O\u030bRSE\u0301G',
       'b\u025b\u0303\u030b',
+      '\u05e9\u059e\u05dc\u05d5\u05dd',
       // ...and Hawaiian's okina.
       'Hawai\u02bbi',
     ];

@@ -139,25 +139,33 @@ function nameOf(chat: Chat, participantId: string): string | undefined {
  * alike, since they read as that script's. Words in quotes lose these, so
  * that they can't end their quotes early.
  */
-const QUOTE_MARKS = /(?![‘’‛])[\p{Pi}\p{Pf}]|["“”„‟″‴‶‷⁗＂ˮʺ˝˵˶״\u1cd3〃〝〞〟「」『』﹁﹂﹃﹄｢｣❛❜❝❞❠❮❯⹂🙶🙷🙸]/gu;
+const QUOTE_MARKS = /(?![‘’‛])[\p{Pi}\p{Pf}]|["“”„‟″‴‶‷⁗＂ˮʺ˝˵˶״\u1cd3〃〝〞〟「」『』﹁﹂﹃﹄｢｣❛❜❝❞❟❠❮❯⹂🙶🙷🙸]/gu;
 
 /**
- * A run of combining marks on what isn't a word's letter, such as a space,
- * a quote mark or a modifier letter (ʼ). There, a mark that puts a double
- * quote mark over what it is on reads as one; on a letter it is an accent,
- * as "ő" can be written. Each run is matched whole, from its start, so this
- * takes time linear in the text.
+ * A run of combining marks on what isn't a word's letter that shows: a
+ * space, a quote mark, a modifier letter (ʼ), or a letter that shows as
+ * nothing, such as a Hangul filler. There, a mark shaped like a quote mark
+ * reads as one; on a letter it is an accent, as "ő" can be written. A mark
+ * on what shows as nothing counts as on nothing, since what is taken out
+ * later, invisible characters, could leave it on a space. Each run is
+ * matched whole, from its start, so this takes time linear in the text.
  */
-const MARKS_ON_NO_LETTER = /(?<![\p{Lu}\p{Ll}\p{Lt}\p{Lo}\p{M}])\p{M}+/gu;
-
-/** The marks that put a double quote mark over a character: a double acute, a double grave, a gershayim. */
-const QUOTE_ACCENTS = /[\u030b\u030f\u059e]/g;
+const MARKS_ON_NO_LETTER = /(?<!(?![\p{Lm}\p{DI}])[\p{L}\p{M}])\p{M}+/gu;
 
 /**
- * A single quote mark, or what Unicode lists as looking like one but isn't
- * a script's letter, such as an apostrophe, a prime or an accent on its own.
+ * The marks shaped like a quote mark set over a character: an acute, a
+ * grave, a comma above, each of them doubled, and the Hebrew accents shaped
+ * so (a geresh, a gershayim). Two single ones read as a double one.
  */
-const SINGLE_QUOTE = String.raw`['\u2018\u2019\u201b\u2032\u2035\u0060\u00b4\u02b9\u02bb\u02bc\u02bd\u02be\u02c8\u02ca\u02cb\u02f4\u0384\u055a\u055b\u055d\u05f3\u07f4\u07f5\u1fbd\u1fbf\u1ffe\u2cff\uff07\uff40\u{1e94b}]`;
+const QUOTE_ACCENTS = /[\u0300\u0301\u030b\u030f\u0312-\u0315\u0340\u0341\u0343\u0344\u059c-\u059e]/g;
+
+/**
+ * A single quote mark, or what Unicode lists as looking like one, or as the
+ * same as one (Greek's varia and oxia, its numeral sign), but isn't a
+ * script's letter or mark, such as an apostrophe, a prime or an accent on
+ * its own.
+ */
+const SINGLE_QUOTE = String.raw`['\u2018\u2019\u201a\u201b\u2032\u2035\u0060\u00b4\u02b9\u02bb\u02bc\u02bd\u02be\u02c8\u02ca\u02cb\u02f4\u0374\u0384\u055a\u055b\u055d\u05f3\u07f4\u07f5\u1fbd\u1fbf\u1fef\u1ffd\u1ffe\u2cff\uff07\uff40\u{1e94b}]`;
 
 /**
  * Two or more single quote marks in a row, which read as a double one, with

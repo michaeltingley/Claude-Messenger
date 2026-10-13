@@ -151,24 +151,45 @@ describe('safeMarkdown', () => {
     expect(safeMarkdown('Use 123,456 or $4155550199, not $1,000.4155550199')).toBe('Use (number) or (number), not (number)');
   });
 
-  it('turns a code written in groups, as a recovery key or a product key is, into "(code)", but not words side by side', () => {
+  it('turns a code written in groups, as a product key or a gift card\'s code is, into "(code)", but not names side by side', () => {
     const codes = [
-      // A Matrix recovery key, a product key, a gift card's code, an authenticator's key.
-      'EsTc 3yST y93F SLpB jJsz eAXc 2XzA ygD3 w69H fGaN TKBj jXEd',
+      // A product key, a gift card's code, an authenticator's key...
       'VK7JG-NPHTM-C97JM-9MPGT-3V66T',
       '4J8K-9LMN-3PQ7',
       'JBSW Y3DP EHPK 3PXP',
-      // Across a line break inside a paragraph, which shows as a space.
+      // ...across a line break inside a paragraph, which shows as a space...
       'AB12-CD34\nEF56-GH78',
+      // ...and joined by what looks like a hyphen or a space: other dashes, a minus sign, tabs, more than one space.
+      'VK7JG\u2010NPHTM\u2010C97JM\u20109MPGT\u20103V66T',
+      'VK7JG\u2013NPHTM\u2013C97JM\u20139MPGT\u20133V66T',
+      'VK7JG\u2212NPHTM\u2212C97JM\u22129MPGT\u22123V66T',
+      'VK7JG\tNPHTM\tC97JM\t9MPGT\t3V66T',
+      'VK7JG  NPHTM  C97JM  9MPGT  3V66T',
     ];
     for (const code of codes) expect(safeMarkdown(`Key: ${code}.`), code).toBe('Key: (code).');
-    // Words, names and capitals in a row, groups too short to be a code's, and numbers, which are found as numbers.
+    // Words, names and capitals side by side, of different lengths, or too few of one length to be a code's, groups
+    // too short to be one's, and numbers, which are found as numbers.
     const kept = [
       'WhatsApp LinkedIn YouTube', 'Gen2 USB4 ports with 40Gbps', 'RTX4090 GPUs with 24GB VRAM', 'HTTP HTTPS SMTP IMAP',
-      'PLEASE CALL BACK SOON', 'XK7-P9Q', 'UA123 SFO-JFK', 'Room 1234 at 5678 Main St',
+      'PLEASE CALL BACK SOON', 'XK7-P9Q', 'UA123 SFO-JFK', 'Room 1234 at 5678 Main St', 'NVIDIA H100 GPUs',
+      'HAPPY BIRTHDAY 2026', 'GPT4 GPT5 Claude4', 'PCIe Gen5 NVMe', 'H100 A100 V100', '10AM 11AM 12PM', 'DDR5-6000 CL30',
+      'this will make sure that 2026 goes', 'HTTP SMTP IMAP LDAP', 'WWDC 2026 KEYNOTE RECAP',
     ];
     for (const text of kept) expect(safeMarkdown(text), text).toBe(text);
     expect(safeMarkdown('card 4111 1111 1111 1111')).toBe('card (number)');
+  });
+
+  it('turns a Matrix recovery key into "(code)", whatever its groups read as and however they are joined', () => {
+    // Some of its groups read as words ("Seir", "buin"), and a stretch of them can hold no digit.
+    expect(safeMarkdown('Key: EsTi bZCa tqJm ERWP pXCv DzuV PRHg Seir raRC F2KL buin 1vvT.')).toBe('Key: (code).');
+    // Keys made as Matrix makes them: two bytes that mark one, 32 random ones and their parity, in base58.
+    const random = seeded(2026);
+    for (let i = 0; i < 1_000; i++) {
+      const key = matrixRecoveryKey(Array.from({ length: 32 }, () => Math.floor(random() * 256)));
+      for (const shown of [key, key.replace(/ /g, ''), key.replace(/ /g, '\n'), key.replace(/ /g, '-')]) {
+        expect(safeMarkdown(`Your key is ${shown}.`), shown).toBe('Your key is (code).');
+      }
+    }
   });
 
   it('leaves dates, times, years and amounts, alone, in a span or one after another, and short numbers', () => {
@@ -245,7 +266,8 @@ describe('safeMarkdown', () => {
     const pieces = [
       '[', '![', '[a](', 'a.', 'a-', 'a_', '1.', 'a@', 'a.b:', 'www.', '//.', '+1 ', 'a.bc/.', '\u200d', 'a\u3002', 'a\u3002b.',
       '1 - ', '1,', '(1', '$1', '12 ', '1:2', '1\n', '1\n -', '1,\n', 'a*', '*a', 'a.*', 'a_.', 'xn--', '--a', 'a.b?', '\u0301', '\u0301\u0316', 'a\u034f',
-      '1\u20e3', '\ufe0f', '\u{e0100}', `${'A'.repeat(19)}1 `, '-', '_', 'Ab1C ', 'Ab1C-Ab1C x ', 'ABCD ',
+      '1\u20e3', '\ufe0f', '\u{e0100}', `${'A'.repeat(19)}1 `, '-', '_', 'Ab1C ', 'Ab1C-Ab1C x ', 'ABCD ', 'Es12 ',
+      'AB12-', 'AB12 \n', 'AB12 AB123 ', 'AB12-AB12 ',
       // Numbers of dates that each read more than one way, each ending in one that is none.
       `${'10.10 '.repeat(10)}1234, `,
     ];
@@ -257,6 +279,9 @@ describe('safeMarkdown', () => {
       `a${'_'.repeat(200_000)}`,
       // Spaces a number could be split across in many ways, but for a run of them taken whole.
       `1${' '.repeat(3_000)}x`,
+      // Spaces and tabs a code's groups could be joined by, ending in no group.
+      `Es12${' '.repeat(200_000)}x`,
+      `AB12${'\t'.repeat(200_000)}x`,
     ];
     // Each takes well under a second; a pattern that backtracked over the text would take far longer on any one.
     for (const text of texts) {
@@ -274,3 +299,30 @@ describe('safeMarkdown', () => {
     expect(safeMarkdown('visible\rhidden, a\u0085b, c\u2028d')).toBe('visible\nhidden, a\nb, c\nd');
   });
 });
+
+/** Numbers in [0, 1) from a seed, the same each run (mulberry32). */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+/**
+ * A recovery key as the Matrix spec makes one from a key's 32 bytes: 0x8B
+ * and 0x01 before them, a byte that makes them all XOR to 0 after, in
+ * base58, in groups of four joined by spaces.
+ */
+function matrixRecoveryKey(key: number[]): string {
+  const bytes = [0x8b, 0x01, ...key];
+  bytes.push(bytes.reduce((parity, byte) => parity ^ byte, 0));
+  const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  let value = bytes.reduce((n, byte) => n * 256n + BigInt(byte), 0n);
+  let base58 = '';
+  for (; value > 0n; value /= 58n) base58 = alphabet[Number(value % 58n)] + base58;
+  return base58.match(/.{1,4}/g)!.join(' ');
+}
