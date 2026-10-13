@@ -72,7 +72,7 @@ and `docs/HOSTING-OPTIONS.md`._
     runners, under real systemd with Ubuntu's restriction on, across both
     24.04 (systemd 255) and 26.04 (259): the /proc escape closed on 259 and
     still open on 255, each asserted in turn.
-- **Read-only @Claude listener (#PR)**: phase 1's first step of the @Claude
+- **Read-only @Claude listener (#24)**: phase 1's first step of the @Claude
   assistant (see "@Claude assistant" below). `claude-messenger mentions`
   prints each message the owner sends that mentions `@Claude`, live, one
   JSON line each. Nothing answers yet.
@@ -167,7 +167,7 @@ nothing reaches other people. Phase 2 "Knows you" indexes his messages,
 Gmail and Calendar. Phase 3 "Acts for you" sends as him, each send
 approved in the Claude chat.
 
-1. **Done:** the read-only listener (#PR, above).
+1. **Done:** the read-only listener (#24, above).
 2. **Next: Claude's own Beeper account**, so answers come from Claude, not
    from the owner. Creating an account is the owner's call, and Beeper
    emails a sign-up code. The plan is a Matrix bot on the VPS through
