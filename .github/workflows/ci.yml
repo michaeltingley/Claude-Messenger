@@ -7,7 +7,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Both the systemd the MCP sandbox must hold under: 24.04 ships 255, whose
+    # append_static_mounts bug the TemporaryFileSystem stand-ins work around
+    # and which is too old for PrivatePIDs; 26.04 ships 259, where PrivatePIDs
+    # closes the /proc escape. The sandbox test asserts each in turn.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

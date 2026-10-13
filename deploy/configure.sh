@@ -182,6 +182,14 @@ if [ -e "$UNIT_DIR/$MCP_UNIT" ]; then
 fi
 # The unit may write only these, and systemd refuses to start it if either is missing.
 mkdir -p audit state
+# PrivatePIDs in the unit, which keeps a compromised server from reaching the
+# owner's other processes through /proc, needs systemd 257. 255 and 256 start
+# the service without it (ignoring the key with a log warning); the rest of
+# the sandbox still applies. Say so, rather than let the gap pass unnoticed.
+systemd_major="$(systemctl --version | sed -n 's/^systemd \([0-9][0-9]*\).*/\1/p' | head -n 1)"
+if [ -n "$systemd_major" ] && [ "$systemd_major" -lt 257 ]; then
+  warn "systemd ${systemd_major} is older than 257, so the MCP service cannot get its own process namespace (PrivatePIDs). The rest of its sandbox applies, but a server that was compromised could read your other processes' files and environment through /proc. Ubuntu 24.10+ and 26.04 ship 257 or newer."
+fi
 # Run as this user. __NODE__ must be the interpreter itself: /usr/bin/node
 # only exists on apt installs, an nvm or asdf node lives in this home, which
 # the sandbox hides but for what the unit lets through, and an asdf shim is a

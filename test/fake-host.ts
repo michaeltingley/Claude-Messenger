@@ -81,6 +81,14 @@ esac
 const SYSTEMCTL_SHIM = `#!/usr/bin/env bash
 S="$FAKE_HOST_STATE"
 echo "systemctl $*" >> "$S/calls.log"
+# The host's systemd version, as configure.sh reads it to decide whether the
+# sandbox can get PrivatePIDs. A fresh runner is new enough (259, like the
+# VPS); the \`systemd-version\` flag stands in for an older host.
+if [ "\${1:-}" = "--version" ]; then
+  v="$(cat "$S/systemd-version" 2>/dev/null || echo 259)"
+  echo "systemd $v ($v.4-1ubuntu1)"
+  exit 0
+fi
 if [ "\${1:-}" = "--user" ]; then
   shift
   scope=user; T="$S"; dir="$HOME/.config/systemd/user"
@@ -160,7 +168,14 @@ start_unit() {
 case "$verb" in
   daemon-reload) ;;
   cat) installed "$1" ;;
-  is-active) [ "$1" = "--quiet" ] && shift; [ -e "$T/active/$1" ] ;;
+  is-active)
+    [ "\${1:-}" = "--quiet" ] && shift
+    [ -e "$T/active/$1" ] || exit 1
+    # A Type=simple unit whose process has died is no longer active, though its
+    # state flag lingers. Check the recorded leader pid is still alive, so a
+    # caller that loops on is-active (configure.sh) sees a crash as the real
+    # is-active would, instead of waiting out its whole timeout.
+    [ ! -e "$T/pids/$1" ] || kill -0 "$(cat "$T/pids/$1")" 2>/dev/null ;;
   is-enabled) [ "$1" = "--quiet" ] && shift; [ -e "$T/enabled/$1" ] ;;
   start|restart)
     for u in "$@"; do
@@ -396,8 +411,8 @@ export class FakeHost {
     return host;
   }
 
-  set(flag: string): this {
-    writeFileSync(join(this.state, flag), '');
+  set(flag: string, content = ''): this {
+    writeFileSync(join(this.state, flag), content);
     return this;
   }
 

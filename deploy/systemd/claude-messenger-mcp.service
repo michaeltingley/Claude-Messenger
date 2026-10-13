@@ -19,20 +19,36 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 # The sandbox. Of the home directories and /run/user it sees only the install,
-# read-only, and node. So a compromised server can't read SSH keys, other
-# tools' credentials, Beeper's own data (its login token is a full API token)
-# or the sign-in screen's X cookie and VNC password. It can change only its
-# audit trail and rate window: every other file it sees is read-only, apart
-# from a /tmp of its own. The home directories, /run/user, and the host's
-# shared memory and message queues are swapped for empty, read-only
-# stand-ins. Not ProtectHome=tmpfs: systemd 255 and 256 (Ubuntu 24.04 has
-# 255) make its stand-ins writable. configure.sh refuses a .env that keeps
-# the policy, audit trail or rate window anywhere else.
+# read-only, and node. So through the filesystem a compromised server can't
+# read SSH keys, other tools' credentials, Beeper's own data (its login token
+# is a full API token) or the sign-in screen's X cookie and VNC password. It
+# can change only its audit trail and rate window: every other file it sees is
+# read-only, apart from a /tmp of its own. The home directories, /run/user,
+# and the host's shared memory and message queues are swapped for empty,
+# read-only stand-ins. Not ProtectHome=tmpfs: systemd 255 and 256 (Ubuntu
+# 24.04 has 255) make its stand-ins writable. configure.sh refuses a .env that
+# keeps the policy, audit trail or rate window anywhere else.
 ProtectSystem=strict
 TemporaryFileSystem=/home:ro /root:ro /run/user:ro /dev/shm:ro /dev/mqueue:ro
 BindReadOnlyPaths=__INSTALL_DIR__ __NODE__
 BindPaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state
 PrivateTmp=true
+# Hiding files is not enough on its own: the service runs as the owner, so if
+# it shared the owner's PID namespace it could reach around the mount
+# namespace through the owner's other processes — reading their files under
+# /proc/<pid>/root (SSH keys, Beeper's token) and their /proc/<pid>/environ,
+# all of it with PTRACE_MODE_READ_FSCREDS, which Yama's ptrace_scope does not
+# gate. Its own PID namespace leaves it seeing only itself. systemd 257+ only
+# (the VPS has 259); 255 and 256 lack it and ignore the key with a warning, so
+# on Ubuntu 24.04 the owner's other processes stay reachable this way —
+# configure.sh says so at install time, and docs/STATUS.md records it.
+PrivatePIDs=true
+# Its own SysV IPC and POSIX message queues, so it can neither reach nor be
+# reached through the host's. (POSIX shared memory is file-based, so the
+# /dev/shm stand-in above covers it; AF_UNIX and abstract sockets follow the
+# network namespace, which this service shares with the host — see the
+# residual risks in docs/STATUS.md.) systemd 248+.
+PrivateIPC=true
 # Backstop for leaks on small hosts; normal footprint is well under this.
 MemoryMax=512M
 

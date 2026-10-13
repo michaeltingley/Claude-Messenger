@@ -48,7 +48,9 @@ const REPO = join(import.meta.dirname, '..');
 const UNIT = 'claude-messenger-mcp.service';
 const USERNS_RESTRICTION = '/proc/sys/kernel/apparmor_restrict_unprivileged_userns';
 
-const onRunner = process.env.GITHUB_ACTIONS === 'true';
+// GitHub's own runners give every run a fresh VM; a self-hosted runner that
+// set GITHUB_ACTIONS could be a real machine, which this test would wreck.
+const onRunner = process.env.GITHUB_ACTIONS === 'true' && process.env.RUNNER_ENVIRONMENT === 'github-hosted';
 if (onRunner) {
   if (!existsSync('/run/systemd/system')) throw new Error('CI must run on a host booted with systemd');
   if (spawnSync('sudo', ['-n', 'true']).status !== 0) throw new Error('CI must have passwordless sudo');
@@ -86,6 +88,11 @@ describe.runIf(onRunner)('the MCP service sandbox (real systemd and sudo, CI onl
   let mock: MockBeeperServer | undefined;
   let mcpPort: number;
   let pid: number;
+  // PrivatePIDs, which gives the service its own PID namespace and so closes
+  // the /proc escape below, needs systemd 257. CI runs both: 24.04 (255) and
+  // 26.04 (259).
+  let systemdMajor = 0;
+  let privatePidsApplies = false;
   // What the service must not see, though its user can.
   const homeMarker = join(home, `cm-sandbox-marker-${process.pid}`);
   const runtimeMarker = join(runtimeDir, `cm-sandbox-marker-${process.pid}`);
@@ -146,6 +153,8 @@ describe.runIf(onRunner)('the MCP service sandbox (real systemd and sudo, CI onl
     expect(run.code, `${run.stdout}\n${run.stderr}\n${journal()}`).toBe(0);
 
     pid = Number(execFileSync('systemctl', ['show', '--property', 'MainPID', '--value', UNIT], { encoding: 'utf8' }));
+    systemdMajor = Number(/systemd (\d+)/.exec(execFileSync('systemctl', ['--version'], { encoding: 'utf8' }))?.[1]);
+    privatePidsApplies = systemdMajor >= 257;
     for (const marker of [homeMarker, runtimeMarker, hostTmpMarker]) writeFileSync(marker, '');
   }, 180_000);
 
@@ -226,29 +235,78 @@ describe.runIf(onRunner)('the MCP service sandbox (real systemd and sudo, CI onl
     expect(inside(exists, join(install!, '.env')).status).toBe(0);
   });
 
-  it('cannot write to the home, the install, the system, or the host shared memory and message queues', () => {
-    const probes = [
-      join(home, 'sandbox-probe'),
-      join(install!, 'sandbox-probe'),
-      '/run/lock/sandbox-probe',
-      '/dev/shm/sandbox-probe',
-      '/dev/mqueue/sandbox-probe',
-    ];
-    for (const probe of probes) {
-      // The user can write there outside the service, so the sandbox is what stops it.
-      expect(outside(touch, probe).status, `outside: ${probe}`).toBe(0);
-      expectReadOnlyInside(probe);
+  // Each is somewhere the service's user can write outside the sandbox, so
+  // the sandbox is what stops the service; a row per probe names exactly
+  // which path leaked when one fails.
+  it.each([
+    ['its own home', () => join(home, 'sandbox-probe')],
+    ['the install it runs from', () => join(install!, 'sandbox-probe')],
+    ['the system (/run/lock)', () => '/run/lock/sandbox-probe'],
+    ['the host shared memory (/dev/shm)', () => '/dev/shm/sandbox-probe'],
+    ['the host message queues (/dev/mqueue)', () => '/dev/mqueue/sandbox-probe'],
+  ])('cannot write to %s', (_, probe) => {
+    const path = probe();
+    expect(outside(touch, path).status, `outside: ${path}`).toBe(0);
+    expectReadOnlyInside(path);
+  });
+
+  it.each(['/home/sandbox-probe', '/root/sandbox-probe', '/run/user/sandbox-probe'])(
+    'cannot write to the empty stand-in %s',
+    (probe) => expectReadOnlyInside(probe),
+  );
+
+  it('runs in its own IPC namespace, not the host’s', () => {
+    // PrivateIPC, from systemd 248, so on every host CI runs this on.
+    expect(readlinkSync(`/proc/${pid}/ns/ipc`)).not.toBe(readlinkSync('/proc/self/ns/ipc'));
+  });
+
+  it('cannot reach the owner’s other processes through /proc when it has its own PID namespace', () => {
+    // The test runner is another process of the same user, outside the
+    // sandbox, and /proc/<its pid>/root leads back to the real home — the
+    // trick a compromised server would use to read SSH keys or Beeper's token
+    // around the mount sandbox. PrivatePIDs (systemd 257+) puts the service in
+    // its own PID namespace, where that pid is invisible and the path does not
+    // resolve. On 255/256 it still resolves; configure.sh warns at install
+    // time, and this pins down which way the host actually went.
+    const escape = `/proc/${process.pid}/root${homeMarker}`;
+    const reachable = inside(exists, escape).status === 0;
+    const servicePidNs = readlinkSync(`/proc/${pid}/ns/pid`);
+    const ourPidNs = readlinkSync('/proc/self/ns/pid');
+    if (privatePidsApplies) {
+      expect(servicePidNs, `systemd ${systemdMajor} should give the service its own PID namespace`).not.toBe(ourPidNs);
+      expect(reachable, `the /proc escape should be closed on systemd ${systemdMajor}`).toBe(false);
+    } else {
+      expect(servicePidNs, `systemd ${systemdMajor} has no PrivatePIDs, so the PID namespace is the host's`).toBe(ourPidNs);
+      expect(reachable, `the /proc escape is expected still open on systemd ${systemdMajor}`).toBe(true);
     }
   });
 
-  it('cannot write to the empty stand-ins for the home directories and /run/user either', () => {
-    for (const probe of ['/home/sandbox-probe', '/root/sandbox-probe', '/run/user/sandbox-probe']) {
-      expectReadOnlyInside(probe);
-    }
+  it('exposes the node binary the unit names, but not the rest of the toolchain the shim needs', () => {
+    // BindReadOnlyPaths names the real binary (installs/node); the shim and
+    // the rest of the toolchain are under the home the sandbox hides.
+    expect(inside(exists, join(toolchain!, 'installs', 'node')).status, 'the bound node binary').toBe(0);
+    expect(inside(exists, join(toolchain!, 'shims', 'node')).status, 'the shim under the hidden home').not.toBe(0);
   });
 
   it('gets a /tmp of its own', () => {
     expect(outside(exists, hostTmpMarker).status).toBe(0);
     expect(inside(exists, hostTmpMarker).status).not.toBe(0);
+  });
+
+  // Keep last: it stops the service, so any test after it would find it down.
+  it('stops promptly on systemctl stop, honouring SIGTERM as PID 1', () => {
+    const started = Date.now();
+    // A PID 1 that ignored SIGTERM would hang here until TimeoutStopSec (90s)
+    // and then be SIGKILLed; the 30s cap turns that hang into a failure.
+    const stop = spawnSync('sudo', ['systemctl', 'stop', UNIT], { encoding: 'utf8', timeout: 30_000 });
+    expect(stop.error, `systemctl stop did not return: ${stop.error?.message}`).toBeUndefined();
+    expect(stop.status, stop.stderr).toBe(0);
+    expect(Date.now() - started).toBeLessThan(20_000);
+    // Clean stop leaves it inactive; a SIGKILL after an ignored SIGTERM would
+    // show failed. (Restart= does not fire for an intentional stop.)
+    const state = execFileSync('systemctl', ['show', '--property', 'ActiveState', '--value', UNIT], {
+      encoding: 'utf8',
+    }).trim();
+    expect(state).toBe('inactive');
   });
 });

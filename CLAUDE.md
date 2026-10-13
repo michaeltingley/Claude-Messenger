@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 212 tests / 19 files.
+- `npm test` must be green before any push. Currently 226 tests / 19 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -93,10 +93,15 @@ built for hypothetical futures.
   skipping.
   `test/mcp-sandbox.integration.test.ts` runs the real `configure.sh` with
   real sudo and systemd, then tries reads and writes from inside the
-  running MCP service as its user. It replaces the host's MCP service, so it
-  runs only on GitHub's runners, never on a real host, with Ubuntu 24.04+'s
-  user namespace restriction switched on as on a real host, and node in the
-  home behind a shim, as nvm and asdf install it.
+  running MCP service as its user, and checks its PID and IPC namespaces are
+  its own — including that another of the owner's processes cannot be
+  reached through `/proc`, the escape `PrivatePIDs` closes. It replaces the
+  host's MCP service, so it runs only on GitHub's runners, never on a real
+  host, with Ubuntu 24.04+'s user namespace restriction switched on as on a
+  real host, and node in the home behind a shim, as nvm and asdf install it.
+  CI runs it on both Ubuntu 24.04 (systemd 255, too old for `PrivatePIDs`)
+  and 26.04 (259), and it asserts the /proc escape open on the first and
+  closed on the second.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene

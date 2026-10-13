@@ -109,7 +109,11 @@ What the script does:
       but the install, which it can't change, and it can write only its
       audit trail and rate window. So `.env` must keep the policy, audit
       trail and rate window in the install, as it does by default; the
-      script stops before anything else if it doesn't.
+      script stops before anything else if it doesn't. It also runs in its
+      own process and IPC namespaces, so a compromised server can't reach
+      your other processes' files or environment through `/proc`. That last
+      protection needs systemd 257 (Ubuntu 24.10+ / 26.04); on an older host
+      the script warns that it is absent and installs the service anyway.
    6. Exposes the MCP endpoint on your tailnet over HTTPS via
       `tailscale serve`.
    7. If `claude` is installed, registers Claude Messenger with Claude Code

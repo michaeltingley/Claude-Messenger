@@ -1,4 +1,5 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createServer as createNetServer } from 'node:net';
 import {
   chmodSync,
   copyFileSync,
@@ -488,6 +489,51 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expect(Date.now() - started).toBeLessThan(15_000);
     }, 90_000);
 
+    it('warns that the sandbox has no process namespace on a host too old for one, and installs anyway', async () => {
+      host.set('systemd-version', '255');
+
+      const run = await configure();
+
+      expect(run.code, why(run)).toBe(0);
+      // Named, with the version, so the gap does not pass unnoticed.
+      expect(run.stdout + run.stderr).toContain('systemd 255 is older than 257');
+      expect(run.stdout + run.stderr).toContain('through /proc');
+      // Everything else still happened: the service is installed and serving.
+      expect(host.has('system/enabled/claude-messenger-mcp.service')).toBe(true);
+      expect(await listAccountsOverHttp()).toContain('whatsapp-1');
+    }, 90_000);
+
+    it('says nothing about a process namespace on a host new enough to get one', async () => {
+      const run = await configure();
+
+      expect(run.code, why(run)).toBe(0);
+      expect(run.stdout + run.stderr).not.toContain('older than 257');
+      expect(run.stdout + run.stderr).not.toContain('PrivatePIDs');
+      expect(await listAccountsOverHttp()).toContain('whatsapp-1');
+    }, 90_000);
+
+    it('fails fast with the journal hint when the service starts but its process dies at once', async () => {
+      // The port the MCP service would bind, already held, so its process
+      // starts and then exits — the crash the health loop must notice through
+      // is-active, rather than wait out its whole timeout. A raw socket that
+      // resets each connection, so the health probe fails at once instead of
+      // hanging on a reply that never comes.
+      const blocker = createNetServer((conn) => conn.destroy());
+      await new Promise<void>((resolve) => blocker.listen(mcpPort, '127.0.0.1', resolve));
+      try {
+        const started = Date.now();
+        const run = await configure();
+
+        expect(run.code, why(run)).toBe(1);
+        expect(run.stderr).toContain('MCP service failed to start — check: sudo journalctl -u claude-messenger-mcp.service');
+        expect(run.stdout).not.toContain('Claude Messenger is hosted');
+        expect(host.calls().filter((c) => /^claude mcp add|^tailscale serve --bg http:/.test(c))).toEqual([]);
+        expect(Date.now() - started).toBeLessThan(15_000);
+      } finally {
+        blocker.close();
+      }
+    }, 90_000);
+
     it('refuses to run as root, before changing anything', async () => {
       host.set('root');
       const homeMode = statSync(host.home).mode & 0o777;
@@ -626,4 +672,89 @@ createServer((_, res) => res.end('ok')).listen(${mcpPort}, '127.0.0.1', () => wr
       expect(await listAccountsOverHttp()).toContain('whatsapp-1');
     }, 120_000);
   });
+});
+
+/**
+ * The hosted MCP service's own shutdown, run the way its unit runs it: the
+ * built CLI under `node` directly (not a wrapper), so a signal reaches node
+ * as the unit's PrivatePIDs sandbox delivers it to PID 1. A daemon that does
+ * not handle SIGTERM would, as PID 1, have the kernel drop it — and `node`
+ * installs no SIGTERM handler of its own, proven in deploy notes — so systemd
+ * would wait out its stop timeout and SIGKILL on every `stop`/restart.
+ */
+describe('the hosted MCP service shutdown', () => {
+  let mock: MockBeeperServer;
+  let beeperUrl: string;
+  let stateDir: string;
+
+  beforeAll(async () => {
+    mock = new MockBeeperServer();
+    mock.chats = [wireChat()];
+    beeperUrl = await mock.start();
+  }, 30_000);
+
+  afterAll(async () => {
+    await mock.stop();
+  });
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), 'cm-serve-'));
+  });
+
+  it('shuts down gracefully on SIGTERM and releases its port', async () => {
+    const port = await unusedPort();
+    const child = spawn(
+      process.execPath,
+      [join(build, 'dist', 'cli', 'main.js'), 'serve', '--http', '--port', String(port), '--host', '127.0.0.1'],
+      {
+        env: {
+          PATH: process.env.PATH,
+          HOME: stateDir,
+          BEEPER_BASE_URL: beeperUrl,
+          BEEPER_ACCESS_TOKEN: mock.token,
+          CLAUDE_MESSENGER_POLICY: join(stateDir, 'policy.json'),
+          CLAUDE_MESSENGER_AUDIT_DIR: join(stateDir, 'audit'),
+          CLAUDE_MESSENGER_STATE_DIR: join(stateDir, 'state'),
+          CLAUDE_MESSENGER_MCP_TOKEN: 'a'.repeat(32),
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    let out = '';
+    child.stdout!.on('data', (c: Buffer) => (out += c.toString('utf8')));
+    child.stderr!.on('data', (c: Buffer) => (out += c.toString('utf8')));
+    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+      child.on('exit', (code, signal) => resolve({ code, signal })),
+    );
+
+    for (const end = Date.now() + 30_000; !/listening on http/.test(out); ) {
+      if (Date.now() > end) {
+        child.kill('SIGKILL');
+        throw new Error(`never started listening:\n${out}`);
+      }
+      await sleep(50);
+    }
+
+    const started = Date.now();
+    child.kill('SIGTERM');
+    const outcome = await Promise.race([exited, sleep(10_000).then(() => 'timeout' as const)]);
+    if (outcome === 'timeout') {
+      child.kill('SIGKILL');
+      throw new Error(`did not exit on SIGTERM within 10s:\n${out}`);
+    }
+    // Clean, not terminated by the signal: it ran its handler and exited 0.
+    // That installed handler is exactly what lets PID 1 receive SIGTERM.
+    expect(outcome.signal, `killed rather than exited:\n${out}`).toBeNull();
+    expect(outcome.code, `non-zero exit:\n${out}`).toBe(0);
+    // And a hung PID 1 would have waited out systemd's stop timeout.
+    expect(Date.now() - started, out).toBeLessThan(6000);
+
+    // The port is free: a fresh listener can bind it.
+    const rebind = createNetServer();
+    await new Promise<void>((resolve, reject) => {
+      rebind.once('error', reject);
+      rebind.listen(port, '127.0.0.1', resolve);
+    });
+    await new Promise<void>((resolve) => rebind.close(() => resolve()));
+  }, 60_000);
 });

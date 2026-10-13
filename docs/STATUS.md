@@ -55,14 +55,23 @@ and `docs/HOSTING-OPTIONS.md`._
 - **MCP service sandbox (#23)**: the MCP service is a system unit run as the
   install's owner (`User=`), not a user unit, whose sandbox Ubuntu 24.04+
   silently drops (see Notes).
-  - It sees nothing of the home directories or `/run/user` but the install,
-    read-only. So a compromised server can't read SSH keys, other tools'
-    credentials, Beeper's own data or the sign-in screen's secrets.
+  - Through the filesystem it sees nothing of the home directories or
+    `/run/user` but the install, read-only. So a compromised server can't
+    read SSH keys, other tools' credentials, Beeper's own data or the
+    sign-in screen's secrets that way.
+  - It also gets its own PID namespace (`PrivatePIDs`) and IPC namespace
+    (`PrivateIPC`), so it can't step around the mount sandbox through the
+    owner's other processes' `/proc/<pid>/root` and `/proc/<pid>/environ`,
+    nor reach the host's SysV IPC or message queues. `PrivatePIDs` needs
+    systemd 257 (the VPS has 259); on 255/256 that one protection is absent
+    and `configure.sh` warns. See the residual risks in Notes.
   - It can change only its audit trail and rate window. `configure.sh`
     stops first if `.env` keeps the policy, audit trail or rate window
     anywhere else.
-  - `test/mcp-sandbox.integration.test.ts` proves both on GitHub's runners,
-    under real systemd with Ubuntu's restriction on.
+  - `test/mcp-sandbox.integration.test.ts` proves all of this on GitHub's
+    runners, under real systemd with Ubuntu's restriction on, across both
+    24.04 (systemd 255) and 26.04 (259): the /proc escape closed on 259 and
+    still open on 255, each asserted in turn.
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -163,8 +172,9 @@ and `docs/HOSTING-OPTIONS.md`._
        outside `~/claude-messenger`, as a `.env` written for `~/cm-pr22`
        might: `grep -E '^CLAUDE_MESSENGER_(POLICY|AUDIT_DIR|STATE_DIR)=' .env`
        shows them.
-   - **Then check it on the box.** CI proves the sandbox with systemd 255;
-     the box has 259.
+   - **Then check it on the box.** CI proves the sandbox on both systemd 255
+     and 259; the box has 259, so `PrivatePIDs` applies and the /proc escape
+     must be closed.
      - `systemctl show -p User --value claude-messenger-mcp` is the owner,
        and `systemctl is-enabled claude-messenger-mcp` says `enabled`.
      - One authenticated MCP call (`list_accounts`) answers, and today's
@@ -172,6 +182,10 @@ and `docs/HOSTING-OPTIONS.md`._
      - From inside the service, writing to the home or the install fails
        with "Read-only file system", and `~/.ssh` isn't there:
        `sudo nsenter -t "$(systemctl show -p MainPID --value claude-messenger-mcp)" -m -S "$(id -u)" -G "$(id -g)" -- sh -c 'touch "$1/probe"; touch "$1/claude-messenger/probe"; ls "$1/.ssh"' sh "$HOME"`
+     - And the /proc escape is closed: from inside, another of the owner's
+       processes (e.g. a Beeper pid) is not visible, so its root is
+       unreachable. With `bpid` a Beeper Desktop pid,
+       `sudo nsenter -t "$(systemctl show -p MainPID --value claude-messenger-mcp)" -m -S "$(id -u)" -G "$(id -g)" -- sh -c 'ls /proc/'"$bpid"'/root'$HOME'/.ssh'` must fail (no such process / path).
    - Whatever runs `configure.sh` or `bootstrap.sh` in the background must
      allow more than their 60-minute wait for sign-in and approval. Claude
      Code's Bash tool stops background commands after 30 minutes unless
@@ -276,6 +290,42 @@ and `docs/HOSTING-OPTIONS.md`._
     built-in mounts (`append_static_mounts` in `src/core/namespace.c`), so
     their tmpfs stand-ins come up writable, with tmpfs's default mode 1777.
     CI caught it on Ubuntu 24.04's 255; 257 fixed it.
+  - Hiding files is not enough on its own: the service runs as the owner, so
+    if it shared the owner's PID namespace a compromised server could reach
+    around the mount sandbox through the owner's other processes — reading
+    their files under `/proc/<pid>/root` (SSH keys, Beeper's token) and their
+    `/proc/<pid>/environ`, all with `PTRACE_MODE_READ_FSCREDS`, which Yama's
+    `ptrace_scope` does not gate (it gates only ATTACH). Confirmed by
+    experiment, read and write both. `PrivatePIDs=yes` gives the service its
+    own PID namespace, where it sees only itself, and closes this. It needs
+    systemd **257** (the VPS has 259); 255 and 256 ignore the key with a log
+    warning and start the service without it, so on Ubuntu 24.04 the escape
+    stays open — `configure.sh` warns at install time, and the sandbox test
+    asserts it closed on 259 and open on 255. `PrivateIPC=yes` (systemd 248+)
+    gives it private SysV IPC and POSIX message queues.
+  - `PrivatePIDs` makes the service **PID 1** in its namespace, and the
+    kernel delivers PID 1 only the signals it has installed a handler for.
+    `node` installs none for SIGTERM (verified: unhandled → ignored as PID 1;
+    a handler → clean exit), so `serve --http` now installs one and shuts the
+    listener down on SIGTERM/SIGINT. Without it, `systemctl stop`/restart
+    would hang to `TimeoutStopSec` (90s) and SIGKILL every time. Don't remove
+    that handler while the unit keeps `PrivatePIDs`. Proven two ways:
+    `serve --http` exits 0 on SIGTERM (`install.integration`), and
+    `systemctl stop` returns promptly with the unit inactive under real
+    systemd (`mcp-sandbox.integration`).
+  - **Residual risks, by design, even with the full sandbox:**
+    - It shares the host **network** namespace, so it can reach any service
+      on loopback; a local port with no auth of its own is reachable from a
+      compromised server. (Abstract and `AF_UNIX` sockets follow the network
+      namespace too, so `PrivateIPC` does not cover them.)
+    - The **stdio** servers each Claude Code session on the box starts
+      (`claude mcp add`, over stdio) run **unsandboxed**, as the owner: the
+      sandbox is the HTTP system unit's only. So it guards against an attack
+      that arrives over HTTP, not against a session on the box that is
+      already the owner. This matches the accepted same-user risk above.
+    - Anyone holding the raw Beeper token bypasses the policy layer entirely
+      (CLAUDE.md). The sandbox protects the token at rest from a compromised
+      *server*; it is not a boundary against the owner.
 - **Cloud sessions can't add GitHub deploy keys.** That API path is blocked
   through their proxy. Add deploy keys in the GitHub UI.
 - The user wants maximum autonomy ("do everything I can't"). The irreducibly
