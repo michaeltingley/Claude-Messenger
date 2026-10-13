@@ -6,19 +6,14 @@ Claude Messenger host on Oracle Cloud end to end, with the user touching
 only identity ceremonies. Work top to bottom; each phase is idempotent.
 The user's kickoff prompt points here — treat this file as your task list.*
 
-> **⚠ Phases 0–2 are Oracle-specific, and Oracle is dead.** The home region
-> has a permanent capacity wall; see `docs/STATUS.md`.
+> **⚠ Superseded for the current host. Follow `docs/STATUS.md` instead.**
 >
-> The host is now an **OVHcloud US VPS-2**, shared with the automation agent
-> (`docs/SHARED-HOST.md`, `docs/HOSTING-OPTIONS.md`). The
-> user orders it, then you pick up at Phase 3.
->
-> OVHcloud VPS has no cloud-init user-data field, so the installs that
-> `deploy/cloud-init.yaml` performs must run another way: either
-> `deploy/bootstrap.sh` over SSH, or OVH's `rebuild` with
-> `postInstallScript`.
->
-> Rewrite Phases 0–2 for OVH once that path has actually been run.
+> - Phases 0–2 are Oracle-specific, and Oracle is dead: the home region has
+>   a permanent capacity wall.
+> - The host is an OVHcloud US VPS that is already running and shared with
+>   the automation agent. Host work runs as Claude sessions on the box
+>   itself, not over SSH from a home computer.
+> - Where Phases 3–4 and `deploy/bootstrap.sh` differ, the script wins.
 
 ## What the user does vs. what you do
 
@@ -97,13 +92,13 @@ installed — you are doing configuration and logins):
      settings.
    - Confirm with them when the account list has finished syncing.
 3. Mint the Beeper access token in that same browser session: Beeper
-   Settings → Integrations → "+" next to Approved connections. Have the user
-   paste it to you, or read it off the screen. Then turn Remote Access on
-   (Settings → Integrations → Advanced) only if the endpoint must be reached
-   from off-box; for this topology Claude Messenger talks to 127.0.0.1:23373,
-   so leave it off.
-4. In `~/claude-messenger`: write `.env` (umask 077) with the token,
-   `BEEPER_BASE_URL=http://127.0.0.1:23373`, absolute policy/audit/state
+   Settings → Integrations → "+" next to Approved connections. The user
+   enters it into `.env` themselves; it never passes through chat. Then turn
+   Remote Access on (Settings → Integrations → Advanced) only if the endpoint
+   must be reached from off-box; for this topology Claude Messenger talks to
+   127.0.0.1:23373, so leave it off.
+4. In `~/claude-messenger`: write `.env` (umask 077) around the user's token,
+   with `BEEPER_BASE_URL=http://127.0.0.1:23373`, absolute policy/audit/state
    paths, and a generated `CLAUDE_MESSENGER_MCP_TOKEN` (`openssl rand -hex 32`).
    Run `node dist/cli/main.js policy-init` then `doctor` — must be green.
 5. Now that `doctor` is green, close the sign-in surface:
