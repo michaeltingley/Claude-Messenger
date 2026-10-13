@@ -62,6 +62,13 @@ export class AccessTimeoutError extends MessengerError {
   }
 }
 
+/** The language model gave no answer: it is missing, signed out, failed or too slow. */
+export class ModelError extends MessengerError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'model_failed', options);
+  }
+}
+
 /** An action was blocked by the local policy layer (never by the provider). */
 export class PolicyDeniedError extends MessengerError {
   constructor(

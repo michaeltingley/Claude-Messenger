@@ -14,10 +14,14 @@ export interface WireChat {
   accountID: string;
   network: string;
   type: 'single' | 'group';
+  isArchived?: boolean;
   title: string;
   unreadCount: number;
+  unreadMentionsCount?: number;
   participants: { items: Array<{ id: string; fullName?: string }>; hasMore: boolean; total: number };
   lastActivity?: string;
+  isMuted?: boolean;
+  isLowPriority?: boolean;
 }
 
 export interface WireMessage {
@@ -30,6 +34,9 @@ export interface WireMessage {
   sortKey: string;
   timestamp: string;
   text?: string;
+  type?: string;
+  isDeleted?: boolean;
+  isHidden?: boolean;
   attachments?: Array<{ type: 'unknown' | 'img' | 'video' | 'audio'; fileName?: string }>;
 }
 
@@ -294,9 +301,7 @@ export class MockBeeperServer {
       return send(200, accounts);
     }
     if (req.method === 'GET' && path === '/v1/chats/search') {
-      const q = url.searchParams.get('query')?.toLowerCase();
-      const items = q ? this.chats.filter((c) => c.title.toLowerCase().includes(q)) : this.chats;
-      return send(200, cursorEnvelope(items));
+      return send(200, cursorEnvelope(this.searchChats(url.searchParams)));
     }
     if (req.method === 'GET' && path === '/v1/messages/search') {
       const q = url.searchParams.get('query')?.toLowerCase();
@@ -501,5 +506,26 @@ export class MockBeeperServer {
     } catch {
       return text;
     }
+  }
+
+  /**
+   * Chat search as the SDK documents its filters: title words, the inbox
+   * ("primary" is neither archived nor low priority), muted chats left out
+   * only on includeMuted=false, and activity strictly after
+   * lastActivityAfter. One page, whatever the limit.
+   */
+  private searchChats(params: URLSearchParams): WireChat[] {
+    const q = params.get('query')?.toLowerCase();
+    const inbox = params.get('inbox');
+    const after = params.has('lastActivityAfter') ? Date.parse(params.get('lastActivityAfter')!) : -Infinity;
+    return this.chats.filter(
+      (c) =>
+        (!q || c.title.toLowerCase().includes(q)) &&
+        (inbox !== 'primary' || (!c.isArchived && !c.isLowPriority)) &&
+        (inbox !== 'low-priority' || c.isLowPriority === true) &&
+        (inbox !== 'archive' || c.isArchived === true) &&
+        !(params.get('includeMuted') === 'false' && c.isMuted) &&
+        (c.lastActivity === undefined ? after === -Infinity : Date.parse(c.lastActivity) > after),
+    );
   }
 }

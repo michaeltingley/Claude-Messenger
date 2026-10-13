@@ -80,6 +80,12 @@ and `docs/HOSTING-OPTIONS.md`._
 - **Research**:
   - Context engine: `docs/CONTEXT-ENGINE-RESEARCH.md` and `docs/research/`.
   - Hosting: `docs/HOSTING-OPTIONS.md`, re-verified 2026-10-08.
+- **Daily digest**: `claude-messenger digest` reads the last 24 hours of the
+  main inbox through the policy layer and has Claude Code write what needs
+  the owner first, then the rest. It runs on the owner's Claude subscription
+  (Claude Code signed in on the host), never an API key, and its model has
+  no tools. Design: `docs/ARCHITECTURE.md` (Language model, Daily digest).
+  How it runs and reaches the owner: "Daily digest" below.
 
 ## VERIFIED LIVE
 
@@ -100,6 +106,23 @@ and `docs/HOSTING-OPTIONS.md`._
     within minutes and runs nothing there. His first try at Telegram set it
     up on-device on his laptop instead, so check where a re-added network
     lands.
+
+## Daily digest (project thread "Daily message digest")
+
+- **On the VPS** it runs from the install, with Claude Code there signed in
+  to the owner's Max plan:
+  `cd ~/claude-messenger && node dist/cli/main.js digest --time-zone America/Los_Angeles`.
+  - It writes with Sonnet (`--model` to change), which spends less of the
+    plan's usage limits than Opus.
+  - It prints the digest and keeps no copy. The audit log gets its reads,
+    never the words.
+  - Failing, it prints the reason and no digest: `model_failed` with Claude
+    Code's own words (signed out: run `claude`, then `/login`; usage limit
+    reached), or Beeper's checklist when Beeper is unreachable.
+- **Delivery, being set up 2026-10-13:** each morning a routine wakes the
+  thread's session, which starts a Remote Control session on the VPS to run
+  the command and send the text back, and then posts it in the thread.
+  Nothing is written to Beeper, so the read-only token stays read-only.
 
 ## Decided (2026-10-12): Claude Messenger runs on the automation VPS
 

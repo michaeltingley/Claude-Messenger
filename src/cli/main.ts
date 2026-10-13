@@ -3,8 +3,10 @@ import { writeFile } from 'node:fs/promises';
 import { Command, InvalidArgumentError } from 'commander';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
-import { createAccessRequester, createApp } from '../app.js';
+import { createAccessRequester, createApp, createLanguageModel } from '../app.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
+import { DigestWriter } from '../digest/digest.js';
+import { hostTimeZone, isTimeZone } from '../digest/time.js';
 import { createMcpServer } from '../mcp/server.js';
 import { startHttpMcpServer } from '../mcp/http.js';
 import { DEFAULT_POLICY } from '../policy/policy.js';
@@ -84,6 +86,22 @@ function parseLimit(value: string): number {
     throw new InvalidArgumentError('must be an integer between 1 and 50');
   }
   return n;
+}
+
+/** A week at most: a digest is for catching up, not for reading history. */
+const MAX_DIGEST_HOURS = 168;
+
+function parseHours(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > MAX_DIGEST_HOURS) {
+    throw new InvalidArgumentError(`must be a whole number of hours from 1 to ${MAX_DIGEST_HOURS}`);
+  }
+  return n;
+}
+
+function parseTimeZone(value: string): string {
+  if (!isTimeZone(value)) throw new InvalidArgumentError('must be an IANA time zone, such as America/Los_Angeles');
+  return value;
 }
 
 program
@@ -168,6 +186,23 @@ program
       const who = m.isFromMe ? 'me' : (m.senderName ?? m.senderId);
       console.log(`[${m.timestamp}] (${m.chatId}) ${who}: ${m.text ?? ''}`);
     }
+  });
+
+program
+  .command('digest')
+  .description('Write a digest of your recent chats: what needs you first, then the rest (needs Claude Code signed in here)')
+  .option('--hours <n>', `how many hours back it covers (1-${MAX_DIGEST_HOURS})`, parseHours, 24)
+  .option('--time-zone <zone>', 'the IANA time zone to give times in', parseTimeZone, hostTimeZone())
+  // A summary doesn't need the largest model, and a smaller one spends less
+  // of the subscription's usage limits.
+  .option('--model <name>', 'the Claude model that writes it', 'sonnet')
+  .action(async (opts: { hours: number; timeZone: string; model: string }) => {
+    const { messenger } = await app();
+    const until = new Date();
+    const since = new Date(until.getTime() - opts.hours * 3_600_000);
+    const writer = new DigestWriter(messenger, createLanguageModel({ model: opts.model }));
+    const digest = await writer.write({ since, until }, { timeZone: opts.timeZone });
+    console.log(digest.text);
   });
 
 program

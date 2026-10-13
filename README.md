@@ -15,10 +15,12 @@ Beeper's [Client API](https://developers.beeper.com/desktop-api) gives any token
 
 ```
 src/
-├── core/        domain models + the Messenger port (no provider imports)
+├── core/        domain models + the Messenger and LanguageModel ports (no provider imports)
 ├── providers/
-│   └── beeper/  adapter for the Beeper Client API (Desktop app or headless Beeper Server)
+│   ├── beeper/  adapter for the Beeper Client API (Desktop app or headless Beeper Server)
+│   └── claude-code/  the language model: Claude Code's CLI, on your Claude subscription
 ├── policy/      policy engine, guarded messenger, audit log
+├── digest/      the daily digest: reads the last day's chats, has Claude write what needs you
 ├── mcp/         MCP server exposing curated tools
 ├── cli/         claude-messenger CLI (doctor, chats, send, serve, ...)
 ├── app.ts       composition root
@@ -34,6 +36,7 @@ cp .env.example .env    # then fill in BEEPER_ACCESS_TOKEN (see docs/SETUP.md)
 
 npx claude-messenger doctor    # verifies config → connectivity → auth → policy
 npx claude-messenger chats     # your recent chats
+npx claude-messenger digest    # what needs you from the last day, then the rest (needs Claude Code)
 npx claude-messenger serve     # MCP server on stdio for Claude Code / Desktop
 ```
 

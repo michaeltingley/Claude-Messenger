@@ -68,7 +68,25 @@ export class FakeMessenger implements Messenger {
       items = items.filter((c) => c.title.toLowerCase().includes(q));
     }
     if (query?.unreadOnly) items = items.filter((c) => c.unreadCount > 0);
-    return { items, hasMore: false };
+    // The main inbox is what isn't archived (low priority isn't modelled).
+    if (query?.inbox === 'primary') items = items.filter((c) => !c.isArchived);
+    if (query?.inbox === 'archive') items = items.filter((c) => c.isArchived);
+    const after = query?.lastActivityAfter;
+    if (after !== undefined) {
+      items = items.filter((c) => c.lastActivity !== undefined && Date.parse(c.lastActivity) > Date.parse(after));
+    }
+    return this.page(items, query?.cursor, query?.limit);
+  }
+
+  /** The most items one page holds; a longer result pages, older items on later pages. */
+  pageSize = Infinity;
+
+  private page<T>(items: T[], cursor: string | undefined, limit = Infinity): Page<T> {
+    const start = cursor === undefined ? 0 : Number(cursor);
+    const end = start + Math.min(limit, this.pageSize);
+    return end < items.length
+      ? { items: items.slice(start, end), hasMore: true, nextCursor: String(end) }
+      : { items: items.slice(start), hasMore: false };
   }
 
   async getChat(chatId: string): Promise<Chat> {
@@ -77,8 +95,12 @@ export class FakeMessenger implements Messenger {
     return chat;
   }
 
-  async listMessages(chatId: string, _query?: MessageListQuery): Promise<Page<Message>> {
-    return { items: this.messages.filter((m) => m.chatId === chatId), hasMore: false };
+  /** Newest first, as the port promises; past `pageSize`, older messages are on later pages. */
+  async listMessages(chatId: string, query?: MessageListQuery): Promise<Page<Message>> {
+    const items = this.messages
+      .filter((m) => m.chatId === chatId)
+      .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+    return this.page(items, query?.cursor);
   }
 
   async searchMessages(query: MessageSearchQuery): Promise<Page<Message>> {
