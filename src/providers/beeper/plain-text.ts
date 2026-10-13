@@ -1,4 +1,5 @@
-import { decodeEntity, ENTITY } from './entities.js';
+import { decodeEntities } from './entities.js';
+import { replyCopyEnd } from './plain-quotes.js';
 
 /**
  * A tag, as HTML reads one: "<", an optional "/", a name that ends at a
@@ -106,12 +107,13 @@ function shown(tag: string, slash: string | undefined, name: string | undefined,
  * A message's text as plain text, as the chat shows it, from Beeper's
  * `text`: Matrix's HTML formatted body when there is one, else the plain
  * body. The copy of the message a reply answers is left out (the chat has
- * that message already), markup is dropped, with a line break for each
- * element that ends a line, and entities are decoded once. A link keeps its
- * text and loses where it points; an image keeps its alt text. Every step
- * takes time linear in the text.
+ * that message already), whether HTML holds it or a plain body opens with
+ * it, as Matrix's reply fallback writes it. Markup is dropped, with a line
+ * break for each element that ends a line, and entities are decoded once. A
+ * link keeps its text and loses where it points; an image keeps its alt
+ * text. Every step takes time linear in the text.
  */
 export function plainText(text: string): string {
-  const html = withoutReplyCopy(text).replace(TAG, shown);
-  return html.replace(ENTITY, decodeEntity).trim();
+  const html = withoutReplyCopy(text.slice(replyCopyEnd(text))).replace(TAG, shown);
+  return decodeEntities(html).trim();
 }

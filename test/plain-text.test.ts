@@ -14,6 +14,15 @@ describe('plainText (Beeper)', () => {
     expect(plainText(reply)).toBe('Sure, see you then');
   });
 
+  it("leaves out the copy Matrix's reply fallback opens a plain-text reply with, and only that copy", () => {
+    expect(plainText('> <@bob:beeper.com> are you coming?\n> it starts at 8\n\nyes, see you there')).toBe('yes, see you there');
+    expect(plainText('> * <@bob:beeper.com> waves\n\nhi Bob')).toBe('hi Bob');
+    // A quote that names no sender, ends with no blank line or comes after other words is what the chat shows.
+    expect(plainText('> are you coming?\n\nyes')).toBe('> are you coming?\n\nyes');
+    expect(plainText('> <@bob:beeper.com> are you coming?\nyes')).toBe('> <@bob:beeper.com> are you coming?\nyes');
+    expect(plainText('yes\n> <@bob:beeper.com> are you coming?\n\nsee you')).toBe('yes\n> <@bob:beeper.com> are you coming?\n\nsee you');
+  });
+
   it("ends the reply's copy at its last closing tag, so markup inside the copy can't end it early", () => {
     expect(plainText('<mx-reply>the copy </mx-reply> still the copy</mx-reply>the reply')).toBe('the reply');
   });
@@ -52,7 +61,7 @@ describe('plainText (Beeper)', () => {
 
   it('takes time linear in the text, however its tags are broken', () => {
     const started = Date.now();
-    for (const piece of ['<a title="', '<b ', '<img alt=', '<mx-reply>', '</mx-reply>', '<!-- ', '&#']) {
+    for (const piece of ['<a title="', '<b ', '<img alt=', '<mx-reply>', '</mx-reply>', '<!-- ', '&#', '> <@a> x\n', '>\n']) {
       plainText(piece.repeat(200_000 / piece.length));
     }
     // One long tag that never ends, as any message can send.

@@ -116,6 +116,13 @@ describe('CLI (subprocess integration)', () => {
         // A reply, as Beeper gives it: HTML, carrying a copy of the message it answers.
         text: '<mx-reply><blockquote>In reply to <a href="https://matrix.to/#/@me:beeper.com">Me</a><br>Free?</blockquote></mx-reply>Dinner on <b>Friday</b>?',
       }),
+      wireMessage({
+        id: 'msg-3',
+        sortKey: '3',
+        timestamp: '2026-07-09T12:10:00.000Z',
+        // A plain-text reply, as Matrix's reply fallback writes one: the copy, a blank line, then the reply.
+        text: '> <@me:beeper.com> See you at 8?\n> Or later?\n\nworks for me',
+      }),
     ];
     try {
       const messages = await cli(['messages', '!chat1:beeper.com']);
@@ -123,6 +130,7 @@ describe('CLI (subprocess integration)', () => {
       expect(messages.stdout.trimEnd().split('\n')).toEqual([
         '[2026-07-09T12:00:00.000Z] Alice: hello from alice',
         '[2026-07-09T12:05:00.000Z] Alice: Dinner on Friday?',
+        '[2026-07-09T12:10:00.000Z] Alice: works for me',
       ]);
       const search = await cli(['search', 'friday']);
       expect(search.code).toBe(0);

@@ -97,9 +97,9 @@ export interface Message {
    */
   text: string;
   /**
-   * The message as HTML, when there is markup in it: what its plain text
-   * leaves out, such as where its links point. As the provider gives it, so
-   * it can hold the copy of the message a reply answers.
+   * The message as the provider gives it, read as HTML, when its plain text
+   * leaves something out: markup, such as where its links point, or the
+   * copy of the message a reply answers.
    */
   html?: string;
   /**
@@ -109,8 +109,8 @@ export interface Message {
    * name in a link to a person, which that person chose. So it can miss some
    * of the sender's own words too: it is for deciding whether they addressed
    * someone, not a stand-in for `text`. What the text can't tell apart, such
-   * as a message they forward, reads as theirs. Left out when the message
-   * has no text.
+   * as a message they forward, reads as theirs. Left out when the provider
+   * has no text for the message.
    */
   ownText?: string;
   attachments: AttachmentSummary[];

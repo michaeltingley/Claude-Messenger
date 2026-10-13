@@ -92,10 +92,13 @@ describe('mapper', () => {
     expect(toMessage(wire as never).isHidden).toBeUndefined();
   });
 
-  it("gives a message's text as the chat shows it, and the HTML it came from only when there is markup in it", () => {
+  it("gives a message's text as the chat shows it, and what it came from only when the text leaves something out", () => {
     const wire = { id: 'm1', accountID: 'a1', chatID: 'c1', senderID: 's1', sortKey: '1', timestamp: '2026-01-01T00:00:00Z' };
     const html = '<mx-reply><blockquote>In reply to Bob<br>old words</blockquote></mx-reply><b>Sure</b> &amp; thanks';
     expect(toMessage({ ...wire, text: html } as never)).toMatchObject({ text: 'Sure & thanks', html });
+
+    const fallback = '> <@bob:beeper.com> old words\n\nSure';
+    expect(toMessage({ ...wire, text: fallback } as never)).toMatchObject({ text: 'Sure', html: fallback });
 
     const plain = toMessage({ ...wire, text: 'Press <Enter>, then 2 < 3 ' } as never);
     expect(plain.text).toBe('Press <Enter>, then 2 < 3');

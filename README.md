@@ -20,9 +20,8 @@ src/
 │   ├── beeper/  adapter for the Beeper Client API (Desktop app or headless Beeper Server)
 │   └── claude-code/  the language model: Claude Code's CLI, on your Claude subscription
 ├── policy/      policy engine, guarded messenger, audit log
-├── assistant/   automations on the guarded messenger: the daily digest
+├── assistant/   automations on the guarded messenger: the daily digest and the @Claude mention listener
 ├── mcp/         MCP server exposing curated tools
-├── assistant/   automations on the guarded messenger: the @Claude mention listener
 ├── cli/         claude-messenger CLI (doctor, chats, send, serve, mentions, ...)
 ├── app.ts       composition root
 └── config.ts    env-based configuration

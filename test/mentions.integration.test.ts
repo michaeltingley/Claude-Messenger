@@ -119,10 +119,14 @@ describe('mentions (subprocess integration)', { timeout: 60_000 }, () => {
     await cli.until(() => expect(cli.printed().map((m) => m.id)).toEqual(['ask-dinner', 'in-lowprio']));
     expect(cli.run.stderr).toMatch(/Watching for @Claude in messages you send after .*\. Ctrl-C stops\./);
 
-    const live = mine({ id: 'ask-live', text: 'hey @Claude, live one', timestamp: ago(0) });
+    const live = mine({
+      id: 'ask-live',
+      text: '<mx-reply><blockquote>dinner at 8?</blockquote></mx-reply>hey <b>@Claude</b>, live one',
+      timestamp: ago(0),
+    });
     mock.messages.push(live);
     await cli.until(() => expect(cli.printed().map((m) => m.id)).toEqual(['ask-dinner', 'in-lowprio', 'ask-live']));
-    // Where it is, when, and what it says: nothing more.
+    // Where it is, when, and what it says as the chat shows it: no markup or reply copy, nothing more.
     expect(cli.printed()[2]).toEqual({
       id: 'ask-live',
       chatId: '!chat1:beeper.com',

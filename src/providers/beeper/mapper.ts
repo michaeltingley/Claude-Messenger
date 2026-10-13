@@ -123,9 +123,10 @@ export function newestFirst(a: WireMessage, b: WireMessage): number {
 }
 
 /**
- * A message's words as the chat shows them, and the HTML they came from when
- * there is markup in it. Beeper's `text` is a message's HTML formatted body
- * when it has one, else its plain body, and doesn't say which.
+ * A message's words as the chat shows them, and what they came from when
+ * the words leave something out: markup, or a reply's copy of the message it
+ * answers. Beeper's `text` is a message's HTML formatted body when it has
+ * one, else its plain body, and doesn't say which.
  */
 function readable(text: string | undefined): Pick<Message, 'text' | 'html'> {
   if (text === undefined) return { text: '' };
