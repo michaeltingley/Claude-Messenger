@@ -1,3 +1,5 @@
+import { decodeEntity, ENTITY } from './entities.js';
+
 /**
  * A tag, as HTML reads one: "<", an optional "/", a name that ends at a
  * space, "/" or ">", then attributes up to ">", where a quoted value may hold
@@ -100,23 +102,6 @@ function shown(tag: string, slash: string | undefined, name: string | undefined,
   return LINE_ENDING.has(element) ? '\n' : '';
 }
 
-const NAMED_ENTITIES = new Map([
-  ['amp', '&'],
-  ['lt', '<'],
-  ['gt', '>'],
-  ['quot', '"'],
-  ['apos', "'"],
-  ['nbsp', ' '],
-  ['ldquo', '“'],
-  ['rdquo', '”'],
-]);
-
-function decodeEntity(entity: string, decimal?: string, hex?: string, name?: string): string {
-  if (name !== undefined) return NAMED_ENTITIES.get(name.toLowerCase()) ?? entity;
-  const codePoint = decimal !== undefined ? Number(decimal) : parseInt(hex!, 16);
-  return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
-}
-
 /**
  * A message's text as plain text, as the chat shows it, from Beeper's
  * `text`: Matrix's HTML formatted body when there is one, else the plain
@@ -128,5 +113,5 @@ function decodeEntity(entity: string, decimal?: string, hex?: string, name?: str
  */
 export function plainText(text: string): string {
   const html = withoutReplyCopy(text).replace(TAG, shown);
-  return html.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, decodeEntity).trim();
+  return html.replace(ENTITY, decodeEntity).trim();
 }

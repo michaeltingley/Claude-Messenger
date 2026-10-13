@@ -102,6 +102,17 @@ export interface Message {
    * it can hold the copy of the message a reply answers.
    */
   html?: string;
+  /**
+   * What the sender wrote in this message themselves, as plain text, read
+   * cautiously: anything that may be someone else's words is left out, such
+   * as the copy of another message a reply carries, a quoted passage, or the
+   * name in a link to a person, which that person chose. So it can miss some
+   * of the sender's own words too: it is for deciding whether they addressed
+   * someone, not a stand-in for `text`. What the text can't tell apart, such
+   * as a message they forward, reads as theirs. Left out when the message
+   * has no text.
+   */
+  ownText?: string;
   attachments: AttachmentSummary[];
   reactions: Reaction[];
   isUnread?: boolean;
@@ -161,6 +172,16 @@ export interface MessageSearchQuery {
   includeMuted?: boolean;
   limit?: number;
   cursor?: string;
+}
+
+/**
+ * Which messages a watch delivers. Only the user's own messages for now:
+ * other senders are added with the first watch that needs them.
+ */
+export interface MessageWatchQuery {
+  sender: 'me';
+  /** ISO 8601: deliver only messages timestamped strictly after this. */
+  since: string;
 }
 
 export interface SendMessageInput {

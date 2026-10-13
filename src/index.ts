@@ -19,6 +19,7 @@ export type { ClaudeCodeModelOptions } from './providers/claude-code/model.js';
 export { ActivityCollector, DEFAULT_ACTIVITY_LIMITS } from './assistant/digest/activity.js';
 export type { Activity, ActivityLimits, ChatActivity, DigestWindow } from './assistant/digest/activity.js';
 export { dayBefore, DigestWriter, isDigestWindow, MAX_DIGEST_DAYS } from './assistant/digest/digest.js';
+export { mentionsClaude, watchMentions } from './assistant/mentions.js';
 export { createMcpServer } from './mcp/server.js';
 export { startHttpMcpServer } from './mcp/http.js';
 export type { HttpServerOptions, RunningHttpServer } from './mcp/http.js';

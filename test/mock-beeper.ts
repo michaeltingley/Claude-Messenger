@@ -46,6 +46,8 @@ export interface RecordedRequest {
   path: string;
   query: URLSearchParams;
   body?: unknown;
+  /** When it arrived, in ms since the epoch. */
+  at: number;
 }
 
 export function wireChat(overrides: Partial<WireChat> = {}): WireChat {
@@ -189,6 +191,8 @@ export class MockBeeperServer {
   refuseAuthorize: string | undefined;
   /** When true, revoking fails and the token keeps working. */
   revokeFails = false;
+  /** Routes that never answer, as a hung Beeper would: only the client can end the request. */
+  stalls: ((path: string) => boolean) | undefined;
 
   private clients = new Map<string, RegisteredClient>();
   private codes = new Map<string, PendingCode>();
@@ -219,12 +223,13 @@ export class MockBeeperServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const at = Date.now();
     const url = new URL(req.url ?? '/', 'http://mock');
     const fullPath = decodeURIComponent(url.pathname);
     const prefixed = fullPath.startsWith(`${this.pathPrefix}/`);
     const path = prefixed ? fullPath.slice(this.pathPrefix.length) : fullPath;
     const body = await this.readBody(req);
-    this.requests.push({ method: req.method ?? '', path, query: url.searchParams, body });
+    this.requests.push({ method: req.method ?? '', path, query: url.searchParams, body, at });
 
     const send = (status: number, payload: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json' });
@@ -261,6 +266,9 @@ export class MockBeeperServer {
     }
     if (this.forcedError) {
       return error(this.forcedError.status, this.forcedError.code ?? 'forced', 'Forced test error');
+    }
+    if (this.stalls?.(path)) {
+      return new Promise((resolve) => res.on('close', resolve));
     }
 
     const messagesMatch = /^\/v1\/chats\/([^/]+)\/messages$/.exec(path);
@@ -308,9 +316,7 @@ export class MockBeeperServer {
       return page ? send(200, page) : error(400, 'unmodeled', `mock: unmodeled chat search ${url.search}`);
     }
     if (req.method === 'GET' && path === '/v1/messages/search') {
-      const q = url.searchParams.get('query')?.toLowerCase();
-      const items = q ? this.messages.filter((m) => m.text?.toLowerCase().includes(q)) : this.messages;
-      return send(200, cursorEnvelope(items));
+      return this.searchMessages(url.searchParams, send, error);
     }
     if (req.method === 'GET' && messagesMatch) {
       const page = this.listMessages(messagesMatch[1]!, url.searchParams);
@@ -328,6 +334,72 @@ export class MockBeeperServer {
       return chat ? send(200, chat) : error(404, 'not_found', 'chat not found');
     }
     return error(404, 'not_found', `no route: ${req.method} ${path}`);
+  }
+
+  /**
+   * Message search as Beeper's published API reference describes it: filters
+   * by exact words in any order, sender ('me', 'others' or a user ID),
+   * chats, accounts and time (both bounds exclusive, and a bound that is not
+   * a time is refused); leaves out low-priority chats unless
+   * excludeLowPriority=false, and muted ones only when includeMuted=false;
+   * pages of at most 20 (the reference's maximum, so more is refused here:
+   * whether Beeper refuses or trims it is unverified), newest page first,
+   * with a cursor to the next older page. Within a page the newest comes
+   * last, as in the reference's example. The cursor is this mock's own: an
+   * offset into the results, which a real one need not be.
+   */
+  private searchMessages(
+    params: URLSearchParams,
+    send: (status: number, payload: unknown) => void,
+    error: (status: number, code: string, message: string) => void,
+  ): void {
+    const limit = Number(params.get('limit') ?? 20);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+      return error(400, 'invalid_request', `limit must be an integer from 1 to 20, got ${params.get('limit')}`);
+    }
+    const bound = (name: string, unset: number) => (params.has(name) ? Date.parse(params.get(name)!) : unset);
+    const after = bound('dateAfter', -Infinity);
+    const before = bound('dateBefore', Infinity);
+    if (Number.isNaN(after) || Number.isNaN(before)) {
+      return error(400, 'invalid_request', 'dateAfter and dateBefore must be ISO 8601 times');
+    }
+    const wordsOf = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    const wanted = wordsOf(params.get('query') ?? '');
+    const sender = params.get('sender');
+    const chatIDs = params.getAll('chatIDs');
+    const accountIDs = params.getAll('accountIDs');
+    const excludeLowPriority = params.get('excludeLowPriority') !== 'false';
+    const includeMuted = params.get('includeMuted') !== 'false';
+    const chat = (id: string) => this.chats.find((c) => c.id === id);
+    const matches = this.messages.filter((m) => {
+      const at = Date.parse(m.timestamp);
+      const words = new Set(wordsOf(m.text ?? ''));
+      return (
+        wanted.every((w) => words.has(w)) &&
+        (sender === null ||
+          (sender === 'me' ? m.isSender === true : sender === 'others' ? m.isSender !== true : m.senderID === sender)) &&
+        (chatIDs.length === 0 || chatIDs.includes(m.chatID)) &&
+        (accountIDs.length === 0 || accountIDs.includes(m.accountID)) &&
+        at > after &&
+        at < before &&
+        !(excludeLowPriority && chat(m.chatID)?.isLowPriority) &&
+        !(!includeMuted && chat(m.chatID)?.isMuted)
+      );
+    });
+    // Newest first, stable among equal times.
+    const newestFirst = matches
+      .map((m, i) => ({ m, i }))
+      .sort((a, b) => Date.parse(b.m.timestamp) - Date.parse(a.m.timestamp) || a.i - b.i)
+      .map(({ m }) => m);
+    const offset = Number(params.get('cursor')?.replace(/^older-than-/, '') ?? 0);
+    const page = newestFirst.slice(offset, offset + limit);
+    const next = offset + page.length;
+    return send(200, {
+      items: [...page].reverse(),
+      hasMore: next < newestFirst.length,
+      oldestCursor: page.length ? `older-than-${next}` : null,
+      newestCursor: null,
+    });
   }
 
   /**

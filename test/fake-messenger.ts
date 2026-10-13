@@ -6,6 +6,7 @@ import type {
   Message,
   MessageListQuery,
   MessageSearchQuery,
+  MessageWatchQuery,
   Page,
   SendMessageInput,
   SendMessageResult,
@@ -42,12 +43,37 @@ export function makeMessage(overrides: Partial<Message> = {}): Message {
   };
 }
 
-/** In-memory Messenger for tests: seed chats/messages, records sends. */
+/** What reaches an open watch: a message arriving, or the backend failing. */
+type WatchEvent = { message: Message } | { error: Error };
+
+/**
+ * In-memory Messenger for tests: seed chats/messages, records sends. Messages
+ * reach open watches through arrive(), and fail() makes the backend fail them.
+ */
 export class FakeMessenger implements Messenger {
   chats: Chat[] = [];
   messages: Message[] = [];
   sent: SendMessageInput[] = [];
   markedRead: string[] = [];
+  /** Every watch opened, in order. */
+  watchQueries: MessageWatchQuery[] = [];
+  private readonly watchers = new Set<(event: WatchEvent) => void>();
+
+  /** Watches still open: neither aborted, ended by the caller, nor failed. */
+  get openWatches(): number {
+    return this.watchers.size;
+  }
+
+  /** A message reaching the backend, as open watches see it arrive. */
+  arrive(message: Message): void {
+    this.messages.push(message);
+    for (const push of this.watchers) push({ message });
+  }
+
+  /** The backend failing: every open watch ends with this error. */
+  fail(error: Error): void {
+    for (const push of this.watchers) push({ error });
+  }
 
   async checkConnection(): Promise<ServerInfo> {
     return { appName: 'FakeMessenger', appVersion: '0.0.0', baseUrl: 'fake://' };
@@ -109,6 +135,39 @@ export class FakeMessenger implements Messenger {
       items = items.filter((m) => m.text?.toLowerCase().includes(q));
     }
     return { items, hasMore: false };
+  }
+
+  /** Catches up on matching messages already here, oldest first, then follows arrive(). */
+  async *watchMessages(query: MessageWatchQuery, signal: AbortSignal): AsyncGenerator<Message, void, undefined> {
+    this.watchQueries.push(query);
+    const after = Date.parse(query.since);
+    const matches = (m: Message) => m.isFromMe && Date.parse(m.timestamp) > after;
+    const queue: WatchEvent[] = this.messages
+      .filter(matches)
+      .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+      .map((message) => ({ message }));
+    let wake: (() => void) | undefined;
+    const push = (event: WatchEvent) => {
+      queue.push(event);
+      wake?.();
+    };
+    const onAbort = () => wake?.();
+    this.watchers.add(push);
+    signal.addEventListener('abort', onAbort);
+    try {
+      while (!signal.aborted) {
+        const event = queue.shift();
+        if (event === undefined) {
+          await new Promise<void>((resolve) => (wake = resolve));
+          continue;
+        }
+        if ('error' in event) throw event.error;
+        if (matches(event.message)) yield event.message;
+      }
+    } finally {
+      this.watchers.delete(push);
+      signal.removeEventListener('abort', onAbort);
+    }
   }
 
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {

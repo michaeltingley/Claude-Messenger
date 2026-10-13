@@ -80,6 +80,7 @@ export async function createApp(config: Config): Promise<App> {
   const provider = new BeeperMessenger({
     accessToken: config.beeperAccessToken,
     baseUrl: config.beeperBaseUrl,
+    pollIntervalMs: config.beeperPollIntervalMs,
   });
   // File-backed send window: rate limits hold across process restarts
   // (every CLI invocation is a fresh process). Lives in stateDir, not

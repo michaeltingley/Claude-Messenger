@@ -14,6 +14,9 @@ const EndpointSchema = z.object({
   BEEPER_BASE_URL: z.string().url().default('http://localhost:23373'),
 });
 
+/** Set but empty reads as unset: `BEEPER_POLL_INTERVAL_MS=` means the default. */
+const unsetIfEmpty = (value: unknown) => (value === '' ? undefined : value);
+
 const ConfigSchema = EndpointSchema.extend({
   /**
    * Token from `claude-messenger connect` (Beeper's own approval box), or
@@ -33,6 +36,15 @@ const ConfigSchema = EndpointSchema.extend({
    * must not require rotating the Beeper credential.
    */
   CLAUDE_MESSENGER_MCP_TOKEN: z.string().optional(),
+  /**
+   * How often a message watch (`mentions`) asks Beeper for new messages.
+   * Lower notices a mention sooner and asks Beeper more often; more than
+   * once a second gains a person nothing.
+   */
+  BEEPER_POLL_INTERVAL_MS: z.preprocess(
+    unsetIfEmpty,
+    z.coerce.number().int().min(1_000).max(60_000).default(5_000),
+  ),
 });
 
 /** Where the provider is: all a command needs before any credential exists. */
@@ -42,6 +54,7 @@ export interface EndpointConfig {
 
 export interface Config extends EndpointConfig {
   beeperAccessToken: string;
+  beeperPollIntervalMs: number;
   policyPath: string;
   auditDir: string;
   stateDir: string;
@@ -68,6 +81,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     beeperAccessToken: data.BEEPER_ACCESS_TOKEN,
     beeperBaseUrl: data.BEEPER_BASE_URL,
+    beeperPollIntervalMs: data.BEEPER_POLL_INTERVAL_MS,
     policyPath: data.CLAUDE_MESSENGER_POLICY,
     auditDir: data.CLAUDE_MESSENGER_AUDIT_DIR,
     stateDir: data.CLAUDE_MESSENGER_STATE_DIR,
