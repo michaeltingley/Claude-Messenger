@@ -175,7 +175,8 @@ and `docs/HOSTING-OPTIONS.md`._
     sees the digest as text, and a message can't steer it through the
     digest. The thread's session reads the digest to post it, so the words
     are in its transcript; a digest names no link, web address, email
-    address or phone number for it to follow.
+    address or phone number for it to follow, but for the few forms the
+    filter can't tell from words (`docs/ARCHITECTURE.md`, Daily digest).
   - Nothing is written to Beeper, so the read-only token stays read-only.
 
 ## Decided (2026-10-12): Claude Messenger runs on the automation VPS

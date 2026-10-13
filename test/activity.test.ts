@@ -78,7 +78,7 @@ describe('ActivityCollector', () => {
     expect(ids(activity.chats[0]!.messages)).toEqual(['in-1', 'in-2']);
     expect(ids(activity.chats[0]!.earlier)).toEqual(['before-2', 'before-1']);
     expect(activity.chats[0]!.truncated).toBe(false);
-    expect(activity).toMatchObject({ window, unreadable: 0, partial: 0, moreChats: false });
+    expect(activity).toMatchObject({ window, unreadable: 0, truncatedEmpty: 0, moreChats: false });
   });
 
   it('reads only chats active in the window, in the main inbox', async () => {
@@ -156,7 +156,6 @@ describe('ActivityCollector', () => {
       expect(activity.chats[0]!.truncated).toBe(true);
       // What came before the window wouldn't come right before what was kept.
       expect(activity.chats[0]!.earlier).toEqual([]);
-      expect(activity.partial).toBe(1);
     },
   );
 
@@ -206,7 +205,6 @@ describe('ActivityCollector', () => {
     expect(fake.listed).toHaveLength(2);
     expect(activity.chats[0]!.messages).toHaveLength(10);
     expect(activity.chats[0]!.truncated).toBe(true);
-    expect(activity.partial).toBe(1);
   });
 
   it('reaches the start of the window on its last page, so the window is whole, with what context that page held', async () => {
@@ -225,7 +223,6 @@ describe('ActivityCollector', () => {
     expect(ids(activity.chats[0]!.messages)).toEqual(['in-1', 'in-2']);
     expect(ids(activity.chats[0]!.earlier)).toEqual(['before']);
     expect(activity.chats[0]!.truncated).toBe(false);
-    expect(activity.partial).toBe(0);
   });
 
   it("counts a chat it couldn't finish reading even when nothing it read shows", async () => {
@@ -238,7 +235,7 @@ describe('ActivityCollector', () => {
     ];
     const activity = await collector(fake, { pagesPerChat: 2 }).collect(window);
     expect(activity.chats).toEqual([]);
-    expect(activity.partial).toBe(1);
+    expect(activity.truncatedEmpty).toBe(1);
   });
 
   it('asks for no more of the chat list than it needs', async () => {
@@ -248,7 +245,7 @@ describe('ActivityCollector', () => {
     expect(capped.chats).toHaveLength(40);
     expect(capped.moreChats).toBe(true);
     // Two pages of twenty hold its forty chats; then the first page again, for one that moved to the top.
-    expect(many.searches).toEqual([undefined, '20', undefined]);
+    expect(many.searches.map((cursor) => cursor !== undefined)).toEqual([false, true, false]);
 
     const few = new CountingMessenger();
     listInOrder(few, ['a', 'b', 'c']);
@@ -350,8 +347,8 @@ describe('ActivityCollector', () => {
     expect([...new Set(fake.listed)].sort()).toEqual(['a', 'b', 'c', 'e']);
     expect(activity.chats.map((c) => c.chat.id)).toEqual(['a', 'b', 'c']);
     expect(activity.moreChats).toBe(true);
-    // Left out whole, it isn't one the digest read in part.
-    expect(activity.partial).toBe(0);
+    // Left out whole, it isn't counted as one read in part.
+    expect(activity.truncatedEmpty).toBe(0);
   });
 
   it('says there were more chats when one that moved to the top takes it past its chat limit, though the list ended', async () => {

@@ -32,16 +32,23 @@ export interface Activity {
   /** How many chats with activity in the window could not be read. */
   unreadable: number;
   /**
-   * How many chats had more in the window than was read, whether or not
-   * anything read showed: their oldest messages are left out.
+   * How many chats had more in the window than was read, and nothing that
+   * shows in what was, so they aren't among `chats`. Each of those that are
+   * says it of itself, with `truncated`.
    */
-  partial: number;
-  /** True when more chats had activity than were read. */
+  truncatedEmpty: number;
+  /**
+   * True when more chats had activity than the digest looked at: more than
+   * its chat limit, or more than the pages of the list it looked through.
+   */
   moreChats: boolean;
 }
 
 export interface ActivityLimits {
-  /** The most chats to read. */
+  /**
+   * The most chats to keep, the most recently active. A few more may be
+   * read, when chats move up the list while it is paged through.
+   */
   chats: number;
   /** The most pages of the chat list to look through, however many chats a policy leaves out of them. */
   chatListPages: number;
@@ -84,7 +91,7 @@ export class ActivityCollector {
     const read: ChatActivity[] = [];
     const failures: unknown[] = [];
     // Partly read, with nothing that shows among what was read.
-    let partlyEmpty = 0;
+    let truncatedEmpty = 0;
     for (const chat of chats) {
       let activity: ChatActivity;
       try {
@@ -95,7 +102,7 @@ export class ActivityCollector {
         continue;
       }
       if (activity.messages.length > 0) read.push(activity);
-      else if (activity.truncated) partlyEmpty++;
+      else if (activity.truncated) truncatedEmpty++;
     }
     // When no chat at all could be read, the cause is not any one chat's.
     if (failures.length > 0 && failures.length === chats.length) throw failures[0];
@@ -107,7 +114,7 @@ export class ActivityCollector {
       window,
       chats: kept,
       unreadable: failures.length,
-      partial: partlyEmpty + kept.filter((activity) => activity.truncated).length,
+      truncatedEmpty,
       moreChats: moreChats || read.length > kept.length,
     };
   }
@@ -115,7 +122,8 @@ export class ActivityCollector {
   /**
    * The chats to read: the first ones the list holds, up to the chat limit,
    * and any that moved to its top while it was paged through. `moreChats`
-   * says the list held more than the limit, or more than could be read.
+   * says the list held more than the limit, or more than the pages it
+   * looked through.
    */
   private async activeChats(window: DigestWindow): Promise<{ chats: Chat[]; moreChats: boolean }> {
     const page = (cursor?: string) =>

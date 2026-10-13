@@ -121,11 +121,27 @@ describe('claude-messenger digest (subprocess integration)', () => {
     expect(stdout.trimEnd().split('\n').at(-1)).toMatch(/^_Covers 2 chats and 4 messages since \w{3}, \w{3} \d+, \d+:\d\d [AP]M\._$/);
   }, 30_000);
 
+  it("prints what Claude wrote with no link, address, number or code in it, and nothing a terminal would run", async () => {
+    // What a message could get Claude to write, despite its instructions.
+    const answer = [
+      '**Needs you**',
+      '- **Bank** says to [verify](https://evil.example/login) at bit.ly/3xYz or write to help@evil.example,',
+      '  call 415',
+      '  555 0199 and read back EsTc 3yST y93F SLpB jJsz eAXc.\u001b[2J\u001b]52;c;cHduZWQ=\u0007',
+    ].join('\n');
+    const { stdout, code } = await cli([], await writeClaudeShim({ stdout: `${answer}\n` }));
+    expect(code).toBe(0);
+    expect(stdout).toContain('- **Bank** says to verify at (link) or write to (email address),\n  call (number) and read back (code).');
+    for (const shown of ['evil.example', 'bit.ly', '3xYz', '415', '0199', 'EsTc', 'eAXc', '\u001b', '\u0007']) {
+      expect(stdout).not.toContain(shown);
+    }
+  }, 30_000);
+
   it("briefs Claude on stdin with the last day of the main inbox's chats, the words of the messages and a little context", async () => {
     await cli(['--time-zone', 'America/Los_Angeles']);
     const [call] = await claude.calls();
     expect(call!.stdin).toContain('## "Alice"');
-    expect(call!.stdin).toContain('"Alice" (reactions: "👍" from You): Dinner on Friday?');
+    expect(call!.stdin).toContain('"Alice" (reactions "👍" from You): Dinner on Friday?');
     expect(call!.stdin).toContain('"Alice": I can book the place');
     expect(call!.stdin).toContain('You: Free this week?'); // from before the window, for context
     expect(call!.stdin).toContain('"Mom": Cabin is booked');

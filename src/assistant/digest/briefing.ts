@@ -10,6 +10,8 @@ export interface Briefing {
   chats: number;
   /** Messages it holds from inside the window. */
   messages: number;
+  /** Chats it holds with older messages from the window left out of what was read. */
+  partial: number;
   /** Chats with messages that didn't fit in it. */
   leftOut: number;
 }
@@ -43,8 +45,10 @@ type Clock = (date: Date) => string;
  * another message. Chats' and other people's names and every reaction are
  * always in quotes, which they can't hold, so none can pass for the owner,
  * whom the briefing alone calls You, however it is written. A message's
- * text comes last on its line, after everything the briefing says of it, so
- * it can't pass for any of that, such as a reaction of the owner's.
+ * text comes last on its line, after everything the briefing says of it,
+ * from the first colon outside quotes that follows its sender, since
+ * nothing the briefing says of it holds one: so the text can't pass for
+ * any of that, such as a reaction of the owner's, even where it starts.
  */
 export function renderBriefing(activity: Activity, timeZone: string): Briefing {
   const { since, until } = activity.window;
@@ -59,6 +63,7 @@ export function renderBriefing(activity: Activity, timeZone: string): Briefing {
   let length = lines.join('\n').length;
   let chats = 0;
   let messages = 0;
+  let partial = 0;
   let leftOut = 0;
   for (const chat of [...activity.chats].sort(byPriority)) {
     const block = renderChat(chat, clock);
@@ -70,8 +75,9 @@ export function renderBriefing(activity: Activity, timeZone: string): Briefing {
     length += block.length + 2;
     chats++;
     messages += chat.messages.length;
+    if (chat.truncated) partial++;
   }
-  return { text: lines.join('\n'), chats, messages, leftOut };
+  return { text: lines.join('\n'), chats, messages, partial, leftOut };
 }
 
 function renderChat(activity: ChatActivity, clock: Clock): string {
@@ -127,14 +133,37 @@ function nameOf(chat: Chat, participantId: string): string | undefined {
 
 /**
  * What reads as a double quote mark: every quotation mark but the single
- * ones, primes, ditto marks, corner brackets, their ornaments, and the
- * marks that put one over a letter. Words in quotes lose them, so that they
- * can't end their quotes early.
+ * ones; what else Unicode lists as looking like a double one, or like
+ * single ones side by side, such as primes and ditto marks; corner
+ * brackets; and quote ornaments. A script's letters stay, though some look
+ * alike, since they read as that script's. Words in quotes lose these, so
+ * that they can't end their quotes early.
  */
-const QUOTE_MARKS = /(?![‘’‛])[\p{Pi}\p{Pf}]|["“”„‟″‴‶‷⁗＂ˮʺ˝˵˶״ᐥ〃〝〞〟「」『』﹁﹂﹃﹄｢｣❛❜❝❞❠❮❯⹂🙶🙷🙸\u030b\u030f\u059e]/gu;
+const QUOTE_MARKS = /(?![‘’‛])[\p{Pi}\p{Pf}]|["“”„‟″‴‶‷⁗＂ˮʺ˝˵˶״\u1cd3〃〝〞〟「」『』﹁﹂﹃﹄｢｣❛❜❝❞❠❮❯⹂🙶🙷🙸]/gu;
 
-/** Two or more single quote marks in a row, which read as a double one. */
-const SINGLE_QUOTES = /['‘’‛ʹʼ′]{2,}/g;
+/**
+ * A run of combining marks on what isn't a word's letter, such as a space,
+ * a quote mark or a modifier letter (ʼ). There, a mark that puts a double
+ * quote mark over what it is on reads as one; on a letter it is an accent,
+ * as "ő" can be written. Each run is matched whole, from its start, so this
+ * takes time linear in the text.
+ */
+const MARKS_ON_NO_LETTER = /(?<![\p{Lu}\p{Ll}\p{Lt}\p{Lo}\p{M}])\p{M}+/gu;
+
+/** The marks that put a double quote mark over a character: a double acute, a double grave, a gershayim. */
+const QUOTE_ACCENTS = /[\u030b\u030f\u059e]/g;
+
+/**
+ * A single quote mark, or what Unicode lists as looking like one but isn't
+ * a script's letter, such as an apostrophe, a prime or an accent on its own.
+ */
+const SINGLE_QUOTE = String.raw`['\u2018\u2019\u201b\u2032\u2035\u0060\u00b4\u02b9\u02bb\u02bc\u02bd\u02be\u02c8\u02ca\u02cb\u02f4\u0384\u055a\u055b\u055d\u05f3\u07f4\u07f5\u1fbd\u1fbf\u1ffe\u2cff\uff07\uff40\u{1e94b}]`;
+
+/**
+ * Two or more single quote marks in a row, which read as a double one, with
+ * nothing between them but what shows as nothing or sits on one of them.
+ */
+const SINGLE_QUOTES = new RegExp(String.raw`${SINGLE_QUOTE}(?:[\p{M}\p{DI}]*${SINGLE_QUOTE})+`, 'gu');
 
 /**
  * Words someone chose, such as a name for themselves or a chat, or a
@@ -148,12 +177,16 @@ function quoted(words: string | undefined): string | undefined {
 }
 
 /**
- * `words` with each double quote mark, or run of single ones, replaced:
- * once nothing invisible is left that could hide one, or join the halves of
- * one when it goes.
+ * `words` with each double quote mark replaced and each run of single ones
+ * made one: once nothing invisible is left that could hide one, or join the
+ * halves of one when it goes. A run of single ones is made one last, so
+ * that none is left that what goes before could have made.
  */
 function withoutQuoteMarks(words: string, replacement: string): string {
-  return withoutInvisible(words).replace(QUOTE_MARKS, replacement).replace(SINGLE_QUOTES, "'");
+  return withoutInvisible(words)
+    .replace(QUOTE_MARKS, replacement)
+    .replace(MARKS_ON_NO_LETTER, (marks) => marks.replace(QUOTE_ACCENTS, ''))
+    .replace(SINGLE_QUOTES, "'");
 }
 
 /** What a message is, when it is more than its text. */
@@ -211,7 +244,7 @@ function reactions(message: Message, chat: Chat): string {
     );
   };
   const each = message.reactions.map((r) => `${quoted(r.key) ?? 'a reaction'} from ${who(r.participantId)}`);
-  return ` (reactions: ${listed(each, 'more').join(', ')})`;
+  return ` (reactions ${listed(each, 'more').join(', ')})`;
 }
 
 /** The first few items, then how many more there are. */

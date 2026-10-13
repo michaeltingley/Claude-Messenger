@@ -132,6 +132,48 @@ describe('DigestWriter', () => {
     );
   });
 
+  it('counts each chat once among the gaps: one read in part, then left out for length, is only left out', async () => {
+    const fake = new FakeMessenger();
+    for (let c = 0; c < 10; c++) {
+      fake.chats.push(makeChat({ id: `c${c}`, title: `Chat ${c}`, lastActivity: '2026-10-13T06:00:00Z' }));
+      // One more message in the window than a digest reads of a chat.
+      for (let m = 0; m < 41; m++) {
+        fake.messages.push(
+          makeMessage({
+            id: `c${c}-${m}`,
+            chatId: `c${c}`,
+            timestamp: `2026-10-13T0${c}:${String(m).padStart(2, '0')}:00Z`,
+            text: 'z'.repeat(1_000),
+          }),
+        );
+      }
+    }
+    const model = new FakeModel();
+    const digest = await writer(fake, model).write(window, timeZone);
+    const given = model.requests[0]!.input.split('\n').filter((line) => line.startsWith('## ')).length;
+    expect(given).toBeGreaterThan(1);
+    expect(given).toBeLessThan(9);
+    expect(footer(digest)).toBe(
+      `_Covers ${given} chats and ${given * 40} messages since Mon, Oct 12, 7:46 AM. ` +
+        `${given} chats had more messages than a digest reads; ${10 - given} chats left out for length._`,
+    );
+  });
+
+  it('says a chat had more than it reads when what it read of it held nothing that shows, though nothing else was new', async () => {
+    const fake = new FakeMessenger();
+    fake.pageSize = 2;
+    fake.chats = [makeChat({ id: 'busy', lastActivity: '2026-10-13T06:00:00Z' })];
+    // More hidden messages in the window than the pages a digest reads of a chat hold.
+    fake.messages = Array.from({ length: 6 }, (_, n) =>
+      makeMessage({ id: `h${n}`, chatId: 'busy', timestamp: `2026-10-13T06:0${n}:00Z`, isHidden: true }),
+    );
+    const model = new FakeModel();
+    expect(await writer(fake, model, { pagesPerChat: 2 }).write(window, timeZone)).toBe(
+      '_No new messages since Mon, Oct 12, 7:46 AM. 1 chat had more messages than a digest reads._',
+    );
+    expect(model.requests).toHaveLength(0);
+  });
+
   it("shows the owner the model's words with no link, address or number in them, so none reaches them looking vouched for", async () => {
     const model = new FakeModel(async () =>
       '- **Bank** says to [verify your account](https://evil.example/login), write to help@evil.example or call 415-555-0199.',

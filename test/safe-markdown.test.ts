@@ -49,8 +49,9 @@ describe('safeMarkdown', () => {
     // A scheme with one slash, or "//" after a digit, starts no URL, but what follows is still a link.
     expect(safeMarkdown('https:/x.com/y or 1//x.com/y')).toBe('https:/(link) or 1//(link)');
     expect(safeMarkdown('http:\\\\evil.com\\login')).toBe('http:\\\\\\\\(link)\\\\login');
-    // A hyphen ends a domain, as a linkifier reads it.
+    // A hyphen ends a domain, as a linkifier reads it, and those before one are no part of it.
     expect(safeMarkdown('the Amazon.com-branded card, from evil.com-')).toBe('the (link)-branded card, from (link)-');
+    expect(safeMarkdown('--evil.com, __evil.com/login, e.g.-evil.com or x--evil.com')).toBe('--(link), __(link), e.g.-(link) or (link)');
   });
 
   it("leaves a file's name, which ends in no domain's ending, but not one with a path, and words with dots between them", () => {
@@ -136,7 +137,7 @@ describe('safeMarkdown', () => {
 
   it('turns an account, card or wallet number, or a code, into "(number)" or "(code)"', () => {
     expect(safeMarkdown('IBAN DE89 3704 0044 0532 0130 00, acct 1234 5678 9012, card 4111 1111 1111 1111 or 4111-1111-1111-1111')).toBe(
-      'IBAN DE(number), acct (number), card (number) or (number)',
+      '(code) 00, acct (number), card (number) or (number)',
     );
     expect(safeMarkdown('Your code is 482913, 482 913 or 482-913, or G-48291375.')).toBe(
       'Your code is (number), (number) or (number), or G-(number).',
@@ -150,6 +151,26 @@ describe('safeMarkdown', () => {
     expect(safeMarkdown('Use 123,456 or $4155550199, not $1,000.4155550199')).toBe('Use (number) or (number), not (number)');
   });
 
+  it('turns a code written in groups, as a recovery key or a product key is, into "(code)", but not words side by side', () => {
+    const codes = [
+      // A Matrix recovery key, a product key, a gift card's code, an authenticator's key.
+      'EsTc 3yST y93F SLpB jJsz eAXc 2XzA ygD3 w69H fGaN TKBj jXEd',
+      'VK7JG-NPHTM-C97JM-9MPGT-3V66T',
+      '4J8K-9LMN-3PQ7',
+      'JBSW Y3DP EHPK 3PXP',
+      // Across a line break inside a paragraph, which shows as a space.
+      'AB12-CD34\nEF56-GH78',
+    ];
+    for (const code of codes) expect(safeMarkdown(`Key: ${code}.`), code).toBe('Key: (code).');
+    // Words, names and capitals in a row, groups too short to be a code's, and numbers, which are found as numbers.
+    const kept = [
+      'WhatsApp LinkedIn YouTube', 'Gen2 USB4 ports with 40Gbps', 'RTX4090 GPUs with 24GB VRAM', 'HTTP HTTPS SMTP IMAP',
+      'PLEASE CALL BACK SOON', 'XK7-P9Q', 'UA123 SFO-JFK', 'Room 1234 at 5678 Main St',
+    ];
+    for (const text of kept) expect(safeMarkdown(text), text).toBe(text);
+    expect(safeMarkdown('card 4111 1111 1111 1111')).toBe('card (number)');
+  });
+
   it('leaves dates, times, years and amounts, alone, in a span or one after another, and short numbers', () => {
     const kept = [
       'On 2026-10-13 at 7:46 AM, $1,250.00, in 94103, 10/13/2026.', '10/13/2026 7:46 PM', 'Fri 10/17, 7:30 PM', '7:30 - 9:00',
@@ -160,7 +181,7 @@ describe('safeMarkdown', () => {
     for (const text of kept) expect(safeMarkdown(text), text).toBe(text);
   });
 
-  it('ends a number at a comma and a space, a letter, a line break, or more signs than group a number', () => {
+  it('ends a number at a comma and a space, a letter, a line that starts a block, or more signs than group a number', () => {
     expect(safeMarkdown('Call +1 (415) 555-0199, 415-555-0199, 415.555.0199 or 1-800-555-0199.')).toBe(
       'Call (number), (number), (number) or (number).',
     );
@@ -209,11 +230,12 @@ describe('safeMarkdown', () => {
   });
 
   it('drops what could carry hidden data next to other characters, but keeps what emoji are built with', () => {
-    // A run of what shows as nothing, a zero-width no-break space, a variation selector no emoji uses, and an unassigned one.
+    // A run of what shows as nothing, a zero-width no-break space, a variation selector no emoji uses, an unassigned
+    // one, and the selectors that choose an emoji's look or a text one, on what is no emoji.
     const zwj = '\u200d\u200c'.repeat(30);
     const selectors = Array.from({ length: 16 }, (_, i) => String.fromCodePoint(0xe0100 + i)).join('');
-    expect(safeMarkdown(`\u4e00${zwj}\u4e8c \u65e5\ufeff\u672c \u{1f600}${selectors} payp\u0430\ufe00l \u4e09\u2065\u56db`)).toBe(
-      '\u4e00\u4e8c \u65e5\u672c \u{1f600} payp\u0430l \u4e09\u56db',
+    expect(safeMarkdown(`\u4e00${zwj}\u4e8c \u65e5\ufeff\u672c \u{1f600}${selectors} payp\u0430\ufe00l \u4e09\u2065\u56db \u0430\ufe0f\u0431\ufe0e`)).toBe(
+      '\u4e00\u4e8c \u65e5\u672c \u{1f600} payp\u0430l \u4e09\u56db \u0430\u0431',
     );
     const emoji = '\u{1f468}\u200d\u{1f469}\u200d\u{1f467} 1\ufe0f\u20e3 \u2764\ufe0f \u2764\ufe0f\u200d\u{1f525} \u{1f441}\ufe0f\u200d\u{1f5e8}\ufe0f \u{1f3f3}\ufe0f\u200d\u{1f308} thanks';
     expect(safeMarkdown(emoji)).toBe(emoji);
@@ -223,7 +245,7 @@ describe('safeMarkdown', () => {
     const pieces = [
       '[', '![', '[a](', 'a.', 'a-', 'a_', '1.', 'a@', 'a.b:', 'www.', '//.', '+1 ', 'a.bc/.', '\u200d', 'a\u3002', 'a\u3002b.',
       '1 - ', '1,', '(1', '$1', '12 ', '1:2', '1\n', '1\n -', '1,\n', 'a*', '*a', 'a.*', 'a_.', 'xn--', '--a', 'a.b?', '\u0301', '\u0301\u0316', 'a\u034f',
-      '1\u20e3', '\ufe0f', '\u{e0100}', `${'A'.repeat(19)}1 `,
+      '1\u20e3', '\ufe0f', '\u{e0100}', `${'A'.repeat(19)}1 `, '-', '_', 'Ab1C ', 'Ab1C-Ab1C x ', 'ABCD ',
       // Numbers of dates that each read more than one way, each ending in one that is none.
       `${'10.10 '.repeat(10)}1234, `,
     ];
@@ -231,6 +253,10 @@ describe('safeMarkdown', () => {
       ...pieces.map((piece) => piece.repeat(200_000 / piece.length)),
       // Marks that normalizing would sort, the longer the run the slower.
       `a${'\u0301'.repeat(100_000)}${'\u0316'.repeat(100_000)}`,
+      // A run that a domain's label can hold, after a label's start.
+      `a${'_'.repeat(200_000)}`,
+      // Spaces a number could be split across in many ways, but for a run of them taken whole.
+      `1${' '.repeat(3_000)}x`,
     ];
     // Each takes well under a second; a pattern that backtracked over the text would take far longer on any one.
     for (const text of texts) {

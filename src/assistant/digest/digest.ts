@@ -1,7 +1,7 @@
 import { ModelError } from '../../core/errors.js';
 import type { LanguageModel } from '../../core/model.js';
 import type { Activity, ActivityCollector, DigestWindow } from './activity.js';
-import { renderBriefing } from './briefing.js';
+import { type Briefing, renderBriefing } from './briefing.js';
 import { DIGEST_INSTRUCTIONS } from './instructions.js';
 import { safeMarkdown } from './safe-markdown.js';
 import { formatDateTime, isTimeZone } from './time.js';
@@ -44,22 +44,30 @@ export class DigestWriter {
     if (!isTimeZone(timeZone)) throw new RangeError(`${timeZone} is not an IANA time zone, such as America/Los_Angeles.`);
     const activity = await this.collector.collect(window);
     const since = formatDateTime(window.since, timeZone);
-    if (activity.chats.length === 0) return footnote(`No new messages since ${since}.`, gaps(activity, 0));
+    if (activity.chats.length === 0) return footnote(`No new messages since ${since}.`, gaps(activity));
 
     const briefing = renderBriefing(activity, timeZone);
     const summary = safeMarkdown(await this.model.write({ instructions: DIGEST_INSTRUCTIONS, input: briefing.text }));
     if (summary.trim() === '') throw new ModelError('The model answered with nothing that can be shown.');
     const coverage = `Covers ${chats(briefing.chats)} and ${count(briefing.messages, 'message')} since ${since}.`;
-    return `${summary}\n\n${footnote(coverage, gaps(activity, briefing.leftOut))}`;
+    return `${summary}\n\n${footnote(coverage, gaps(activity, briefing))}`;
   }
 }
 
-/** What a digest couldn't cover, as counted: the reads that failed or stopped short, and chats cut for length. */
-function gaps({ unreadable, partial, moreChats }: Activity, leftOut: number): string[] {
+/**
+ * What a digest couldn't cover, as counted: the reads that failed or
+ * stopped short, and chats cut for length. A chat is counted once: one left
+ * out for length isn't also one read in part.
+ */
+function gaps(
+  { unreadable, truncatedEmpty, moreChats }: Activity,
+  shown: Pick<Briefing, 'partial' | 'leftOut'> = { partial: 0, leftOut: 0 },
+): string[] {
+  const partial = truncatedEmpty + shown.partial;
   return [
     ...(unreadable > 0 ? [`${chats(unreadable)} couldn't be read`] : []),
     ...(partial > 0 ? [`${chats(partial)} had more messages than a digest reads`] : []),
-    ...(leftOut > 0 ? [`${chats(leftOut)} left out for length`] : []),
+    ...(shown.leftOut > 0 ? [`${chats(shown.leftOut)} left out for length`] : []),
     ...(moreChats ? ['more chats had activity than a digest reads'] : []),
   ];
 }

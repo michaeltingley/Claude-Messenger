@@ -8,9 +8,11 @@ const LINE_BREAK = /\r\n?|[\v\f\u0085\u2028\u2029]/g;
 /**
  * Control and invisible formatting characters, other than a tab, a line
  * feed and the joiners that build emoji and some scripts' letters: they
- * could hide or reorder text, or reach a terminal as its commands.
+ * could hide or reorder text, or reach a terminal as its commands. Half of
+ * a surrogate pair on its own is no character at all, and two halves could
+ * become one once what keeps them apart is dropped.
  */
-const INVISIBLE = /(?![\t\n\u200c\u200d])[\p{Cc}\p{Cf}]/gu;
+const INVISIBLE = /(?![\t\n\u200c\u200d])[\p{Cc}\p{Cf}\p{Cs}]/gu;
 
 /** What shows as nothing and is not yet assigned to anything: no text needs it. */
 const UNASSIGNED_IGNORABLE = /(?=\p{Cn})\p{DI}/gu;

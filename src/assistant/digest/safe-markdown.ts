@@ -56,8 +56,13 @@ const TLD = String.raw`(?<tld>xn--[a-z\d-]{1,59}|\p{L}[\p{L}\p{M}]{1,62})(?!${LA
 const IPV4 = String.raw`(?:\d{1,3}\.){3}\d{1,3}(?!\.?\p{N})`;
 /** A path, a query or a fragment, ending before the punctuation that ends its sentence. */
 const PATH = String.raw`[/?#][^\s<>()[\]{}\x60]*[^\s<>()[\]{}\x60.,;:!?'"*_~|]`;
-/** Not inside a run of what a domain is made of, so that each run is tried once, from its start. */
-const RUN_START = String.raw`(?<!${LABEL_CHAR})(?<!${LABEL_CHAR}\.|${LABEL_CHAR}[_-]+)(?<![a-z\d]\u3002)`;
+/**
+ * Not inside a run of what a domain is made of, so that each run is tried
+ * once, from its start. No label starts with "_" or "-", so a run that does,
+ * even right after a dot ("e.g.-evil.com"), takes them in as `lead`, which
+ * is kept.
+ */
+const RUN_START = String.raw`(?<![\p{L}\p{N}\p{M}_-])(?:(?<!${LABEL_CHAR}\.)(?<![a-z\d]\u3002)|(?=[_-]))(?<lead>[_-]*)`;
 
 /**
  * A domain or an IPv4 address, with a port, a path, a query or none:
@@ -88,6 +93,23 @@ const FILE_TYPES = new Set([
  */
 const CODE = /(?<![A-Za-z\d])(?=[A-Za-z\d]*\d)(?=[A-Za-z\d]*[A-Za-z])[A-Za-z\d]{20,}(?![A-Za-z\d])/g;
 
+/**
+ * One group of a code written in groups: four or more Latin letters and
+ * digits that aren't a word, so it holds a digit or a capital after its
+ * first letter ("3yST", "VK7JG", "TKBj", not "Bank" or "ports").
+ */
+const CODE_GROUP = String.raw`(?![A-Za-z][a-z]+(?![A-Za-z\d]))[A-Za-z\d]{4,}(?![A-Za-z\d])`;
+
+/**
+ * A code written in groups, as a recovery key, a product key or a gift
+ * card's code is: three or more such groups, each joined to the next by a
+ * space, a hyphen or a line break. One whose groups hold no letter, or no
+ * digit, is left for what finds numbers, or left alone ("HTTP HTTPS SMTP").
+ * A try at a run ends where its groups do, so this takes time linear in the
+ * text.
+ */
+const GROUPED_CODE = new RegExp(String.raw`(?<![A-Za-z\d])${CODE_GROUP}(?:[ \n-]${CODE_GROUP}){2,}`, 'g');
+
 /** What could still open a link, an autolink, raw HTML, an entity or a code span, and the escape that would undo one. */
 const MARKUP = /[\\[\]<&`]/g;
 
@@ -103,8 +125,9 @@ const SPLITTING_MARKERS =
 
 /**
  * The model's Markdown as the owner may be shown it: no link, email address,
- * phone number or code in it, nothing a Markdown renderer could make into a
- * link, and nothing a terminal could run.
+ * phone number or code in it that can be told from words, nothing a
+ * Markdown renderer could make into a link, and nothing a terminal could
+ * run.
  *
  * The model is told never to repeat any of these, but a message could still
  * get one past it, and it would reach the owner inside a summary they trust
@@ -112,16 +135,18 @@ const SPLITTING_MARKERS =
  * form (NFKC: a fullwidth "４１５" becomes "415", a no-break space a space),
  * control and invisible characters go, a Markdown link keeps only its text,
  * each URL or domain but a file's name becomes "(link)", each email address
- * "(email address)", each code of letters and digits "(code)" and each
- * phone, account or card number or code of digits "(number)", and "\",
- * "[", "]", "<", "&" and "`" are escaped, as are emphasis markers inside an
- * address, so nothing left can open a link, raw HTML, an entity or a code
- * span. Bold, italics, lists and headings stay as written. Each step takes
- * time linear in the text, whatever the text is.
+ * "(email address)", each long code of letters and digits, or one in
+ * groups, "(code)" and each phone, account or card number or code of digits
+ * "(number)", and "\", "[", "]", "<", "&" and "`" are escaped, as are
+ * emphasis markers inside an address, so nothing left can open a link, raw
+ * HTML, an entity or a code span. Bold, italics, lists and headings stay as
+ * written. Each step takes time linear in the text, whatever the text is.
  *
- * Words can't be told from words: a number spelled out, or written in
- * letters that look like digits, still gets through, so the instructions
- * are the first guard and this is the second.
+ * What can't be told from words or a list still gets through: a number
+ * spelled out or written in letters that look like digits, a short code of
+ * letters and digits ("A1B2C3"), and digits split by a comma and a space or
+ * by more signs than group a number. So the instructions are the first
+ * guard and this is the second.
  */
 export function safeMarkdown(markdown: string): string {
   const plain = markdown.replace(MARK_RUN, '$1').replace(FOLDABLE, (run) => run.normalize('NFKC'));
@@ -131,13 +156,14 @@ export function safeMarkdown(markdown: string): string {
       .replace(URL, '(link)')
       .replace(EMAIL, '(email address)')
       .replace(HOST, linkOrFileName)
-      .replace(CODE, '(code)'),
+      .replace(CODE, '(code)')
+      .replace(GROUPED_CODE, (code) => (/\d/.test(code) && /[A-Za-z]/.test(code) ? '(code)' : code)),
   );
   return hidden.replace(MARKUP, '\\$&').replace(SPLITTING_MARKERS, (markers) => markers.replace(/./g, '\\$&'));
 }
 
-/** "(link)" for a match of `HOST`, unless it is a file's name. */
+/** "(link)" for a match of `HOST`, after what it starts with that is no domain's, unless it is a file's name. */
 function linkOrFileName(host: string, ...args: unknown[]): string {
-  const { tld, rest } = args.at(-1) as { tld?: string; rest: string };
-  return rest === '' && tld !== undefined && FILE_TYPES.has(tld.toLowerCase()) ? host : '(link)';
+  const { lead, tld, rest } = args.at(-1) as { lead: string; tld?: string; rest: string };
+  return rest === '' && tld !== undefined && FILE_TYPES.has(tld.toLowerCase()) ? host : `${lead}(link)`;
 }
