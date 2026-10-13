@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  test-matrix:
     # Both the systemd the MCP sandbox must hold under: 24.04 ships 255, whose
     # append_static_mounts bug the TemporaryFileSystem stand-ins work around
     # and which is too old for PrivatePIDs; 26.04 ships 259, where PrivatePIDs
@@ -35,3 +35,14 @@ jobs:
       - run: npm run build
       - name: CLI smoke test
         run: node dist/cli/main.js --help
+
+  # Branch protection requires one check named "test"; the matrix above reports
+  # as "test-matrix (os)", so this gate collapses every leg into that single
+  # check — green only when all of them are, red if any failed or was cancelled.
+  test:
+    needs: test-matrix
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All matrix legs passed
+        run: test "${{ needs.test-matrix.result }}" = "success"
