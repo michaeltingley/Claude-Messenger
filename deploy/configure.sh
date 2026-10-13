@@ -6,14 +6,15 @@
 #   deploy/configure.sh              # finish or repair an install; restarts the service
 #   deploy/configure.sh --reconnect  # get a new Beeper token, e.g. after Beeper was signed out
 #
-# It never prompts, so a Claude session can run it without a terminal. The
-# person's only steps happen in Beeper's own window: signing in, and
-# approving Claude Messenger's access. The token then goes from Beeper
-# straight into .env (`claude-messenger connect`), so nobody types it and no
-# transcript holds it. When Beeper runs headless on this host, its window is
-# reachable only through the sign-in surface, which this opens for the
-# approval. Every run closes it before going on, whether that run opened it or
-# not, and on any exit but a kill -9; after one of those, run this again.
+# It never prompts, so a Claude session can run it without a terminal, given
+# a sudo that needs no password there. The person's only steps happen in
+# Beeper's own window: signing in, and approving Claude Messenger's access.
+# The token then goes from Beeper straight into .env (`claude-messenger
+# connect`), so nobody types it and no transcript holds it. When Beeper runs
+# headless on this host, its window is reachable only through the sign-in
+# surface, which this opens for the approval. Every run closes it before
+# going on, whether that run opened it or not, and on any exit but a kill -9;
+# after one of those, run this again.
 set -euo pipefail
 
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -74,6 +75,13 @@ cd "$INSTALL_DIR"
 [ -f dist/cli/main.js ] || die "Claude Messenger is not built in $INSTALL_DIR; run deploy/bootstrap.sh first."
 cli() { node dist/cli/main.js "$@"; }
 
+# The MCP service is a system unit (see its header in deploy/systemd/), so
+# installing it takes root. Find out now, before anyone is asked to approve
+# anything. -n first: on a cloud image, -v asks for a password even where
+# every command runs without one.
+sudo -n true 2>/dev/null || sudo -v ||
+  die "this needs sudo, which it could not get; see above. Run ${SELF} where sudo can ask for your password, or let this user use sudo without one."
+
 say "Configuration"
 # Nobody else on this host may read this home: it holds .env (the Beeper
 # token) and, on a managed host, Beeper's own data. Either bypasses the policy
@@ -114,6 +122,23 @@ else
   fi
 fi
 unset mcp_token
+# The MCP service sees nothing of this home but the install, and can change
+# only its audit/ and state/ (see its unit). A policy, audit trail or rate
+# window that .env keeps anywhere else would be out of its reach: every call
+# would fail, or a policy it can't see would give way to the default one.
+# Read as Node loads .env, from the service's working directory.
+misplaced="$(node -e '
+  const { resolve } = require("node:path");
+  const env = require("node:util").parseEnv(require("node:fs").readFileSync(".env", "utf8"));
+  const dir = process.argv[1];
+  for (const [key, place] of [["CLAUDE_MESSENGER_POLICY", "policy.json"], ["CLAUDE_MESSENGER_AUDIT_DIR", "audit"], ["CLAUDE_MESSENGER_STATE_DIR", "state"]]) {
+    const value = env[key] ?? `./${place}`;
+    if (resolve(dir, value) !== resolve(dir, place)) console.log(`    ${key}=${value}, not ${resolve(dir, place)}`);
+  }' "$INSTALL_DIR")"
+[ -z "$misplaced" ] ||
+  die "the MCP service can reach only this install's policy.json, audit/ and state/, and .env puts some elsewhere:
+${misplaced}
+  Point those lines there, or delete them, then run ${SELF} again."
 ok ".env in $INSTALL_DIR"
 
 say "Beeper access"
@@ -146,17 +171,36 @@ cli doctor ||
 ok "doctor green (policy: read-only until you edit policy.json)"
 
 say "MCP service"
+MCP_UNIT=claude-messenger-mcp.service
+# Earlier installs ran it as a user unit, whose sandbox Ubuntu drops without a
+# word (see the unit's header). Left running, that one would keep the port.
+if [ -e "$UNIT_DIR/$MCP_UNIT" ]; then
+  systemctl --user disable --now "$MCP_UNIT" ||
+    die "the MCP service an earlier install ran as a user unit did not stop; stop it (systemctl --user disable --now $MCP_UNIT), then run ${SELF} again."
+  rm -f "$UNIT_DIR/$MCP_UNIT"
+  systemctl --user daemon-reload
+fi
 # The unit may write only these, and systemd refuses to start it if either is missing.
 mkdir -p audit state
-mkdir -p "$UNIT_DIR"
-# __NODE__ must be the RESOLVED interpreter: /usr/bin/node only exists on
-# apt installs; nvm/asdf setups would 203/EXEC with a hardcoded path.
-sed "s|__INSTALL_DIR__|$INSTALL_DIR|g; s|__PORT__|$MCP_PORT|g; s|__NODE__|$(command -v node)|g" \
-  "$INSTALL_DIR/deploy/systemd/claude-messenger-mcp.service" > "$UNIT_DIR/claude-messenger-mcp.service"
-systemctl --user daemon-reload
-systemctl --user enable claude-messenger-mcp.service
+# PrivatePIDs in the unit, which keeps a compromised server from reaching the
+# owner's other processes through /proc, needs systemd 257. 255 and 256 start
+# the service without it (ignoring the key with a log warning); the rest of
+# the sandbox still applies. Say so, rather than let the gap pass unnoticed.
+systemd_major="$(systemctl --version | sed -n 's/^systemd \([0-9][0-9]*\).*/\1/p' | head -n 1)"
+if [ -n "$systemd_major" ] && [ "$systemd_major" -lt 257 ]; then
+  warn "systemd ${systemd_major} is older than 257, so the MCP service cannot get its own process namespace (PrivatePIDs). The rest of its sandbox applies, but a server that was compromised could read your other processes' files and environment through /proc. Ubuntu 24.10+ and 26.04 ship 257 or newer."
+fi
+# Run as this user. __NODE__ must be the interpreter itself: /usr/bin/node
+# only exists on apt installs, an nvm or asdf node lives in this home, which
+# the sandbox hides but for what the unit lets through, and an asdf shim is a
+# script that needs the rest of asdf.
+NODE="$(node -p process.execPath)"
+sed "s|__INSTALL_DIR__|$INSTALL_DIR|g; s|__PORT__|$MCP_PORT|g; s|__NODE__|$NODE|g; s|__USER__|$(id -un)|g" \
+  "$INSTALL_DIR/deploy/systemd/claude-messenger-mcp.service" | sudo tee "/etc/systemd/system/$MCP_UNIT" >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl enable "$MCP_UNIT"
 # restart, not enable --now: re-runs are upgrades and must swap the process.
-systemctl --user restart claude-messenger-mcp.service
+sudo systemctl restart "$MCP_UNIT"
 # Node can take a while to start on a small, busy host.
 healthy=0
 for _ in $(seq 1 30); do
@@ -164,15 +208,17 @@ for _ in $(seq 1 30); do
     healthy=1
     break
   fi
+  # The restart reports success even when the start fails later (sandbox,
+  # user, node); the unit is then no longer active, and waiting won't help.
+  systemctl is-active --quiet "$MCP_UNIT" || break
   sleep 1
 done
-[ "$healthy" -eq 1 ] || die "MCP service failed to start — check: journalctl --user -u claude-messenger-mcp"
-ok "claude-messenger-mcp.service answering on http://127.0.0.1:${MCP_PORT}/mcp"
+[ "$healthy" -eq 1 ] || die "MCP service failed to start — check: sudo journalctl -u ${MCP_UNIT}"
+ok "${MCP_UNIT} answering on http://127.0.0.1:${MCP_PORT}/mcp"
 
 # HTTPS on the tailnet only; the MCP port itself stays on loopback. Under
 # `timeout`, sudo runs outside the terminal's foreground and can't ask for a
-# password, so it gets the chance to ask here first, when it needs one.
-sudo -n true 2>/dev/null || sudo -v 2>/dev/null || true
+# password; the sudo steps just above have already let it ask.
 published=0
 if out="$(timeout -k 2 "$SERVE_TIMEOUT" sudo -n tailscale serve --bg "http://127.0.0.1:${MCP_PORT}" 2>&1)"; then
   published=1

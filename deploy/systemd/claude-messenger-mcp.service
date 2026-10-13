@@ -1,23 +1,60 @@
-# systemd user unit for the hosted Claude Messenger MCP endpoint.
-# Installed by deploy/configure.sh (placeholders substituted); enable with:
-#   systemctl --user enable --now claude-messenger-mcp
+# systemd SYSTEM unit for the hosted Claude Messenger MCP endpoint, run as
+# the user who owns the install. deploy/configure.sh installs it into
+# /etc/systemd/system, with the placeholders substituted.
+#
+# A system unit, though the rest of deploy/systemd/ are user units: the
+# sandbox below needs a mount namespace, and a user manager can only build
+# one inside an unprivileged user namespace. Ubuntu 24.04+ restricts those
+# through AppArmor by default, and systemd then starts a user unit WITHOUT
+# its sandbox, silently (seen on the VPS, 2026-10-13). The system manager
+# builds the namespace with real privileges.
 [Unit]
 Description=Claude Messenger MCP server (HTTP)
 
 [Service]
+User=__USER__
 WorkingDirectory=__INSTALL_DIR__
 ExecStart=__NODE__ dist/cli/main.js serve --http --port __PORT__ --host 127.0.0.1
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
-PrivateTmp=true
-# Writable surface is exactly the audit trail + rate-window state; the rest
-# of $HOME (SSH keys, dotfiles) stays read-only to a compromised process.
+# The sandbox. Of the home directories and /run/user it sees only the install,
+# read-only, and node. So through the filesystem a compromised server can't
+# read SSH keys, other tools' credentials, Beeper's own data (its login token
+# is a full API token) or the sign-in screen's X cookie and VNC password. It
+# can change only its audit trail and rate window: every other file it sees is
+# read-only, apart from a /tmp of its own. The home directories, /run/user,
+# and the host's lock directory, shared memory and message queues are swapped
+# for empty, read-only stand-ins. /run/lock, /dev/shm and /dev/mqueue are
+# world-writable scratch that ProtectSystem=strict does not reliably cover
+# (systemd 256+ keeps /run/lock a writable tmpfs under it); standing them in
+# read-only keeps the "writes only audit/ and state/" invariant exact. Not
+# ProtectHome=tmpfs: systemd 255 and 256 (Ubuntu 24.04 has 255) make its
+# stand-ins writable. configure.sh refuses a .env that keeps the policy, audit
+# trail or rate window anywhere else.
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state
+TemporaryFileSystem=/home:ro /root:ro /run/user:ro /run/lock:ro /dev/shm:ro /dev/mqueue:ro
+BindReadOnlyPaths=__INSTALL_DIR__ __NODE__
+BindPaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state
+PrivateTmp=true
+# Hiding files is not enough on its own: the service runs as the owner, so if
+# it shared the owner's PID namespace it could reach around the mount
+# namespace through the owner's other processes — reading their files under
+# /proc/<pid>/root (SSH keys, Beeper's token) and their /proc/<pid>/environ,
+# all of it with PTRACE_MODE_READ_FSCREDS, which Yama's ptrace_scope does not
+# gate. Its own PID namespace leaves it seeing only itself. systemd 257+ only
+# (the VPS has 259); 255 and 256 lack it and ignore the key with a warning, so
+# on Ubuntu 24.04 the owner's other processes stay reachable this way —
+# configure.sh says so at install time, and docs/STATUS.md records it.
+PrivatePIDs=true
+# Its own SysV IPC and POSIX message queues, so it can neither reach nor be
+# reached through the host's. (POSIX shared memory is file-based, so the
+# /dev/shm stand-in above covers it; AF_UNIX and abstract sockets follow the
+# network namespace, which this service shares with the host — see the
+# residual risks in docs/STATUS.md.) systemd 248+.
+PrivateIPC=true
 # Backstop for leaks on small hosts; normal footprint is well under this.
 MemoryMax=512M
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

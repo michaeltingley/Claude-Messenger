@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 198 tests / 18 files.
+- `npm test` must be green before any push. Currently 226 tests / 19 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -75,8 +75,11 @@ built for hypothetical futures.
   machine running the tests. Its `systemctl` really starts a unit's
   `ExecStart`, with only the environment a unit gets, so
   `test/install.integration.test.ts` proves the installed MCP service answers
-  with the token `connect` saved. Its `sudo` resets the environment, as real
-  sudo does. Install scripts run the way a Claude session runs them: no
+  with the token `connect` saved. As real systemd does for a Type=simple
+  unit, it reports a start that fails after the fork as a success. Its
+  `sudo` resets the environment, as real sudo does, runs only the commands
+  the scripts use, and asks for a password on `-v`, as a cloud image's sudo
+  does. Install scripts run the way a Claude session runs them: no
   terminal, nothing on stdin, and signals to the script alone or to its whole
   process group. A real provision still needs a VM.
 - The mock Beeper (`test/mock-beeper.ts`) models Beeper Desktop's OAuth
@@ -88,6 +91,17 @@ built for hypothetical futures.
   x11vnc exactly as `deploy/systemd/` runs them and speaks X11 and RFB to
   them. CI installs those binaries, and a missing one fails CI rather than
   skipping.
+  `test/mcp-sandbox.integration.test.ts` runs the real `configure.sh` with
+  real sudo and systemd, then tries reads and writes from inside the
+  running MCP service as its user, and checks its PID and IPC namespaces are
+  its own — including that another of the owner's processes cannot be
+  reached through `/proc`, the escape `PrivatePIDs` closes. It replaces the
+  host's MCP service, so it runs only on GitHub's runners, never on a real
+  host, with Ubuntu 24.04+'s user namespace restriction switched on as on a
+  real host, and node in the home behind a shim, as nvm and asdf install it.
+  CI runs it on both Ubuntu 24.04 (systemd 255, too old for `PrivatePIDs`)
+  and 26.04 (259), and it asserts the /proc escape open on the first and
+  closed on the second.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene
