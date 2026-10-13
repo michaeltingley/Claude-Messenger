@@ -18,6 +18,8 @@ export interface WireChat {
   unreadCount: number;
   participants: { items: Array<{ id: string; fullName?: string }>; hasMore: boolean; total: number };
   lastActivity?: string;
+  isMuted?: boolean;
+  isLowPriority?: boolean;
 }
 
 export interface WireMessage {
@@ -179,6 +181,8 @@ export class MockBeeperServer {
   refuseAuthorize: string | undefined;
   /** When true, revoking fails and the token keeps working. */
   revokeFails = false;
+  /** Routes that never answer, as a hung Beeper would: only the client can end the request. */
+  stalls: ((path: string) => boolean) | undefined;
 
   private clients = new Map<string, RegisteredClient>();
   private codes = new Map<string, PendingCode>();
@@ -252,6 +256,9 @@ export class MockBeeperServer {
     if (this.forcedError) {
       return error(this.forcedError.status, this.forcedError.code ?? 'forced', 'Forced test error');
     }
+    if (this.stalls?.(path)) {
+      return new Promise((resolve) => res.on('close', resolve));
+    }
 
     const messagesMatch = /^\/v1\/chats\/([^/]+)\/messages$/.exec(path);
     const readMatch = /^\/v1\/chats\/([^/]+)\/read$/.exec(path);
@@ -299,9 +306,7 @@ export class MockBeeperServer {
       return send(200, cursorEnvelope(items));
     }
     if (req.method === 'GET' && path === '/v1/messages/search') {
-      const q = url.searchParams.get('query')?.toLowerCase();
-      const items = q ? this.messages.filter((m) => m.text?.toLowerCase().includes(q)) : this.messages;
-      return send(200, cursorEnvelope(items));
+      return this.searchMessages(url.searchParams, send, error);
     }
     if (req.method === 'GET' && messagesMatch) {
       const items = this.messages.filter((m) => m.chatID === messagesMatch[1]);
@@ -319,6 +324,64 @@ export class MockBeeperServer {
       return chat ? send(200, chat) : error(404, 'not_found', 'chat not found');
     }
     return error(404, 'not_found', `no route: ${req.method} ${path}`);
+  }
+
+  /**
+   * Message search as Beeper's published API reference describes it: filters
+   * by word, sender ('me', 'others' or a user ID), chats, accounts and time
+   * (both bounds exclusive); leaves out low-priority chats unless
+   * excludeLowPriority=false, and muted ones only when includeMuted=false;
+   * pages of at most 20 (the reference's maximum, so more is refused here:
+   * whether Beeper refuses or trims it is unverified), newest page first,
+   * with a cursor to the next older page. Within a page the newest comes
+   * last, as in the reference's example.
+   */
+  private searchMessages(
+    params: URLSearchParams,
+    send: (status: number, payload: unknown) => void,
+    error: (status: number, code: string, message: string) => void,
+  ): void {
+    const limit = Number(params.get('limit') ?? 20);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+      return error(400, 'invalid_request', `limit must be an integer from 1 to 20, got ${params.get('limit')}`);
+    }
+    const q = params.get('query')?.toLowerCase();
+    const sender = params.get('sender');
+    const chatIDs = params.getAll('chatIDs');
+    const accountIDs = params.getAll('accountIDs');
+    const after = params.has('dateAfter') ? Date.parse(params.get('dateAfter')!) : -Infinity;
+    const before = params.has('dateBefore') ? Date.parse(params.get('dateBefore')!) : Infinity;
+    const excludeLowPriority = params.get('excludeLowPriority') !== 'false';
+    const includeMuted = params.get('includeMuted') !== 'false';
+    const chat = (id: string) => this.chats.find((c) => c.id === id);
+    const matches = this.messages.filter((m) => {
+      const at = Date.parse(m.timestamp);
+      return (
+        (!q || m.text?.toLowerCase().includes(q)) &&
+        (sender === null ||
+          (sender === 'me' ? m.isSender === true : sender === 'others' ? m.isSender !== true : m.senderID === sender)) &&
+        (chatIDs.length === 0 || chatIDs.includes(m.chatID)) &&
+        (accountIDs.length === 0 || accountIDs.includes(m.accountID)) &&
+        at > after &&
+        at < before &&
+        !(excludeLowPriority && chat(m.chatID)?.isLowPriority) &&
+        !(!includeMuted && chat(m.chatID)?.isMuted)
+      );
+    });
+    // Newest first, stable among equal times.
+    const newestFirst = matches
+      .map((m, i) => ({ m, i }))
+      .sort((a, b) => Date.parse(b.m.timestamp) - Date.parse(a.m.timestamp) || a.i - b.i)
+      .map(({ m }) => m);
+    const offset = Number(params.get('cursor')?.replace(/^older-than-/, '') ?? 0);
+    const page = newestFirst.slice(offset, offset + limit);
+    const next = offset + page.length;
+    return send(200, {
+      items: [...page].reverse(),
+      hasMore: next < newestFirst.length,
+      oldestCursor: page.length ? `older-than-${next}` : null,
+      newestCursor: null,
+    });
   }
 
   /**

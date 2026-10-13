@@ -20,7 +20,8 @@ src/
 │   └── beeper/  adapter for the Beeper Client API (Desktop app or headless Beeper Server)
 ├── policy/      policy engine, guarded messenger, audit log
 ├── mcp/         MCP server exposing curated tools
-├── cli/         claude-messenger CLI (doctor, chats, send, serve, ...)
+├── assistant/   automations on the guarded messenger: the @Claude mention listener
+├── cli/         claude-messenger CLI (doctor, chats, send, serve, mentions, ...)
 ├── app.ts       composition root
 └── config.ts    env-based configuration
 ```
@@ -35,6 +36,7 @@ cp .env.example .env    # then fill in BEEPER_ACCESS_TOKEN (see docs/SETUP.md)
 npx claude-messenger doctor    # verifies config → connectivity → auth → policy
 npx claude-messenger chats     # your recent chats
 npx claude-messenger serve     # MCP server on stdio for Claude Code / Desktop
+npx claude-messenger mentions  # follow the messages you send that mention @Claude
 ```
 
 See **[docs/SETUP.md](docs/SETUP.md)** for creating the Beeper token and connecting Claude locally, **[docs/DEPLOY.md](docs/DEPLOY.md)** for the one-command 24/7 hosted setup (VPS + headless Beeper Server + HTTP MCP over Tailscale), and **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for design decisions.

@@ -110,6 +110,15 @@ Ask Claude: *"Use check_connection then search_chats to show my unread chats."*
 
 **Hosted / remote clients**: run `claude-messenger serve --http` (requires `CLAUDE_MESSENGER_MCP_TOKEN`) and connect with `claude mcp add claude-messenger --transport http https://<host>/mcp --header "Authorization: Bearer <mcp-token>"`. The full 24/7 host recipe is **[DEPLOY.md](DEPLOY.md)**.
 
+## 4. Follow your @Claude mentions
+
+```sh
+npx claude-messenger mentions                                  # from now on
+npx claude-messenger mentions --since 2026-10-13T09:00:00Z     # catch up first
+```
+
+It prints each message **you** send that mentions `@Claude`, in any chat the policy shows, as one JSON line, until Ctrl-C (or SIGTERM). Nobody else's message counts, whatever it says, and the command reads only your own messages. It checks Beeper every 5 seconds (`BEEPER_POLL_INTERVAL_MS`). Each message it reads is in the audit log as a chat and message ID, never its text. This is the first step of the @Claude assistant: nothing answers yet.
+
 ### Token hygiene
 
 - Revoke any token instantly: Beeper → Settings → Integrations → Approved connections.

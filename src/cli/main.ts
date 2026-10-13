@@ -4,6 +4,7 @@ import { Command, InvalidArgumentError } from 'commander';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
 import { createAccessRequester, createApp } from '../app.js';
+import { watchMentions } from '../assistant/mentions.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
 import { createMcpServer } from '../mcp/server.js';
 import { startHttpMcpServer } from '../mcp/http.js';
@@ -76,6 +77,15 @@ function describeProgress(progress: AccessProgress): string {
         ? 'The approval box is open. Waiting for your answer...'
         : 'The unanswered approval box closed. A new one is open...';
   }
+}
+
+/** A date and time in any form Date.parse reads, as ISO 8601. */
+function parseTime(value: string): string {
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) {
+    throw new InvalidArgumentError('must be a date and time, like 2026-10-13T09:00:00Z');
+  }
+  return new Date(ms).toISOString();
 }
 
 function parseLimit(value: string): number {
@@ -177,6 +187,24 @@ program
     const { messenger } = await app();
     const result = await messenger.sendMessage({ chatId, text });
     console.log(`✓ Sent (pending ID ${result.pendingMessageId}) — recorded in audit log`);
+  });
+
+program
+  .command('mentions')
+  .description('Follow the messages you send that mention @Claude, one JSON line each, until stopped')
+  .option('--since <time>', 'also catch up on mentions after this time (default: now)', parseTime)
+  .action(async (opts: { since?: string }) => {
+    const { messenger } = await app();
+    const since = opts.since ?? new Date().toISOString();
+    const stop = new AbortController();
+    // Once each: a second Ctrl-C finds no handler and ends the process at once.
+    process.once('SIGINT', () => stop.abort());
+    process.once('SIGTERM', () => stop.abort());
+    console.error(`Watching for @Claude in messages you send after ${since}. Ctrl-C stops.`);
+    for await (const message of watchMentions(messenger, since, stop.signal)) {
+      console.log(JSON.stringify(message));
+    }
+    console.error('Stopped.');
   });
 
 program

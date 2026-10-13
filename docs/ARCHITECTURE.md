@@ -15,6 +15,7 @@ Claude (Claude Code / Desktop / claude.ai)
    │  MCP (stdio locally, or Streamable HTTP + bearer token when hosted)
 ┌──▼──────────────────────────────┐
 │ mcp/    curated tools           │   deliberately narrow: no delete/archive
+│ assistant/ @Claude mentions     │   automations: the user's own messages only
 ├─────────────────────────────────┤
 │ policy/ GuardedMessenger        │   PolicyEngine (pure decisions)
 │         + JSONL audit log       │   read filters, send gates, rate limits
@@ -36,7 +37,7 @@ Beeper cloud bridges ⇄ WhatsApp / Signal / Telegram / iMessage / ...
 1. **Nothing above `providers/` imports a provider SDK.** The `Messenger` interface (`core/messenger.ts`) is the seam. Tests run against `FakeMessenger`; a raw-Matrix provider (via Beeper's own `@beeper/pickle` / `@beeper/chat-adapter-matrix`) can be added without touching policy, MCP, or CLI.
 2. **The tool layer only ever sees the `GuardedMessenger`.** Policy checks happen in-process *before* any provider call; denials throw `PolicyDeniedError` naming the rule. Read results are filtered so denylisted chats never enter Claude's context. Likewise `connect` only gets the `GuardedAccessRequester`.
 3. **`PolicyEngine` owns decisions, not I/O.** The clock and the rate-limit store (`RateWindow`) are injected: tests control time with a memory window, while the composition root wires a file-backed window so send limits survive process restarts (each CLI `send` is a fresh process).
-4. **Audit content policy**: outbound text is recorded (you must be able to review what was said as you); read message content is never written to the audit log (your history doesn't belong in log files).
+4. **Audit content policy**: outbound text is recorded (you must be able to review what was said as you); read message content is never written to the audit log (your history doesn't belong in log files). A watch records which message it handed on (chat and message IDs), never what it said.
 
 ## Deployment topologies
 
@@ -51,10 +52,13 @@ Beeper Desktop's *Remote Access* setting (Settings → Integrations → Advanced
 
 ## Extension points (deliberate, not speculative)
 
-- **Streaming/triggers**: the Client API has an experimental WebSocket (`/v1/ws`, `message.upserted` etc.). Streaming will be added to the `Messenger` port together with its first provider implementation *and* a guarded wrapper in the same change, so pushed events pass through the same visibility filtering and audit as pulled reads. Until then, poll `searchChats({unreadOnly: true})`.
+- **Streaming/triggers**: `Messenger.watchMessages` delivers messages as they reach the backend, each once, after a `since` time. It landed with its first consumer (the @Claude listener, `assistant/mentions.ts` and `claude-messenger mentions`), its Beeper implementation and its guarded wrapper in one change, as planned:
+  - **Guarded**: `GuardedMessenger.watchMessages` checks the read policy before the provider is asked, filters every message through the same visibility predicate as reads, and audits like a mutation: intent first (mandatory), a delivery entry before each message is handed on (mandatory; IDs only), the outcome last (best-effort). Idle polls write nothing.
+  - **Beeper**: the Client API's WebSocket (`/v1/ws`, `message.upserted`) is experimental, so the provider polls message search instead (`providers/watch-by-polling.ts`, every `BEEPER_POLL_INTERVAL_MS`, default 5 s). Each scan re-reads a 10-minute window behind the previous one, because a message can reach Beeper after its own timestamp (a bridge reconnecting); one that arrives later than that is missed. The window follows the host clock, not message timestamps, so a message dated in the future can't hide later ones. A failure ends the watch with its error; nothing retries, so the caller decides how to resume. A WebSocket or Matrix `/sync` implementation can replace the poller without touching anything above `providers/`.
+  - **Only the user's own messages** for now (`sender: 'me'`): the listener never reads anyone else's messages, and only the user's own words can set Claude to work. Other senders join the query with the first watch that needs them.
 - **New providers**: implement `Messenger` and `AccessRequester`, add a branch in `app.ts`.
 - **Credentials**: `AccessRequester` (`core/access.ts`) is how this app gets its provider credential. A Claude session drives installs and its transcript is readable, so the credential must never pass through a terminal, a chat or a screen: the owner approves in the provider's own window, and the credential travels from the provider straight into `.env` (`claude-messenger connect`). The Beeper implementation (`providers/beeper/access.ts`) drives Beeper Desktop's OAuth approval box (dynamic client registration + PKCE), waiting for sign-in first and re-asking when Beeper closes an unanswered box. It reports the terms the owner approved; whether the app keeps them is decided above every provider, by `GuardedAccessRequester` (`policy/access.ts`). The CLI sees only the port.
-- **Automations**: build on `GuardedMessenger` only, so every automated action inherits policy + audit for free. Diagnostics get a deliberately narrow `ConnectivityProbe` (checkConnection only) — the unguarded provider is never handed out of the composition root.
+- **Automations** (`assistant/`): build on `GuardedMessenger` only, so every automated action inherits policy + audit for free. The first is the @Claude listener: `mentionsClaude` decides whether a message addresses Claude (the user's own, naming `@claude` as a word), and `watchMentions` follows the user's messages for those. Diagnostics get a deliberately narrow `ConnectivityProbe` (checkConnection only) — the unguarded provider is never handed out of the composition root.
 
 ## Security notes
 

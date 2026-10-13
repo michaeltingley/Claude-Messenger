@@ -17,10 +17,12 @@ export interface AuditEntry {
   /**
    * Mutations write two entries: 'intent' before dispatch (mandatory — no
    * side effect happens without it) and 'outcome' after (best-effort).
+   * Watches write the same two, with a mandatory 'delivery' entry between
+   * them for each message handed on, naming it but never holding its text.
    * Reads write a single entry with no stage.
    */
-  stage?: 'intent' | 'outcome';
-  /** Pairs a mutation's intent and outcome entries under concurrency. */
+  stage?: 'intent' | 'delivery' | 'outcome';
+  /** Pairs the entries of one mutation or watch under concurrency. */
   opId?: string;
   outcome?: 'ok' | 'error';
   error?: string;

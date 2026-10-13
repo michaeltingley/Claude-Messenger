@@ -128,6 +128,16 @@ export interface MessageSearchQuery {
   cursor?: string;
 }
 
+/**
+ * Which messages a watch delivers. Only the user's own messages for now:
+ * other senders are added with the first watch that needs them.
+ */
+export interface MessageWatchQuery {
+  sender: 'me';
+  /** ISO 8601: deliver only messages timestamped strictly after this. */
+  since: string;
+}
+
 export interface SendMessageInput {
   chatId: string;
   text: string;

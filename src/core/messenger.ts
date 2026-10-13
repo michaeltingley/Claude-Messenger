@@ -5,6 +5,7 @@ import type {
   Message,
   MessageListQuery,
   MessageSearchQuery,
+  MessageWatchQuery,
   Page,
   SendMessageInput,
   SendMessageResult,
@@ -37,15 +38,22 @@ export interface Messenger {
   /** Word search across chats/accounts. */
   searchMessages(query: MessageSearchQuery): Promise<Page<Message>>;
 
+  /**
+   * Messages matching `query` as they reach the backend, each delivered once,
+   * oldest first within what arrives together. It first catches up on
+   * matches already there after `query.since`. A message can reach the
+   * backend late (a bridge reconnecting, a backlog syncing), so delivery
+   * follows arrival, not strict timestamp order; how late a message may
+   * arrive and still be delivered is the implementation's to state.
+   *
+   * The iterable ends when `signal` aborts, and ends with the error when the
+   * backend fails: no retries, so the caller decides how to resume.
+   */
+  watchMessages(query: MessageWatchQuery, signal: AbortSignal): AsyncIterable<Message>;
+
   /** Send a message as the user. Implementations must treat this as real. */
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;
 
   /** Mark a chat read as the user. */
   markChatRead(chatId: string): Promise<void>;
 }
-
-// Streaming (Beeper's WebSocket events, Matrix /sync) is a planned extension.
-// It will be added to this port together with its first provider
-// implementation AND a guarded wrapper, so pushed events pass through the
-// same visibility filtering and audit as pulled reads — never as a raw
-// provider capability reachable around the policy layer.
