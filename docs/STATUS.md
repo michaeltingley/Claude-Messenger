@@ -108,8 +108,8 @@ and `docs/HOSTING-OPTIONS.md`._
   then the rest. It runs on the owner's Claude subscription (Claude Code
   signed in on the host), never an API key, and its model has no tools and
   can't be made to read a file or act. Design: `docs/ARCHITECTURE.md`
-  (Language model, Daily digest). How it is to run and reach the owner:
-  "Daily digest" below.
+  (Language model, Daily digest). How it runs each morning and reaches the
+  owner: "Daily digest" below.
 
 ## VERIFIED LIVE
 
@@ -364,9 +364,12 @@ owner, each send approved in the Claude chat.
    running at ~1.6 GB available with ~1.1 GB in swap, but the 2026-10-13
    reboot (item 6) cleared the swap (now ~1.7 GB available, 78 MB swap), so
    the pressure is off for now — 4 GB is still tight once the digest and
-   mention-listener land, so sizing up is worth doing before that. VPS-2 is
-   8 GB at $10/mo; OVH upgrades in place. **Ask before any purchase; card
-   entry is the owner's.** Awaiting his go; less pressing after the reboot.
+   mention-listener land, so sizing up is worth doing before that. The
+   digest's first run (2026-10-13 23:05Z) took about 200 MB for its few
+   minutes: 1357 MB available before, 1148 MB at the lowest, with swap
+   back up to 454 MB by then. VPS-2 is 8 GB at $10/mo; OVH upgrades in
+   place. **Ask before any purchase; card entry is the owner's.** Awaiting
+   his go; less pressing after the reboot.
 4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
 5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
