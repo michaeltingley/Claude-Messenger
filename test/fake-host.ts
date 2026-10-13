@@ -15,12 +15,25 @@ import { join } from 'node:path';
  * /opt: a script under test that goes wrong must fail, not install software
  * on the machine running the tests.
  *
- * `systemctl` runs a unit for real when its file is installed under
- * ~/.config/systemd/user: it checks the unit's ReadWritePaths exist, as
- * systemd does, then starts its ExecStart in WorkingDirectory, with only the
- * environment a user manager gives its units. Like systemd, `start` leaves an
- * active unit alone; only `restart` swaps the process. Units that exist only
- * as state flags (`units/<name>`) are just marked active.
+ * `systemctl` runs a unit for real when its file is installed: under
+ * ~/.config/systemd/user for the user manager, or under the fake root's
+ * /etc/systemd/system for the system manager. Like systemd, it checks that
+ * the paths the unit's sandbox names exist (ReadWritePaths, BindPaths,
+ * BindReadOnlyPaths), then starts its ExecStart in WorkingDirectory, with
+ * only the environment that manager gives its units. As for any Type=simple
+ * unit, a start that fails after the fork (226/NAMESPACE, 217/USER; the
+ * `sandbox-fails` flag forces one) still reports success: the unit is just
+ * not active, and the reason is in its log. A system unit must name the
+ * host's one user in User=, and changing system units takes root; the user
+ * manager is reachable only with the user's XDG_RUNTIME_DIR, which sudo
+ * drops. Like systemd, `start` leaves an active unit alone; only `restart`
+ * swaps the process, and `enable` enables only a unit whose [Install]
+ * section says where. Units that exist only as state flags (`units/<name>`)
+ * are just marked active.
+ *
+ * `sudo` runs only the commands the scripts use, as that same user, but
+ * every argument naming a path under /etc is moved into the fake root,
+ * where root's writes land.
  */
 
 const TAILSCALE_SHIM = `#!/usr/bin/env bash
@@ -68,22 +81,50 @@ esac
 const SYSTEMCTL_SHIM = `#!/usr/bin/env bash
 S="$FAKE_HOST_STATE"
 echo "systemctl $*" >> "$S/calls.log"
-if [ "\${1:-}" != "--user" ]; then echo "fake systemctl: only --user is modeled" >&2; exit 64; fi
-shift
+# The host's systemd version, as configure.sh reads it to decide whether the
+# sandbox can get PrivatePIDs. A fresh runner is new enough (259, like the
+# VPS); the \`systemd-version\` flag stands in for an older host.
+if [ "\${1:-}" = "--version" ]; then
+  v="$(cat "$S/systemd-version" 2>/dev/null || echo 259)"
+  echo "systemd $v ($v.4-1ubuntu1)"
+  exit 0
+fi
+if [ "\${1:-}" = "--user" ]; then
+  shift
+  scope=user; T="$S"; dir="$HOME/.config/systemd/user"
+  # As root through sudo, say: sudo resets the environment.
+  if [ -z "\${XDG_RUNTIME_DIR:-}" ]; then
+    echo 'Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined (consider using --machine=<user>@.host --user to connect to bus of other user)' >&2
+    exit 1
+  fi
+else
+  scope=system; T="$S/system"; dir="$FAKE_HOST_ROOT/etc/systemd/system"
+  # Anyone may read the system manager's state; changing it takes root.
+  case "\${1:-}" in
+    is-active|is-enabled|cat) ;;
+    *) [ "\${FAKE_SUDO:-}" = 1 ] || { echo "Failed to \${1:-}: Interactive authentication required." >&2; exit 1; } ;;
+  esac
+fi
 verb="$1"; shift
-file_of() { printf '%s/.config/systemd/user/%s' "$HOME" "$1"; }
-installed() { [ -e "$S/units/$1" ] || [ -e "$(file_of "$1")" ]; }
+file_of() { printf '%s/%s' "$dir" "$1"; }
+installed() { [ -e "$T/units/$1" ] || [ -e "$(file_of "$1")" ]; }
 stop_unit() {
   local pid
-  if [ -e "$S/pids/$1" ]; then
-    pid="$(cat "$S/pids/$1")"
+  if [ -e "$T/pids/$1" ]; then
+    pid="$(cat "$T/pids/$1")"
     kill -- "-$pid" 2>/dev/null || true
-    rm -f "$S/pids/$1"
+    rm -f "$T/pids/$1"
   fi
-  rm -f "$S/active/$1"
+  rm -f "$T/active/$1"
+}
+# A Type=simple start that fails after the fork: the job still succeeds, the
+# unit is just not active, and the journal says why.
+failed_after_fork() {
+  echo "$1: Main process exited, code=exited, status=$2" >> "$S/logs/$1.log"
+  return 0
 }
 start_unit() {
-  local u="$1" f wd cmd rw
+  local u="$1" f wd cmd rw user
   # Like the real unit: x11vnc -passwdfile exits when the file is missing.
   if [ "$u" = x11vnc.service ] && [ ! -s "$XDG_RUNTIME_DIR/claude-messenger/vncpasswd" ]; then
     echo "Job for x11vnc.service failed (cannot open passwdfile)." >&2; return 1
@@ -91,35 +132,57 @@ start_unit() {
   stop_unit "$u"
   f="$(file_of "$u")"
   if [ -e "$f" ] && grep -q '^ExecStart=' "$f"; then
-    for rw in $(sed -n 's/^ReadWritePaths=//p' "$f"); do
-      if [ ! -e "$rw" ]; then
-        echo "Job for $u failed: $u: Failed to set up mount namespacing: $rw: No such file or directory (226/NAMESPACE)" >&2
-        return 1
-      fi
+    if [ "$(grep -c '^ExecStart=' "$f")" -gt 1 ]; then
+      echo "Failed to $verb $u: Unit $u has a bad unit file setting." >&2; return 1
+    fi
+    if [ "$scope" = system ]; then
+      user="$(sed -n 's/^User=//p' "$f" | tail -n 1)"
+      case "$user" in
+        "$FAKE_HOST_USER") ;;
+        "") echo "fake systemctl: $u names no User=, so it would run as root" >&2; return 1 ;;
+        *) failed_after_fork "$u" "217/USER"; return ;;
+      esac
+      if [ -e "$S/sandbox-fails" ]; then failed_after_fork "$u" "226/NAMESPACE"; return; fi
+    fi
+    for key in ReadWritePaths BindPaths BindReadOnlyPaths; do
+      for rw in $(sed -n "s/^$key=//p" "$f"); do
+        # A leading - makes the path optional; a bind's source ends at a colon.
+        case "$rw" in -*) continue ;; esac
+        rw="\${rw%%:*}"
+        if [ ! -e "$rw" ]; then failed_after_fork "$u" "226/NAMESPACE ($rw: No such file or directory)"; return; fi
+      done
     done
     wd="$(sed -n 's/^WorkingDirectory=//p' "$f" | tail -n 1)"
     cmd="$(sed -n 's/^ExecStart=//p' "$f" | tail -n 1)"
     # Its own process group, so stopping it stops everything it started. And
-    # none of the caller's environment: a unit gets the user manager's, so
-    # whatever it needs must come from its own config.
-    ( cd "\${wd:-$HOME}" &&
-      exec env -i HOME="$HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" PATH=/usr/local/bin:/usr/bin:/bin setsid $cmd
-    ) >> "$S/logs/$u.log" 2>&1 < /dev/null &
-    echo "$!" > "$S/pids/$u"
+    # none of the caller's environment: a unit gets only its manager's, so
+    # whatever it needs must come from its own config. Only the user manager
+    # passes on XDG_RUNTIME_DIR.
+    unit_env=(HOME="$HOME" PATH=/usr/local/bin:/usr/bin:/bin)
+    [ "$scope" = user ] && unit_env+=(XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR")
+    ( cd "\${wd:-$HOME}" && exec env -i "\${unit_env[@]}" setsid $cmd ) >> "$S/logs/$u.log" 2>&1 < /dev/null &
+    echo "$!" > "$T/pids/$u"
   fi
-  touch "$S/active/$u"
+  touch "$T/active/$u"
 }
 case "$verb" in
   daemon-reload) ;;
   cat) installed "$1" ;;
-  is-active) [ "$1" = "--quiet" ] && shift; [ -e "$S/active/$1" ] ;;
-  is-enabled) [ "$1" = "--quiet" ] && shift; [ -e "$S/enabled/$1" ] ;;
+  is-active)
+    [ "\${1:-}" = "--quiet" ] && shift
+    [ -e "$T/active/$1" ] || exit 1
+    # A Type=simple unit whose process has died is no longer active, though its
+    # state flag lingers. Check the recorded leader pid is still alive, so a
+    # caller that loops on is-active (configure.sh) sees a crash as the real
+    # is-active would, instead of waiting out its whole timeout.
+    [ ! -e "$T/pids/$1" ] || kill -0 "$(cat "$T/pids/$1")" 2>/dev/null ;;
+  is-enabled) [ "$1" = "--quiet" ] && shift; [ -e "$T/enabled/$1" ] ;;
   start|restart)
     for u in "$@"; do
       if ! installed "$u"; then echo "Unit $u not found." >&2; exit 5; fi
     done
     for u in "$@"; do
-      if [ "$verb" = start ] && [ -e "$S/active/$u" ]; then continue; fi
+      if [ "$verb" = start ] && [ -e "$T/active/$u" ]; then continue; fi
       start_unit "$u" || exit 1
     done ;;
   enable)
@@ -127,15 +190,20 @@ case "$verb" in
     if [ "\${1:-}" = "--now" ]; then now=1; shift; fi
     for u in "$@"; do
       if ! installed "$u"; then echo "Failed to enable unit: Unit file $u does not exist." >&2; exit 1; fi
-      touch "$S/enabled/$u"
-      if [ "$now" = 1 ] && [ ! -e "$S/active/$u" ]; then start_unit "$u" || exit 1; fi
+      # Without an [Install] section that says where, enable is only a notice.
+      if [ -e "$(file_of "$u")" ] && ! grep -q '^WantedBy=' "$(file_of "$u")"; then
+        echo "The unit files have no installation config (WantedBy=, RequiredBy=, UpheldBy=, Also=, or Alias= settings in the [Install] section, and DefaultInstance= for template units). This means they are not meant to be enabled or disabled using systemctl." >&2
+      else
+        touch "$T/enabled/$u"
+      fi
+      if [ "$now" = 1 ] && [ ! -e "$T/active/$u" ]; then start_unit "$u" || exit 1; fi
     done ;;
   disable)
     now=0
     if [ "\${1:-}" = "--now" ]; then now=1; shift; fi
     for u in "$@"; do
       if ! installed "$u"; then echo "Failed to disable unit: Unit file $u does not exist." >&2; exit 1; fi
-      rm -f "$S/enabled/$u"
+      rm -f "$T/enabled/$u"
       if [ "$now" = 1 ]; then
         if [ -e "$S/fail-stop" ]; then echo "Failed to stop $u" >&2; exit 1; fi
         stop_unit "$u"
@@ -145,13 +213,17 @@ case "$verb" in
 esac
 `;
 
-// Real sudo with a NOPASSWD ALL rule: -v validates, -n never asks, and the
-// command gets a reset environment, so only leading VAR=value assignments
-// reach it (PATH stays, so it still finds the other shims). With the
-// \`sudo-needs-password\` flag it is a rule that wants a password, with no
-// terminal to ask on, as for a Claude session. With \`sudo-asks-password\`
-// a person at a terminal types it when asked, and sudo then remembers it for
-// a while; until then, -n fails.
+// Real sudo as a cloud image sets it up: the user's own NOPASSWD rule runs
+// every command without asking, but the image also puts the user in %sudo, a
+// rule with a password, so -v asks (sudo's default, verifypw=all, wants every
+// rule NOPASSWD), and there is no terminal to ask on. With
+// \`sudo-needs-password\` every rule wants a password, with no terminal to ask
+// on, as for a Claude session. With \`sudo-asks-password\` a person at a
+// terminal types it when asked, and sudo then remembers it for a while; until
+// then, -n fails. The command gets a reset environment, so only leading
+// VAR=value assignments reach it (PATH stays, so it still finds the other
+// shims). Only the commands and forms the scripts use run; paths under /etc
+// move into the fake root.
 const SUDO_SHIM = `#!/usr/bin/env bash
 S="$FAKE_HOST_STATE"
 echo "sudo $*" >> "$S/calls.log"
@@ -161,7 +233,8 @@ no_terminal() {
 }
 if [ "$*" = "-v" ]; then
   [ -e "$S/sudo-needs-password" ] && no_terminal
-  [ -e "$S/sudo-asks-password" ] && touch "$S/sudo-remembers"
+  if [ -e "$S/sudo-asks-password" ]; then touch "$S/sudo-remembers"; exit 0; fi
+  [ -e "$S/sudo-remembers" ] || no_terminal
   exit 0
 fi
 asks=1
@@ -170,6 +243,13 @@ assign=()
 while [ $# -gt 0 ] && [[ "$1" == [A-Z_]*=* ]]; do assign+=("$1"); shift; done
 case "\${1:-}" in -*|"") echo "fake sudo: unmodeled invocation: $*" >&2; exit 64 ;; esac
 case " $* " in *" /opt"*) echo "fake sudo: a fake host has no /opt to install into: $*" >&2; exit 64 ;; esac
+# Root can write anywhere, so nothing else may run as root here. Installers
+# piped in (bash -, sh) get only what the fake curl refuses to download.
+case "$*" in
+  true|"bash -"|sh|"systemctl "*|"tailscale "*|"apt-get "*|"loginctl "*) ;;
+  "tee /etc/"*) [ $# -eq 2 ] || { echo "fake sudo: unmodeled invocation: $*" >&2; exit 64; } ;;
+  *) echo "fake sudo: unmodeled invocation: $*" >&2; exit 64 ;;
+esac
 if [ -e "$S/sudo-needs-password" ]; then
   [ "$asks" = 1 ] && no_terminal
   echo "sudo: a password is required" >&2; exit 1
@@ -178,7 +258,12 @@ if [ -e "$S/sudo-asks-password" ] && [ ! -e "$S/sudo-remembers" ]; then
   [ "$asks" = 1 ] || { echo "sudo: a password is required" >&2; exit 1; }
   touch "$S/sudo-remembers"
 fi
-exec env -i PATH="$PATH" HOME="$HOME" FAKE_HOST_STATE="$S" FAKE_SUDO=1 "\${assign[@]}" "$@"
+args=()
+for arg in "$@"; do
+  case "$arg" in /etc/*) args+=("$FAKE_HOST_ROOT$arg") ;; *) args+=("$arg") ;; esac
+done
+exec env -i PATH="$PATH" HOME="$HOME" FAKE_HOST_STATE="$S" FAKE_HOST_ROOT="$FAKE_HOST_ROOT" FAKE_HOST_USER="$FAKE_HOST_USER" \\
+  FAKE_SUDO=1 "\${assign[@]}" "\${args[@]}"
 `;
 
 // Lingering lets a user's units run with nobody logged in; root only.
@@ -244,10 +329,15 @@ esac
 exec ${realCurl} "$@"
 `;
 
-// A regular user's host, whoever runs the tests; root with the \`root\` flag.
+// A regular user's host, whoever runs the tests; root with the \`root\` flag,
+// and under sudo.
 const ID_SHIM = `#!/usr/bin/env bash
-if [ "$*" = "-u" ]; then if [ -e "$FAKE_HOST_STATE/root" ]; then echo 0; else echo 1000; fi; exit 0; fi
-echo "fake id: unmodeled invocation: $*" >&2; exit 64
+root=0; [ -e "$FAKE_HOST_STATE/root" ] || [ "\${FAKE_SUDO:-}" = 1 ] && root=1
+case "$*" in
+  -u) if [ "$root" = 1 ]; then echo 0; else echo 1000; fi ;;
+  -un) if [ "$root" = 1 ]; then echo root; else echo "$FAKE_HOST_USER"; fi ;;
+  *) echo "fake id: unmodeled invocation: $*" >&2; exit 64 ;;
+esac
 `;
 
 export interface ScriptResult {
@@ -274,13 +364,21 @@ export class FakeHost {
   readonly runtime = join(this.root, 'runtime');
   readonly passwdFile = join(this.runtime, 'claude-messenger', 'vncpasswd');
   readonly unitDir = join(this.home, '.config', 'systemd', 'user');
+  /** Where root's writes under /etc land (see the sudo shim). */
+  readonly sysroot = join(this.root, 'sysroot');
+  readonly systemUnitDir = join(this.sysroot, 'etc', 'systemd', 'system');
+  /** The host's one user, as `id -un` names it. */
+  static readonly USER = 'owner';
   private readonly detached: ChildProcess[] = [];
 
   constructor() {
     for (const dir of [
       this.bin,
       this.home,
-      ...['units', 'active', 'enabled', 'pids', 'logs'].map((d) => join(this.state, d)),
+      this.systemUnitDir,
+      join(this.state, 'logs'),
+      // The user manager's state, and the system manager's.
+      ...['units', 'active', 'enabled', 'pids'].flatMap((d) => [join(this.state, d), join(this.state, 'system', d)]),
     ]) {
       mkdirSync(dir, { recursive: true });
     }
@@ -313,8 +411,8 @@ export class FakeHost {
     return host;
   }
 
-  set(flag: string): this {
-    writeFileSync(join(this.state, flag), '');
+  set(flag: string, content = ''): this {
+    writeFileSync(join(this.state, flag), content);
     return this;
   }
 
@@ -364,6 +462,8 @@ export class FakeHost {
       PATH: `${this.bin}:${process.env.PATH}`,
       HOME: this.home,
       FAKE_HOST_STATE: this.state,
+      FAKE_HOST_ROOT: this.sysroot,
+      FAKE_HOST_USER: FakeHost.USER,
       XDG_RUNTIME_DIR: this.runtime,
       ...extra,
     };
@@ -413,14 +513,16 @@ export class FakeHost {
     return { child, output: () => stdout + stderr, running: () => running, done };
   }
 
-  /** Stop every unit the fake systemd started. */
+  /** Stop every unit the fake systemd started, under either manager. */
   stopUnits(): void {
-    for (const unit of readdirSync(join(this.state, 'pids'))) {
-      const pid = Number(readFileSync(join(this.state, 'pids', unit), 'utf8'));
-      try {
-        process.kill(-pid, 'SIGTERM');
-      } catch {
-        // already gone
+    for (const pids of [join(this.state, 'pids'), join(this.state, 'system', 'pids')]) {
+      for (const unit of readdirSync(pids)) {
+        const pid = Number(readFileSync(join(pids, unit), 'utf8'));
+        try {
+          process.kill(-pid, 'SIGTERM');
+        } catch {
+          // already gone
+        }
       }
     }
   }

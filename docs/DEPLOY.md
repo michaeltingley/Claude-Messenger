@@ -79,7 +79,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/michaeltingley/Claude-Me
 ```
 
 It never prompts, so a Claude session on the host can run it just as well,
-in the background with a timeout above its 60-minute wait for you (Claude
+given a sudo there that needs no password (as cloud images' default user
+has), in the background with a timeout above its 60-minute wait for you (Claude
 Code's Bash tool stops background commands after 30 minutes by default, so
 give it at least 65). It prints two links and waits for you at each:
 
@@ -103,7 +104,16 @@ What the script does:
       exposed, and it closes the screen on any exit but `kill -9` (after
       one of those, run it again).
    4. Runs `doctor` end to end.
-   5. Installs and restarts a boot-persistent systemd user service.
+   5. Installs and restarts the MCP service: a boot-persistent system unit
+      that runs as you, sandboxed. It sees nothing of your home directory
+      but the install, which it can't change, and it can write only its
+      audit trail and rate window. So `.env` must keep the policy, audit
+      trail and rate window in the install, as it does by default; the
+      script stops before anything else if it doesn't. It also runs in its
+      own process and IPC namespaces, so a compromised server can't reach
+      your other processes' files or environment through `/proc`. That last
+      protection needs systemd 257 (Ubuntu 24.10+ / 26.04); on an older host
+      the script warns that it is absent and installs the service anyway.
    6. Exposes the MCP endpoint on your tailnet over HTTPS via
       `tailscale serve`.
    7. If `claude` is installed, registers Claude Messenger with Claude Code
@@ -141,12 +151,12 @@ endpoint.
 ## Operations
 
 ```sh
-systemctl --user status claude-messenger-mcp     # service state
-journalctl --user -u claude-messenger-mcp -f     # logs
+systemctl status claude-messenger-mcp            # service state
+sudo journalctl -u claude-messenger-mcp -f       # logs
 systemctl --user status beeper-desktop xvfb      # Beeper Desktop health
 curl -fsS localhost:23373/v1/info                # Client API is answering
 cd ~/claude-messenger && git pull && npm ci && npm run build \
-  && systemctl --user restart claude-messenger-mcp   # upgrade
+  && sudo systemctl restart claude-messenger-mcp     # upgrade
 ```
 
 Re-running `deploy/bootstrap.sh` is the full upgrade: it also refreshes the
