@@ -89,7 +89,10 @@ and `docs/HOSTING-OPTIONS.md`._
     message the owner forwards still counts. The provider works out the
     sender's own words (`Message.ownText`; for Beeper,
     `providers/beeper/own-text.ts`, linear in the message's length), and
-    `assistant/mentions.ts` looks for `@claude` in them.
+    `assistant/mentions.ts` looks for `@claude` in them. #24's description
+    lists the shapes that still fire and the mentions missed on purpose;
+    change `own-text.ts` only with a test for each, fuzzing and mutation
+    testing, as every review of it found a new way in.
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
