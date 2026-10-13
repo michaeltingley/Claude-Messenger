@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 429 tests / 26 files.
+- `npm test` must be green before any push. Currently 437 tests / 26 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.

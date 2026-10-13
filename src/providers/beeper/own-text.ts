@@ -48,17 +48,30 @@ function quoteLines(text: string): Quoted[] {
 }
 
 /**
- * Where the quoted lines a text opens with end, with nothing but white space
- * before or between them: how a plain-text reply opens, with its copy of the
- * message it answers. 0 if it opens with anything else.
+ * How Matrix's reply fallback starts the copy of the message a plain-text
+ * reply answers: "> <@bob:beeper.com> " before its first line, or
+ * "> * <@bob:beeper.com> " for an emote. Every line after that starts with
+ * "> " too, a blank one included, and a blank line ends the copy.
  */
-function openingQuote(text: string, lines: readonly Span[]): number {
-  let end = 0;
-  for (const line of lines) {
-    if (text.slice(end, line.start).trim() !== '') break;
-    end = line.end;
-  }
-  return end;
+const REPLY_COPY = /> (?:\* )?<[^<>\n]+> /y;
+const BLANK_LINE = /\n[^\S\n]*\n/y;
+
+/**
+ * Where the copy a plain-text reply opens with ends, written as Matrix
+ * writes it: quoted lines one after another from the start of the text,
+ * but for white space, the first naming the sender, then a blank line. 0 if
+ * the text opens with anything else, a quoted line of the sender's own
+ * included: a quotation that opens there may go on in the lines after it.
+ */
+function replyCopyEnd(text: string, lines: readonly Span[]): number {
+  const first = lines[0];
+  if (first === undefined || text.slice(0, first.start).trim() !== '') return 0;
+  REPLY_COPY.lastIndex = first.start;
+  if (!REPLY_COPY.test(text)) return 0;
+  let end = first.end;
+  for (let i = 1; i < lines.length && lines[i]!.start === end + 1; i++) end = lines[i]!.end;
+  BLANK_LINE.lastIndex = end;
+  return BLANK_LINE.test(text) ? end : 0;
 }
 
 /**
@@ -99,9 +112,8 @@ const PERSON_LINK = /\bhref\s*=\s*["']?(?:https?:\/\/matrix\.to\/#\/(?:@|%40)|ma
 
 /**
  * Each link to a person, its text included, up to the closing tag that
- * balances its own, so a link inside its text can't end it early (markdown
- * makes one of a web address in a name), or to the end of the text if no
- * tag does.
+ * balances its own, so a link inside its text can't end it early, or to the
+ * end of the text if no tag does.
  */
 function personLinks(tags: readonly Tag[], length: number): Quoted[] {
   const spans: Quoted[] = [];
@@ -268,16 +280,16 @@ export function ownText(text: string): string {
 
   // Which quote marks count toward a quoted passage: a tapback's must, and
   // those in someone else's words mustn't pair with the sender's own. So not
-  // those in the quoted lines the text opens with, as a plain-text reply
-  // opens with its copy, since a tapback starts its line with what the person
-  // did. Nor those a closed span holds, unless the text ends in a quote mark,
-  // as a tapback does: then the message it quotes may have closed a span that
-  // opened before its opening mark. A tapback that also carried a reply's
-  // copy and had words after its closing mark could still hide its opening
+  // those in the copy a plain-text reply opens with: a tapback opens with
+  // what the person did, so its marks are never there. Nor those a closed
+  // span holds, unless the text ends in a quote mark, as a tapback does: then
+  // the message it quotes may have closed a span that opened before its
+  // opening mark. A tapback after something that opens a quote, reply copy or
+  // pill, with words after its closing mark, could still hide its opening
   // mark that way; no bridge is known to send either.
-  const opening = openingQuote(text, lines);
+  const copyEnd = replyCopyEnd(text, lines);
   const held = endsInQuoteMark(rendered) ? 0 : CLOSED;
-  const passage = quotedPassage(rendered, (i) => origin[i]! >= opening && !(flags[origin[i]!]! & held));
+  const passage = quotedPassage(rendered, (i) => origin[i]! >= copyEnd && !(flags[origin[i]!]! & held));
   if (passage !== undefined) quoted.fill(QUOTED, passage.start, passage.end);
   return unquoted(rendered, quoted);
 }
