@@ -26,9 +26,7 @@ export function makeChat(overrides: Partial<Chat> = {}): Chat {
   };
 }
 
-/** A message whose plain text is its text, unless the overrides say otherwise. */
 export function makeMessage(overrides: Partial<Message> = {}): Message {
-  const text = 'text' in overrides ? overrides.text : 'hello';
   return {
     id: 'msg-1',
     chatId: 'chat-1',
@@ -37,8 +35,7 @@ export function makeMessage(overrides: Partial<Message> = {}): Message {
     senderName: 'Alice',
     isFromMe: false,
     timestamp: '2026-07-10T00:00:00Z',
-    text,
-    plainText: text,
+    text: 'hello',
     attachments: [],
     reactions: [],
     ...overrides,

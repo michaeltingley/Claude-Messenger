@@ -26,8 +26,12 @@ export interface ShimBehavior {
   ignoreTerm?: boolean;
   /** Write this many characters to stdout, as a runaway answer would. */
   floodChars?: number;
+  /** Write to stdout without end, as fast as it is read. */
+  floodForever?: boolean;
   /** Leave a process behind that holds stdout open after exiting, as a helper Claude Code started might. */
   lingeringChild?: boolean;
+  /** Exit at once, without reading stdin, as Claude Code does when it refuses its command line. */
+  exitUnread?: boolean;
 }
 
 export interface Shim {
@@ -37,6 +41,8 @@ export interface Shim {
   command: string;
   /** Every run so far, in order. */
   calls(): Promise<ShimCall[]>;
+  /** How much a flooding run has written to stdout so far. */
+  written(): Promise<number>;
 }
 
 /**
@@ -49,24 +55,40 @@ export interface Shim {
  * Like the fake host's shims, it refuses any invocation it doesn't model
  * (exit 64), so the model can't drift to an untested command line:
  * `--print --output-format text --tools "" --strict-mcp-config --safe-mode
- * --no-session-persistence [--model <name>] --system-prompt <text>`.
+ * --no-session-persistence [--model <name>] --system-prompt <text>`, in any
+ * order, as Claude Code takes them.
  */
 export async function writeClaudeShim(behavior: ShimBehavior = {}): Promise<Shim> {
   const root = await mkdtemp(join(tmpdir(), 'claude-shim-'));
   const dir = join(root, 'bin');
   await mkdir(dir);
   const log = join(root, 'calls.jsonl');
+  const writtenFile = join(root, 'written');
   const command = join(dir, 'claude');
   const script = `#!/usr/bin/env node
 const fs = require('node:fs');
 const behavior = ${JSON.stringify(behavior)};
 const args = process.argv.slice(2);
-const FIXED = ['--print', '--output-format', 'text', '--tools', '', '--strict-mcp-config', '--safe-mode', '--no-session-persistence'];
-let rest = args.slice(FIXED.length);
-if (rest[0] === '--model' && rest.length > 1) rest = rest.slice(2);
-if (!FIXED.every((arg, i) => args[i] === arg) || rest.length !== 2 || rest[0] !== '--system-prompt') {
+const FLAGS = ['--print', '--strict-mcp-config', '--safe-mode', '--no-session-persistence'];
+const VALUES = { '--output-format': (v) => v === 'text', '--tools': (v) => v === '', '--model': (v) => v !== '', '--system-prompt': () => true };
+const REQUIRED = [...FLAGS, '--output-format', '--tools', '--system-prompt'];
+const seen = new Set();
+let modeled = true;
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  if (seen.has(arg)) modeled = false;
+  seen.add(arg);
+  if (FLAGS.includes(arg)) continue;
+  if (arg in VALUES && i + 1 < args.length && VALUES[arg](args[i + 1])) i++;
+  else modeled = false;
+}
+if (!modeled || !REQUIRED.every((arg) => seen.has(arg))) {
   process.stderr.write('fake claude: unmodeled invocation: ' + JSON.stringify(args) + '\\n');
   process.exit(64);
+}
+if (behavior.exitUnread) {
+  process.stderr.write(behavior.stderr ?? '');
+  process.exit(behavior.exitCode ?? 1);
 }
 if (behavior.ignoreTerm) process.on('SIGTERM', () => {});
 let stdin = '';
@@ -93,6 +115,19 @@ process.stdin.on('end', () => {
       setInterval(() => {}, 1000);
       return;
     }
+    if (behavior.floodForever) {
+      const chunk = 'x'.repeat(1 << 20);
+      let written = 0;
+      const flood = (err) => {
+        if (err) return setInterval(() => {}, 1000);
+        fs.writeFileSync(${JSON.stringify(writtenFile)}, String(written));
+        written += chunk.length;
+        process.stdout.write(chunk, flood);
+      };
+      process.stdout.on('error', () => {});
+      flood();
+      return;
+    }
     if (behavior.stderr) process.stderr.write(behavior.stderr);
     process.stdout.write(behavior.stdout ?? '', () => process.exit(behavior.exitCode ?? 0));
     if (behavior.ignoreTerm) setInterval(() => {}, 1000);
@@ -104,6 +139,7 @@ process.stdin.on('end', () => {
   return {
     dir,
     command,
+    written: async () => Number(await readFile(writtenFile, 'utf8').catch(() => '0')),
     calls: async () => {
       const text = await readFile(log, 'utf8').catch(() => '');
       return text

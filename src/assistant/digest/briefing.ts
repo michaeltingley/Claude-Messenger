@@ -1,5 +1,6 @@
 import type { AttachmentSummary, Chat, Message, MessageKind } from '../../core/types.js';
 import type { Activity, ChatActivity } from './activity.js';
+import { withoutInvisible } from './characters.js';
 import { formatDateTime, formatTime, yearOf } from './time.js';
 
 /** What the model reads, and how much of the activity it holds. */
@@ -37,9 +38,11 @@ type Clock = (date: Date) => string;
  * first, so a briefing cut for length loses the least.
  *
  * Titles, names and messages are other people's words, so each is folded
- * onto one line: none can pass itself off as a line of the briefing's own,
- * such as a chat's heading or another message. A name can't end early with
- * a colon, or pass for the owner's "You".
+ * onto one line, with no control or invisible characters: none can pass
+ * itself off as a line of the briefing's own, such as a chat's heading or
+ * another message. Other people's names are always in quotes, which a name
+ * can't hold, so none can pass for the owner, whom the briefing alone calls
+ * You, however it is written.
  */
 export function renderBriefing(activity: Activity, timeZone: string): Briefing {
   const { since, until } = activity.window;
@@ -95,7 +98,7 @@ function facts({ chat, messages }: ChatActivity): string[] {
 
 function renderMessage(message: Message, chat: Chat, clock: Clock): string {
   const labels = describe(message);
-  const text = oneLine(message.plainText ?? '', MAX_TEXT_CHARS);
+  const text = oneLine(message.text, MAX_TEXT_CHARS);
   return (
     `- ${clock(new Date(message.timestamp))} ${sender(message, chat)}` +
     (labels.length > 0 ? ` [${labels.join(', ')}]` : '') +
@@ -120,16 +123,18 @@ function nameOf(chat: Chat, participantId: string): string | undefined {
   return participant?.fullName ?? participant?.username;
 }
 
+/** What reads as a double quote mark, which a name loses so that it can't end its quotes early. */
+const QUOTE_MARKS = /["“”„‟″＂ˮ״]/g;
+
 /**
  * A name someone chose for themselves or a chat, as a line shows it: on one
- * line, with no colon to end it early, and never passing for the owner, whom
- * the briefing alone calls "You". Nothing when there's no name to show.
+ * line and in quotes, so it reads as theirs and nobody else's. Nothing when
+ * there's no name to show.
  */
 function theirName(name: string | undefined): string | undefined {
   if (name === undefined) return undefined;
-  const shown = oneLine(name.replaceAll(':', ' '), MAX_NAME_CHARS);
-  if (shown === '') return undefined;
-  return /^you(?![\p{L}\p{N}])/iu.test(shown) ? `${shown} (not you)` : shown;
+  const shown = oneLine(name.replace(QUOTE_MARKS, ''), MAX_NAME_CHARS);
+  return shown === '' ? undefined : `"${shown}"`;
 }
 
 /** What a message is, when it is more than its text. */
@@ -170,7 +175,7 @@ function attachment(a: AttachmentSummary): string {
     case 'audio':
       return 'audio';
     default:
-      return a.fileName ? `file "${oneLine(a.fileName, MAX_NAME_CHARS).replaceAll('"', "'")}"` : 'file';
+      return a.fileName ? `file "${oneLine(a.fileName.replace(QUOTE_MARKS, "'"), MAX_NAME_CHARS)}"` : 'file';
   }
 }
 
@@ -197,10 +202,11 @@ function listed(items: string[], more: string): string[] {
 
 /**
  * Folds any run of whitespace or line breaks, NEL included, into one space,
- * and cuts what runs past `max`, never through the middle of a character.
+ * drops control and invisible characters, and cuts what runs past `max`,
+ * never through the middle of a character.
  */
 function oneLine(text: string, max: number): string {
-  const line = text.replace(/[\s\u0085]+/g, ' ').trim();
+  const line = withoutInvisible(text).replace(/[\s\u0085]+/g, ' ').trim();
   if (line.length <= max) return line;
   const end = /[\ud800-\udbff]/.test(line[max - 1]!) ? max - 1 : max;
   return `${line.slice(0, end)}…`;

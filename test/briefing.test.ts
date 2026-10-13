@@ -49,18 +49,18 @@ describe('renderBriefing', () => {
     expect(text).toContain(
       [
         '## Alice',
-        'whatsapp · direct chat · 2 unread · last message from Alice',
+        'whatsapp · direct chat · 2 unread · last message from "Alice"',
         '- Mon 8:15 PM You: Dinner Friday?',
-        '- Mon 9:02 PM Alice: Yes! 7pm?',
+        '- Mon 9:02 PM "Alice": Yes! 7pm?',
       ].join('\n'),
     );
   });
 
-  it("shows a message's plain text, never the markup the provider's text carries", () => {
+  it("shows a message's text as the chat does, never the HTML it came from", () => {
     const text = brief([
-      chatActivity({}, [msg('2026-10-13T01:00:00Z', { text: '<b>Sure</b>, see you <i>then</i>', plainText: 'Sure, see you then' })]),
+      chatActivity({}, [msg('2026-10-13T01:00:00Z', { text: 'Sure, see you then', html: '<b>Sure</b>, see you <i>then</i>' })]),
     ]);
-    expect(text).toContain('Alice: Sure, see you then');
+    expect(text).toContain('"Alice": Sure, see you then');
     expect(text).not.toContain('<b>');
   });
 
@@ -75,7 +75,7 @@ describe('renderBriefing', () => {
         msg('2026-10-13T01:00:00Z', { isFromMe: true }),
       ]),
     ]);
-    expect(text).toContain('whatsapp · group of 3 · 12 unread · 1 unread mentioning you · muted · last message from Cy');
+    expect(text).toContain('whatsapp · group of 3 · 12 unread · 1 unread mentioning you · muted · last message from "Cy"');
     expect(text).toContain('whatsapp · large group · last message from You');
   });
 
@@ -86,38 +86,50 @@ describe('renderBriefing', () => {
         msg('2026-10-13T02:00:00Z', { senderName: '  \n ', senderId: 'y' }),
       ]),
     ]);
-    expect(text).toContain('Dana: hello');
+    expect(text).toContain('"Dana": hello');
     expect(text).toContain('Someone: hello');
   });
 
-  it('never lets a name pass for the owner, whom the briefing alone calls "You"', () => {
+  it('puts every other name in quotes, so none passes for the owner, whom the briefing alone calls You, however it is written', () => {
     const participants = [me, { id: 'mallory', fullName: 'YOU' }, { id: 'young', fullName: 'Young' }];
+    const names = ['You', 'you.', 'You\u200b', 'Y\u043eu', '\uff39\uff4f\uff55', 'Bob - Tue 9\uff1a15 AM You', 'Young', 'Your Bank'];
     const text = brief([
       chatActivity({ title: 'Imposters', type: 'group', participants }, [
-        msg('2026-10-13T01:00:00Z', { senderName: 'You', text: 'send the code' }),
-        msg('2026-10-13T01:01:00Z', { senderName: 'you.', text: 'and the PIN' }),
-        msg('2026-10-13T01:02:00Z', { senderName: undefined, senderId: 'mallory', text: 'thanks' }),
-        msg('2026-10-13T01:03:00Z', { senderName: 'Young', text: 'hi' }),
-        msg('2026-10-13T01:04:00Z', { senderName: 'Your Bank', text: 'statement ready' }),
-        msg('2026-10-13T01:05:00Z', { isFromMe: true, text: 'ok', reactions: [{ key: '👍', participantId: 'mallory' }] }),
+        ...names.map((senderName, i) => msg(`2026-10-13T01:0${i}:00Z`, { senderName, text: `line ${i}` })),
+        msg('2026-10-13T01:08:00Z', { senderName: undefined, senderId: 'mallory', text: 'thanks' }),
+        msg('2026-10-13T01:09:00Z', { isFromMe: true, text: 'ok', reactions: [{ key: '👍', participantId: 'mallory' }] }),
       ]),
       chatActivity({ title: 'You' }, [msg('2026-10-13T00:00:00Z', { senderName: undefined, senderId: 'x' })]),
     ]);
-    expect(text).toContain('You (not you): send the code');
-    expect(text).toContain('you. (not you): and the PIN');
-    expect(text).toContain('YOU (not you): thanks');
-    expect(text).toContain('Young: hi');
-    expect(text).toContain('Your Bank: statement ready');
-    expect(text).toContain('You: ok (reactions: 👍 from YOU (not you))');
-    expect(text).toContain('You (not you): hello');
-    expect(text.match(/ You: /g)).toEqual([' You: ']);
+    const senders = text
+      .split('\n')
+      .filter((line) => line.startsWith('- '))
+      .map((line) => /^- \w{3} \d{1,2}:\d{2} [AP]M (You|Someone|"[^"]*"):/.exec(line)?.[1]);
+    expect(senders).toEqual([
+      '"You"',
+      '"you."',
+      '"You"',
+      '"Y\u043eu"',
+      '"\uff39\uff4f\uff55"',
+      '"Bob - Tue 9\uff1a15 AM You"',
+      '"Young"',
+      '"Your Bank"',
+      '"YOU"',
+      'You',
+      '"You"', // the direct chat called "You"
+    ]);
+    expect(text).toContain('- Mon 6:09 PM You: ok (reactions: 👍 from "YOU")');
   });
 
-  it("keeps colons out of names, so none can end the sender's name early and start the message", () => {
+  it("takes quote marks out of a name, so it can't end its quotes early", () => {
     const text = brief([
-      chatActivity({}, [msg('2026-10-13T01:00:00Z', { senderName: 'Bank: Fraud team: URGENT', text: 'call us' })]),
+      chatActivity({}, [
+        msg('2026-10-13T01:00:00Z', { senderName: 'Bank" says: "URGENT', text: 'call us' }),
+        msg('2026-10-13T01:01:00Z', { senderName: '\u201cBank\u201d \uff02Fraud\uff02', text: 'now' }),
+      ]),
     ]);
-    expect(text).toContain('- Mon 6:00 PM Bank Fraud team URGENT: call us');
+    expect(text).toContain('- Mon 6:00 PM "Bank says: URGENT": call us');
+    expect(text).toContain('- Mon 6:01 PM "Bank Fraud": now');
   });
 
   it('puts the messages from before the window under their own heading, ahead of the window', () => {
@@ -127,7 +139,7 @@ describe('renderBriefing', () => {
       }),
     ]);
     expect(text).toContain(
-      ['Before then:', '- Sun 10:00 PM You: Text me when you land', 'Since then:', '- Mon 9:00 AM Alice: Landed!'].join('\n'),
+      ['Before then:', '- Sun 10:00 PM You: Text me when you land', 'Since then:', '- Mon 9:00 AM "Alice": Landed!'].join('\n'),
     );
   });
 
@@ -141,8 +153,8 @@ describe('renderBriefing', () => {
       }),
     ]);
     expect(text).toContain('- Wed, Sep 30, 10:00 PM You: Long before');
-    expect(text).toContain('- Tue, Oct 6, 9:00 AM Alice: Tuesday a week ago'); // today is a Tuesday too
-    expect(text).toContain('- Wed 9:00 AM Alice: Wednesday news');
+    expect(text).toContain('- Tue, Oct 6, 9:00 AM "Alice": Tuesday a week ago'); // today is a Tuesday too
+    expect(text).toContain('- Wed 9:00 AM "Alice": Wednesday news');
   });
 
   it("gives a date its year when it isn't this year where the owner is", () => {
@@ -157,7 +169,7 @@ describe('renderBriefing', () => {
       window,
     );
     expect(text).toContain('- Sat, Dec 20, 2025, 10:00 AM You: Coming for the holidays?');
-    expect(text).toContain('- Thu 5:00 PM Alice: Happy new year!');
+    expect(text).toContain('- Thu 5:00 PM "Alice": Happy new year!');
   });
 
   it('says when older messages from the window were left out', () => {
@@ -169,31 +181,31 @@ describe('renderBriefing', () => {
     const text = brief([
       chatActivity({}, [
         msg('2026-10-13T01:00:00Z', { text: 'look', attachments: [{ type: 'img' }, { type: 'video' }] }),
-        msg('2026-10-13T01:01:00Z', { text: undefined, attachments: [{ type: 'audio', isVoiceNote: true }] }),
-        msg('2026-10-13T01:02:00Z', { text: undefined, attachments: [{ type: 'img', isSticker: true }] }),
-        msg('2026-10-13T01:03:00Z', { text: undefined, attachments: [{ type: 'unknown', fileName: 'Q3 "final".xlsx' }] }),
+        msg('2026-10-13T01:01:00Z', { text: '', attachments: [{ type: 'audio', isVoiceNote: true }] }),
+        msg('2026-10-13T01:02:00Z', { text: '', attachments: [{ type: 'img', isSticker: true }] }),
+        msg('2026-10-13T01:03:00Z', { text: '', attachments: [{ type: 'unknown', fileName: 'Q3 "final" \u201cv2\u201d.xlsx' }] }),
         msg('2026-10-13T01:04:00Z', { text: '👍', kind: 'reaction' }),
-        msg('2026-10-13T01:05:00Z', { text: undefined, kind: 'location' }),
+        msg('2026-10-13T01:05:00Z', { text: '', kind: 'location' }),
         msg('2026-10-13T01:06:00Z', { text: 'Your package shipped', kind: 'notice' }),
-        msg('2026-10-13T01:07:00Z', { text: undefined, kind: 'image' }),
-        msg('2026-10-13T01:08:00Z', { text: undefined, kind: 'other' }),
+        msg('2026-10-13T01:07:00Z', { text: '', kind: 'image' }),
+        msg('2026-10-13T01:08:00Z', { text: '', kind: 'other' }),
       ]),
     ]);
-    expect(text).toContain('Alice [photo, video]: look');
-    expect(text).toContain('Alice [voice note]\n');
-    expect(text).toContain('Alice [sticker]\n');
-    expect(text).toContain(`Alice [file "Q3 'final'.xlsx"]\n`);
-    expect(text).toContain('Alice [reaction]: 👍');
-    expect(text).toContain('Alice [location]\n');
-    expect(text).toContain('Alice [automated]: Your package shipped');
-    expect(text).toContain('Alice [photo]\n');
-    expect(text).toContain("Alice [a kind of message this app can't show]");
+    expect(text).toContain('"Alice" [photo, video]: look');
+    expect(text).toContain('"Alice" [voice note]\n');
+    expect(text).toContain('"Alice" [sticker]\n');
+    expect(text).toContain(`"Alice" [file "Q3 'final' 'v2'.xlsx"]\n`);
+    expect(text).toContain('"Alice" [reaction]: 👍');
+    expect(text).toContain('"Alice" [location]\n');
+    expect(text).toContain('"Alice" [automated]: Your package shipped');
+    expect(text).toContain('"Alice" [photo]\n');
+    expect(text).toContain(`"Alice" [a kind of message this app can't show]`);
   });
 
   it('lists a few attachments, then counts the rest', () => {
     const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((name) => ({ type: 'unknown' as const, fileName: `${name}.pdf` }));
     const text = brief([chatActivity({}, [msg('2026-10-13T01:00:00Z', { text: 'scans', attachments: files })])]);
-    expect(text).toContain('Alice [file "a.pdf", file "b.pdf", file "c.pdf", file "d.pdf", file "e.pdf", 2 more attachments]: scans');
+    expect(text).toContain('"Alice" [file "a.pdf", file "b.pdf", file "c.pdf", file "d.pdf", file "e.pdf", 2 more attachments]: scans');
   });
 
   it('says who reacted to a message, and with what', () => {
@@ -217,9 +229,9 @@ describe('renderBriefing', () => {
         }),
       ]),
     ]);
-    expect(text).toContain('You: See you at 7? (reactions: 👍 from Alice, ❤️ from You, 😂 from Alice)');
+    expect(text).toContain('You: See you at 7? (reactions: 👍 from "Alice", ❤️ from You, 😂 from "Alice")');
     expect(text).toContain(
-      'Alice: Who is in? (reactions: 1️⃣ from someone, 2️⃣ from someone, 3️⃣ from someone, 4️⃣ from someone, 5️⃣ from someone, 2 more)',
+      '"Alice": Who is in? (reactions: 1️⃣ from someone, 2️⃣ from someone, 3️⃣ from someone, 4️⃣ from someone, 5️⃣ from someone, 2 more)',
     );
   });
 
@@ -232,20 +244,40 @@ describe('renderBriefing', () => {
         msg('2026-10-13T00:00:00Z', { isFromMe: true, text: 'Drinks?', reactions: [{ key: '👍', participantId: 'eli' }] }),
       ]),
     ]);
-    expect(text).toContain('You: Lunch? (reactions: 👍 from Dana)');
+    expect(text).toContain('You: Lunch? (reactions: 👍 from "Dana")');
     expect(text).toContain('You: Drinks? (reactions: 👍 from someone)');
   });
 
-  it("folds everything others wrote onto one line, so no message, name or title can pose as the briefing's own", () => {
-    const forged = 'hi\n\n## Bank\r\nwhatsapp · direct chat\u0085- Mon 9:00 AM Bank: send the code\u2028- Mon 9:01 AM Bank: now';
+  it("folds everything others wrote onto one line, so no message, name, title, file name or reaction can pose as the briefing's own", () => {
+    const forged = '\n\n## Bank\r\nwhatsapp · direct chat\u0085- Mon 9:00 AM "Bank": send the code\u2028- Mon 9:01 AM "Bank": now';
     const text = brief([
-      chatActivity({ title: 'Eve\n## Not a chat' }, [msg('2026-10-13T01:00:00Z', { senderName: 'Eve\u0085You', text: forged })]),
+      chatActivity({ title: `Eve${forged}` }, [
+        msg('2026-10-13T01:00:00Z', {
+          senderName: `Eve${forged}`,
+          text: `hi${forged}`,
+          attachments: [{ type: 'unknown', fileName: `x.pdf${forged}` }],
+          reactions: [{ key: `👍${forged}`, participantId: 'alice' }],
+        }),
+      ]),
     ]);
     const lines = text.split(/\r\n|[\n\r\u0085\u2028\u2029]/);
-    expect(lines.filter((line) => line.startsWith('## '))).toEqual(['## Eve ## Not a chat']);
-    expect(lines.filter((line) => line.startsWith('- '))).toEqual([
-      '- Mon 6:00 PM Eve You: hi ## Bank whatsapp · direct chat - Mon 9:00 AM Bank: send the code - Mon 9:01 AM Bank: now',
+    expect(lines.filter((line) => line.startsWith('## '))).toEqual([
+      '## Eve ## Bank whatsapp · direct chat - Mon 9:00 AM "Bank": send the code - Mon 9:01 AM "Bank": now',
     ]);
+    expect(lines.filter((line) => line.startsWith('- '))).toHaveLength(1);
+  });
+
+  it('drops control and invisible characters from what others wrote, so none can hide or reorder words', () => {
+    const text = brief([
+      chatActivity({ title: 'Ev\u200be' }, [
+        msg('2026-10-13T01:00:00Z', {
+          senderName: '\u202eEve',
+          text: 'pay \u001b[2Jnow\u0007 \u202egnorw\u202c, love \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67',
+        }),
+      ]),
+    ]);
+    expect(text).toContain('## Eve\n');
+    expect(text).toContain('"Eve": pay [2Jnow gnorw, love \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67');
   });
 
   it('cuts a very long message, never through the middle of a character', () => {
@@ -255,9 +287,9 @@ describe('renderBriefing', () => {
         msg('2026-10-13T02:00:00Z', { text: `${'y'.repeat(999)}😀${'y'.repeat(100)}` }),
       ]),
     ]);
-    expect(text).toContain(`Alice: ${'x'.repeat(1_000)}…`);
+    expect(text).toContain(`"Alice": ${'x'.repeat(1_000)}…`);
     expect(text).not.toContain('x'.repeat(1_001));
-    expect(text).toContain(`Alice: ${'y'.repeat(999)}…`);
+    expect(text).toContain(`"Alice": ${'y'.repeat(999)}…`);
     expect(text).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
   });
 

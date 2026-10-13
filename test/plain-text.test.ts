@@ -31,8 +31,31 @@ describe('plainText (Beeper)', () => {
     expect(plainText('see <a href="https://evil.example/login">the menu</a>')).toBe('see the menu');
   });
 
-  it('leaves plain text that only looks like markup alone', () => {
+  it('leaves plain text that only looks like markup alone: only the elements a message can hold count as markup', () => {
     expect(plainText('I <3 you, and 2 < 3 > 1')).toBe('I <3 you, and 2 < 3 > 1');
+    expect(plainText('Press <Enter> to go on')).toBe('Press <Enter> to go on');
+    expect(plainText('a List<String> of them')).toBe('a List<String> of them');
+    expect(plainText('<hugs>')).toBe('<hugs>');
+    expect(plainText('if x<y and y>z')).toBe('if x<y and y>z');
+    expect(plainText('<B>Loud</B> <Span>and</Span> <MX-REPLY>copy</MX-REPLY>clear')).toBe('Loud and \nclear');
+  });
+
+  it("reads a quoted attribute through to its end, though it may hold \">\"", () => {
+    expect(plainText('<a href="https://x.example/?a>b" title=\'c>d\'>the menu</a> is up')).toBe('the menu is up');
+  });
+
+  it('shows an image as its alt text, as a custom emoji shows its name, and drops comments', () => {
+    expect(plainText('nice <img data-mx-emoticon src="mxc://x/y" alt=":partyparrot:" height="32"> one')).toBe('nice :partyparrot: one');
+    expect(plainText("<img src='mxc://x/y' alt='a &amp; b'><img src=\"mxc://x/z\">")).toBe('a & b');
+    expect(plainText('seen<!-- hidden from the chat -->, thanks')).toBe('seen, thanks');
+  });
+
+  it('takes time linear in the text, however its tags are broken', () => {
+    const started = Date.now();
+    for (const piece of ['<a title="', '<b ', '<img alt=', '<mx-reply>', '</mx-reply>', '<!-- ', '&#']) {
+      plainText(piece.repeat(200_000 / piece.length));
+    }
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it('decodes entities once, so escaped markup stays text', () => {

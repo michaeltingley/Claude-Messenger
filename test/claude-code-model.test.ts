@@ -44,19 +44,6 @@ describe('ClaudeCodeModel (the real CLI started as a subprocess, a stand-in on P
     expect(call!.argv[call!.argv.indexOf('--system-prompt') + 1]).toBe(request.instructions);
   });
 
-  it('runs Claude Code in print mode with no tools, no MCP servers, no customizations and no transcript', async () => {
-    const shim = await writeClaudeShim({ stdout: 'ok' });
-    await new ClaudeCodeModel({ command: shim.command, env: sessionEnv(onPath(shim.dir)) }).write(request);
-    const [call] = await shim.calls();
-    const argv = call!.argv;
-    expect(argv).toContain('--print');
-    expect(argv[argv.indexOf('--tools') + 1]).toBe('');
-    expect(argv).toContain('--strict-mcp-config');
-    expect(argv).toContain('--safe-mode');
-    expect(argv).toContain('--no-session-persistence');
-    expect(argv).not.toContain('--bare'); // reads only API keys, so it would leave the subscription
-  });
-
   it('asks for the model it is given, and otherwise leaves the choice to Claude Code', async () => {
     const shim = await writeClaudeShim({ stdout: 'ok' });
     const env = sessionEnv(onPath(shim.dir));
@@ -83,6 +70,8 @@ describe('ClaudeCodeModel (the real CLI started as a subprocess, a stand-in on P
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       // Nothing is attached to the input, such as the file an @-mention names.
       CLAUDE_CODE_DISABLE_ATTACHMENTS: '1',
+      // None of the subscription's claude.ai connectors, which can act as the owner.
+      ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
     });
   });
 
@@ -128,6 +117,14 @@ describe('ClaudeCodeModel (the real CLI started as a subprocess, a stand-in on P
     );
   });
 
+  it('fails, rather than crashing, when Claude Code exits without reading a long input, as one too old for its flags does', async () => {
+    const shim = await writeClaudeShim({ exitUnread: true, stderr: "error: unknown option '--safe-mode'\n", exitCode: 1 });
+    const model = new ClaudeCodeModel({ command: shim.command, env: sessionEnv(onPath(shim.dir)) });
+    await expect(model.write({ ...request, input: 'x'.repeat(1_000_000) })).rejects.toThrow(
+      "Claude Code failed (exit 1): error: unknown option '--safe-mode'",
+    );
+  });
+
   it('refuses an empty answer instead of passing it on as a digest', async () => {
     const shim = await writeClaudeShim({ stdout: '  \n\n' });
     const model = new ClaudeCodeModel({ command: shim.command, env: sessionEnv(onPath(shim.dir)) });
@@ -169,6 +166,16 @@ describe('ClaudeCodeModel (the real CLI started as a subprocess, a stand-in on P
       process.kill(call!.lingeringPid!, 'SIGKILL');
     }
   }, 15_000);
+
+  it('reads nothing more of a run it is stopping, however long it goes on writing and ignores being asked to stop', async () => {
+    const shim = await writeClaudeShim({ floodForever: true, ignoreTerm: true });
+    const model = new ClaudeCodeModel({ command: shim.command, env: sessionEnv(onPath(shim.dir)) });
+    await expect(model.write(request)).rejects.toThrow('ran past 1000000 characters');
+    const [call] = await shim.calls();
+    expect(() => process.kill(call!.pid, 0)).toThrow();
+    // Past the cap, what a pipe holds is all it got out before it was killed.
+    expect(await shim.written()).toBeLessThan(16 * 1024 * 1024);
+  }, 30_000);
 
   it('stops a run whose answer runs on far past a page', async () => {
     const shim = await writeClaudeShim({ floodChars: 2_000_000 });

@@ -60,8 +60,8 @@ describe('DigestWriter', () => {
     const [request] = model.requests;
     expect(request!.instructions).toBe(DIGEST_INSTRUCTIONS);
     expect(request!.input).toContain('## Alice');
-    expect(request!.input).toContain('Alice: Dinner Friday at 7?');
-    expect(request!.input).toContain('Mom: Cabin is booked');
+    expect(request!.input).toContain('"Alice": Dinner Friday at 7?');
+    expect(request!.input).toContain('"Mom": Cabin is booked');
     expect(digest).toBe(
       '**Needs you**\n- **Alice** asked about dinner.\n\n_Covers 2 chats and 3 messages since Mon, Oct 12, 7:46 AM._',
     );
@@ -132,27 +132,37 @@ describe('DigestWriter', () => {
     );
   });
 
-  it("takes every link and email address out of the model's words, so none reaches the owner looking vouched for", async () => {
+  it("shows the owner the model's words with no link, address or number in them, so none reaches them looking vouched for", async () => {
     const model = new FakeModel(async () =>
-      [
-        '- **Bank** says to [verify your account](https://evil.example/login) at https://evil.example/a?b=c,',
-        '  or <https://evil.example/b>, or www.evil.example/c, or [https://evil.example/d](https://evil.example/d).',
-        '- **Shop**: see **ftp://evil.example/e** or (sftp://evil.example/f), or tracking:https://evil.example/g!',
-        '- Write to help@evil.example, <mailto:help@evil.example> or help＠evil.example.',
-        '- **Alice** wants dinner at 7:30, e.g. Friday.',
-      ].join('\n'),
+      '- **Bank** says to [verify your account](https://evil.example/login), write to help@evil.example or call 415-555-0199.',
     );
     const digest = await writer(messenger(), model).write(window, timeZone);
-    expect(digest).toContain(
-      [
-        '- **Bank** says to verify your account at (link),',
-        '  or (link), or (link), or (link).',
-        '- **Shop**: see **(link)** or ((link)), or tracking:(link)!',
-        '- Write to (email address), (email address) or (email address).',
-        '- **Alice** wants dinner at 7:30, e.g. Friday.',
-      ].join('\n'),
-    );
-    expect(digest).not.toMatch(/evil|:\/\/|www\.|mailto|@|＠/);
+    expect(digest.split('\n')[0]).toBe('- **Bank** says to verify your account, write to (email address) or call (number).');
+  });
+
+  it('fails when nothing of the answer can be shown, rather than writing a digest without it', async () => {
+    const model = new FakeModel(async () => '\u200b\u202e\u0007');
+    await expect(writer(messenger(), model).write(window, timeZone)).rejects.toThrow(ModelError);
+  });
+
+  it('refuses a window no digest covers, or a time zone it does not know, before reading anything', async () => {
+    const unread = new (class extends FakeMessenger {
+      override searchChats(): never {
+        throw new Error('read');
+      }
+    })();
+    const model = new FakeModel();
+    const week = 7 * 86_400_000;
+    for (const [w, zone] of [
+      [{ since: until, until }, timeZone],
+      [{ since: new Date(until.getTime() + 1), until }, timeZone],
+      [{ since: new Date(until.getTime() - week - 1), until }, timeZone],
+      [window, 'Mars/Olympus_Mons'],
+    ] as const) {
+      await expect(writer(unread, model).write(w, zone)).rejects.toThrow(RangeError);
+    }
+    await expect(writer(unread, model).write({ since: new Date(until.getTime() - week), until }, timeZone)).rejects.toThrow('read');
+    expect(model.requests).toHaveLength(0);
   });
 
   it('fails when the model gives no answer, rather than writing a digest without it', async () => {

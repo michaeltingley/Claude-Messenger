@@ -5,7 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
 import { createAccessRequester, createApp, createLanguageModel, DEFAULT_LANGUAGE_MODEL } from '../app.js';
 import { ActivityCollector } from '../assistant/digest/activity.js';
-import { DigestWriter } from '../assistant/digest/digest.js';
+import { dayBefore, DigestWriter, isDigestWindow, MAX_DIGEST_DAYS } from '../assistant/digest/digest.js';
 import { hostTimeZone, isTimeZone } from '../assistant/digest/time.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
 import { createMcpServer } from '../mcp/server.js';
@@ -96,10 +96,7 @@ function parseLimit(value: string): number {
  */
 const ISO_TIME = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-/** A week at most: a digest is for catching up, not for reading history. */
-const MAX_DIGEST_DAYS = 7;
-
-/** Where a digest starts: a time with its zone, within the last week. */
+/** Where a digest starts: a time with its zone, in the past, no further back than a digest reads. */
 function parseSince(value: string): Date {
   const parts = ISO_TIME.exec(value);
   const ms = Date.parse(value);
@@ -108,11 +105,11 @@ function parseSince(value: string): Date {
   if (parts === null || Number.isNaN(ms) || !dayExists(Number(parts[1]), Number(parts[2]), Number(parts[3]))) {
     throw new InvalidArgumentError('must be a date and time with its zone, like 2026-10-12T07:46:00-07:00');
   }
-  const ago = Date.now() - ms;
-  if (ago <= 0 || ago > MAX_DIGEST_DAYS * 86_400_000) {
+  const since = new Date(ms);
+  if (!isDigestWindow({ since, until: new Date() })) {
     throw new InvalidArgumentError(`must be in the past, at most ${MAX_DIGEST_DAYS} days back`);
   }
-  return new Date(ms);
+  return since;
 }
 
 function parseTimeZone(value: string): string {
@@ -187,7 +184,7 @@ program
     for (const m of [...page.items].reverse()) {
       const who = m.isFromMe ? 'me' : (m.senderName ?? m.senderId);
       const attachments = m.attachments.length ? ` [${m.attachments.map((a) => a.type).join(', ')}]` : '';
-      console.log(`[${m.timestamp}] ${who}: ${m.text ?? ''}${attachments}`);
+      console.log(`[${m.timestamp}] ${who}: ${m.text}${attachments}`);
     }
   });
 
@@ -200,7 +197,7 @@ program
     const page = await messenger.searchMessages({ query, limit: opts.limit });
     for (const m of page.items) {
       const who = m.isFromMe ? 'me' : (m.senderName ?? m.senderId);
-      console.log(`[${m.timestamp}] (${m.chatId}) ${who}: ${m.text ?? ''}`);
+      console.log(`[${m.timestamp}] (${m.chatId}) ${who}: ${m.text}`);
     }
   });
 
@@ -216,10 +213,10 @@ program
   .option('--model <name>', 'the Claude model that writes it', DEFAULT_LANGUAGE_MODEL)
   .action(async (opts: { since?: Date; timeZone?: string; model: string }) => {
     const until = new Date();
-    const since = opts.since ?? new Date(until.getTime() - 24 * 3_600_000);
+    const window = opts.since === undefined ? dayBefore(until) : { since: opts.since, until };
     const { messenger } = await app();
     const writer = new DigestWriter(new ActivityCollector(messenger), createLanguageModel({ model: opts.model }));
-    console.log(await writer.write({ since, until }, opts.timeZone ?? hostTimeZone()));
+    console.log(await writer.write(window, opts.timeZone ?? hostTimeZone()));
   });
 
 program

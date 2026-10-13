@@ -53,8 +53,8 @@ const PASSED_ON = [
 ] as const;
 
 const FIXED_ENV = {
-  // Nothing a run reads may outlive it: no memories, no prompt history, no
-  // telemetry.
+  // Nothing a run reads may outlive it: no memories, no prompt history or
+  // transcript, no telemetry.
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1',
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -62,6 +62,11 @@ const FIXED_ENV = {
   // a prompt names, tools or not, so a message naming a file would have it
   // read that file: the install's .env, say.
   CLAUDE_CODE_DISABLE_ATTACHMENTS: '1',
+  // None of the subscription's claude.ai connectors, such as Gmail, which
+  // can send mail as the owner. The flags below keep them out too, but
+  // Claude Code fetches them from claude.ai, where no test can stand in, so
+  // this keeps them out without resting on what the flags mean.
+  ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
 } as const;
 
 /**
@@ -81,8 +86,8 @@ const ARGS = [
   '--tools',
   '',
   '--strict-mcp-config',
-  // None of the host's hooks, plugins or CLAUDE.md: they would see the
-  // content, or change what gets written.
+  // None of the host's hooks, plugins, MCP servers or CLAUDE.md: they would
+  // see the content, act on it, or change what gets written.
   '--safe-mode',
   // No transcript on disk.
   '--no-session-persistence',
@@ -105,8 +110,9 @@ const MAX_REASON_CHARS = 300;
  * with. The run is made so that the content it reads goes nowhere else:
  * - the input travels on stdin, never on a command line, which every local
  *   user can read;
- * - it gets no tools, MCP servers, hooks, plugins or CLAUDE.md, and nothing
- *   is attached to the input, so the input can't have it read a file;
+ * - it gets no tools, MCP servers, claude.ai connectors, hooks, plugins or
+ *   CLAUDE.md, and nothing is attached to the input, so the input can't
+ *   have it read a file or act;
  * - it keeps no transcript, memory or history, and sends no telemetry;
  * - it starts in an empty directory of its own, removed afterwards.
  */
@@ -157,6 +163,9 @@ export class ClaudeCodeModel implements LanguageModel {
 
       const stop = (reason: ModelError) => {
         failure ??= reason;
+        // Nothing more of the run is read, however much it goes on writing.
+        child.stdout.destroy();
+        child.stderr.destroy();
         child.kill('SIGTERM');
         killTimer ??= setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
       };

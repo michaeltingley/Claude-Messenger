@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AuthError, ConnectionError, NotFoundError, ProviderError } from '../src/core/errors.js';
-import type { Message, MessageListQuery, Page } from '../src/core/types.js';
+import type { Chat, ChatQuery, Message, MessageListQuery, Page } from '../src/core/types.js';
 import { ActivityCollector, DEFAULT_ACTIVITY_LIMITS, type ActivityLimits } from '../src/assistant/digest/activity.js';
 import { FakeMessenger, makeChat, makeMessage } from './fake-messenger.js';
 
@@ -96,9 +96,9 @@ describe('ActivityCollector', () => {
       message('deleted', 'c1', 1, { isDeleted: true }),
       message('hidden', 'c1', 2, { isHidden: true }),
       message('empty', 'c1', 3, { text: '  ' }),
-      message('notice-empty', 'c1', 4, { text: undefined, kind: 'notice' }),
-      message('photo', 'c1', 5, { text: undefined, attachments: [{ type: 'img' }] }),
-      message('reaction', 'c1', 6, { text: undefined, kind: 'reaction' }),
+      message('notice-empty', 'c1', 4, { text: '', kind: 'notice' }),
+      message('photo', 'c1', 5, { text: '', attachments: [{ type: 'img' }] }),
+      message('reaction', 'c1', 6, { text: '', kind: 'reaction' }),
       message('words', 'c1', 7),
     ];
     const activity = await collector(fake).collect(window);
@@ -178,6 +178,25 @@ describe('ActivityCollector', () => {
     expect(activity.partial).toBe(1);
   });
 
+  it('reaches the start of the window on its last page, so the window is whole, with what context that page held', async () => {
+    const fake = new CountingMessenger();
+    fake.pageSize = 2;
+    fake.chats = [activeChat('c1')];
+    fake.messages = [
+      message('in-1', 'c1', 10),
+      message('in-2', 'c1', 20),
+      message('gone', 'c1', -1, { isHidden: true }),
+      message('before', 'c1', -2),
+      message('older', 'c1', -3),
+    ];
+    const activity = await collector(fake, { pagesPerChat: 2, earlierMessages: 3 }).collect(window);
+    expect(fake.listed).toHaveLength(2);
+    expect(ids(activity.chats[0]!.messages)).toEqual(['in-1', 'in-2']);
+    expect(ids(activity.chats[0]!.earlier)).toEqual(['before']);
+    expect(activity.chats[0]!.truncated).toBe(false);
+    expect(activity.partial).toBe(0);
+  });
+
   it("counts a chat it couldn't finish reading even when nothing it read shows", async () => {
     const fake = new FakeMessenger();
     fake.pageSize = 2;
@@ -202,6 +221,38 @@ describe('ActivityCollector', () => {
     const capped = await collector(fake, { chats: 25 }).collect(window);
     expect(capped.chats).toHaveLength(25);
     expect(capped.moreChats).toBe(true);
+  });
+
+  it('reads a chat once when it comes up again on a later page, as one that gets a message while the list is read does', async () => {
+    class Shifting extends CountingMessenger {
+      override async searchChats(query?: ChatQuery): Promise<Page<Chat>> {
+        const [a, b, c] = this.chats;
+        return query?.cursor === undefined
+          ? { items: [a!, b!], hasMore: true, nextCursor: 'page-2' }
+          : { items: [b!, c!], hasMore: false };
+      }
+    }
+    const fake = new Shifting();
+    fake.chats = [activeChat('a'), activeChat('b'), activeChat('c')];
+    fake.messages = [message('m-a', 'a', 1), message('m-b', 'b', 2), message('m-c', 'c', 3)];
+    const activity = await collector(fake).collect(window);
+    expect(fake.listed.sort()).toEqual(['a', 'b', 'c']);
+    expect(activity.chats.map((c) => c.chat.id)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('stops looking through the chat search after its page limit, however many pages it says remain, and says there were more', async () => {
+    class Endless extends FakeMessenger {
+      pages = 0;
+      override async searchChats(): Promise<Page<Chat>> {
+        this.pages++;
+        // Every chat on the page is one the policy hides, so none counts toward the chat limit.
+        return { items: [], hasMore: true, nextCursor: `page-${this.pages + 1}` };
+      }
+    }
+    const fake = new Endless();
+    const activity = await collector(fake).collect(window);
+    expect(fake.pages).toBe(25);
+    expect(activity).toMatchObject({ chats: [], moreChats: true });
   });
 
   it('says nothing more is out there when exactly its chat limit was active', async () => {

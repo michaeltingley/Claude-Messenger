@@ -7,14 +7,23 @@ export interface RecordedRequest {
   body: string;
 }
 
+/** How the API turns a request away. */
+export interface Refusal {
+  status: number;
+  type: string;
+  message: string;
+}
+
 /**
  * A stand-in for Anthropic's Messages API, for running the real Claude Code
  * with no account: it records every request and answers each one for a
- * message with `reply`, streamed or not, as it was asked.
+ * message with `reply`, streamed or not, as it was asked, or turns it away
+ * with `refusal` when one is set.
  */
 export class StandInAnthropic {
   requests: RecordedRequest[] = [];
   reply = '**Needs you**\n- Nothing is waiting on you.';
+  refusal: Refusal | undefined;
   private server?: Server;
 
   /** Every request for a message, oldest first, its body parsed. */
@@ -34,6 +43,9 @@ export class StandInAnthropic {
         this.requests.push({ method: req.method ?? '', url, body });
         if (req.method === 'POST' && url.includes('count_tokens')) {
           res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: 10 }));
+        } else if (req.method === 'POST' && url.startsWith('/v1/messages') && this.refusal) {
+          const { status, type, message } = this.refusal;
+          res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify({ type: 'error', error: { type, message } }));
         } else if (req.method === 'POST' && url.startsWith('/v1/messages')) {
           this.answer(JSON.parse(body) as { model?: string; stream?: boolean }, res);
         } else {

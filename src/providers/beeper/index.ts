@@ -13,7 +13,7 @@ import type {
   ServerInfo,
 } from '../../core/types.js';
 import { AuthError, ConnectionError, NotFoundError, ProviderError } from '../../core/errors.js';
-import { toAccount, toChat, toMessage, toPage } from './mapper.js';
+import { newestFirst, toAccount, toChat, toMessage, toPage } from './mapper.js';
 
 export interface BeeperMessengerOptions {
   accessToken: string;
@@ -84,11 +84,10 @@ export class BeeperMessenger implements Messenger {
 
   listMessages(chatId: string, query?: MessageListQuery): Promise<Page<Message>> {
     return this.wrap(async () => {
-      const page = toPage(await this.client.messages.list(chatId, { cursor: query?.cursor }), toMessage);
+      const { items, hasMore, oldestCursor } = await this.client.messages.list(chatId, { cursor: query?.cursor });
       // The wire contract says only "sorted by timestamp", not which way.
       // Pin the domain contract — newest first within a page — locally.
-      page.items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
-      return page;
+      return toPage({ items: [...items].sort(newestFirst), hasMore, oldestCursor }, toMessage);
     });
   }
 

@@ -102,7 +102,9 @@ export class ActivityCollector {
   }
 
   private async activeChats(window: DigestWindow): Promise<{ chats: Chat[]; moreChats: boolean }> {
-    const chats: Chat[] = [];
+    // A chat that gets a message while the list is paged through moves up
+    // it, so it can come twice. It is read once.
+    const byId = new Map<string, Chat>();
     let cursor: string | undefined;
     for (let page = 1; ; page++) {
       const { items, hasMore, nextCursor } = await this.messenger.searchChats({
@@ -111,7 +113,8 @@ export class ActivityCollector {
         limit: CHAT_PAGE_SIZE,
         cursor,
       });
-      chats.push(...items);
+      for (const chat of items) if (!byId.has(chat.id)) byId.set(chat.id, chat);
+      const chats = [...byId.values()];
       const more = hasMore && nextCursor !== undefined;
       if (chats.length > this.limits.chats || (chats.length === this.limits.chats && more)) {
         return { chats: chats.slice(0, this.limits.chats), moreChats: true };
@@ -164,7 +167,7 @@ export class ActivityCollector {
 /** Whether a message shows in its chat with something in it. */
 function shows(message: Message): boolean {
   if (message.isDeleted || message.isHidden) return false;
-  if (message.plainText?.trim() || message.attachments.length > 0) return true;
+  if (message.text.trim() || message.attachments.length > 0) return true;
   // A reaction, a sticker or a location can carry no text and still show.
   return message.kind !== undefined && message.kind !== 'text' && message.kind !== 'notice';
 }

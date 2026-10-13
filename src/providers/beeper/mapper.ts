@@ -112,6 +112,26 @@ function toKind(type: string | undefined): MessageKind | undefined {
   return type === undefined ? undefined : (KINDS.get(type) ?? 'other');
 }
 
+/**
+ * Newest first, as the domain's pages run: by time, then, for messages sent
+ * the same moment, by the sort key Beeper orders a chat by.
+ */
+export function newestFirst(a: WireMessage, b: WireMessage): number {
+  const time = (m: WireMessage) => Date.parse(m.timestamp) || 0;
+  return time(b) - time(a) || (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0);
+}
+
+/**
+ * A message's words as the chat shows them, and the HTML they came from when
+ * there is markup in it. Beeper's `text` is a message's HTML formatted body
+ * when it has one, else its plain body, and doesn't say which.
+ */
+function readable(text: string | undefined): Pick<Message, 'text' | 'html'> {
+  if (text === undefined) return { text: '' };
+  const shown = plainText(text);
+  return shown === text.trim() ? { text: shown } : { text: shown, html: text };
+}
+
 export function toMessage(m: WireMessage): Message {
   return {
     id: m.id,
@@ -122,8 +142,7 @@ export function toMessage(m: WireMessage): Message {
     isFromMe: m.isSender ?? false,
     timestamp: m.timestamp,
     kind: toKind(m.type),
-    text: m.text,
-    plainText: m.text === undefined ? undefined : plainText(m.text),
+    ...readable(m.text),
     attachments: (m.attachments ?? []).map(toAttachment),
     reactions: (m.reactions ?? []).map(toReaction),
     isUnread: m.isUnread,

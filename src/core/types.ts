@@ -90,14 +90,18 @@ export interface Message {
   timestamp: string;
   /** Left out when the provider doesn't say. */
   kind?: MessageKind;
-  /** The text as the provider gives it, which may carry markup such as HTML. */
-  text?: string;
   /**
-   * The text as plain text, as the chat shows it: no markup, and not the
-   * copy of the message it answers that a reply can carry. Present whenever
-   * `text` is.
+   * What the message says, as plain text, as the chat shows it: no markup,
+   * and not the copy of the message it answers that a reply can carry.
+   * Empty when it says nothing in words, as a photo or a reaction can.
    */
-  plainText?: string;
+  text: string;
+  /**
+   * The message as HTML, when there is markup in it: what its plain text
+   * leaves out, such as where its links point. As the provider gives it, so
+   * it can hold the copy of the message a reply answers.
+   */
+  html?: string;
   attachments: AttachmentSummary[];
   reactions: Reaction[];
   isUnread?: boolean;

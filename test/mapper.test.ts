@@ -84,15 +84,18 @@ describe('mapper', () => {
     expect(toMessage(wire as never).isHidden).toBeUndefined();
   });
 
-  it("keeps a message's text as Beeper gives it, and as the chat shows it: no markup, no copy of what it replies to", () => {
+  it("gives a message's text as the chat shows it, and the HTML it came from only when there is markup in it", () => {
     const wire = { id: 'm1', accountID: 'a1', chatID: 'c1', senderID: 's1', sortKey: '1', timestamp: '2026-01-01T00:00:00Z' };
-    const text = '<mx-reply><blockquote>In reply to Bob<br>old words</blockquote></mx-reply><b>Sure</b> &amp; thanks';
-    const message = toMessage({ ...wire, text } as never);
-    expect(message.text).toBe(text);
-    expect(message.plainText).toBe('Sure & thanks');
-    const bare = toMessage(wire as never);
-    expect(bare.text).toBeUndefined();
-    expect(bare.plainText).toBeUndefined();
+    const html = '<mx-reply><blockquote>In reply to Bob<br>old words</blockquote></mx-reply><b>Sure</b> &amp; thanks';
+    expect(toMessage({ ...wire, text: html } as never)).toMatchObject({ text: 'Sure & thanks', html });
+
+    const plain = toMessage({ ...wire, text: 'Press <Enter>, then 2 < 3 ' } as never);
+    expect(plain.text).toBe('Press <Enter>, then 2 < 3');
+    expect(plain).not.toHaveProperty('html');
+
+    const photo = toMessage(wire as never);
+    expect(photo.text).toBe('');
+    expect(photo).not.toHaveProperty('html');
   });
 
   it('degrades gracefully when both network and bridge are absent (pre-4.2.785 Beeper Desktop)', () => {

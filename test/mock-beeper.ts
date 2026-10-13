@@ -304,8 +304,8 @@ export class MockBeeperServer {
       return send(200, accounts);
     }
     if (req.method === 'GET' && path === '/v1/chats/search') {
-      const chats = this.searchChats(url.searchParams);
-      return chats ? send(200, cursorEnvelope(chats)) : error(400, 'unmodeled', `mock: unmodeled chat search ${url.search}`);
+      const page = this.searchChats(url.searchParams);
+      return page ? send(200, page) : error(400, 'unmodeled', `mock: unmodeled chat search ${url.search}`);
     }
     if (req.method === 'GET' && path === '/v1/messages/search') {
       const q = url.searchParams.get('query')?.toLowerCase();
@@ -516,34 +516,51 @@ export class MockBeeperServer {
    * Chat search with the filters this app's reads use: title words, the
    * main inbox (neither archived nor low priority) and activity strictly
    * after lastActivityAfter. Any other inbox is refused, so a read can't
-   * drift to one no test covers. One page, whatever the limit.
+   * drift to one no test covers. Pages hold `limit` chats (50 when it isn't
+   * given), the most recently active first, and each `oldestCursor` fed
+   * back as `cursor` fetches the page after it, as the SDK pages them.
    */
-  private searchChats(params: URLSearchParams): WireChat[] | undefined {
+  private searchChats(params: URLSearchParams) {
     const inbox = params.get('inbox');
     if (inbox !== null && inbox !== 'primary') return undefined;
+    if (params.get('direction') !== null) return undefined;
     const q = params.get('query')?.toLowerCase();
     const after = params.has('lastActivityAfter') ? Date.parse(params.get('lastActivityAfter')!) : -Infinity;
-    return this.chats.filter(
-      (c) =>
-        (!q || c.title.toLowerCase().includes(q)) &&
-        (inbox === null || (!c.isArchived && !c.isLowPriority)) &&
-        (c.lastActivity === undefined ? after === -Infinity : Date.parse(c.lastActivity) > after),
-    );
+    const activity = (c: WireChat) => (c.lastActivity === undefined ? -Infinity : Date.parse(c.lastActivity));
+    const found = this.chats
+      .filter(
+        (c) =>
+          (!q || c.title.toLowerCase().includes(q)) &&
+          (inbox === null || (!c.isArchived && !c.isLowPriority)) &&
+          (c.lastActivity === undefined ? after === -Infinity : activity(c) > after),
+      )
+      .sort((a, b) => activity(b) - activity(a) || (a.id < b.id ? -1 : 1));
+    const cursor = params.get('cursor');
+    const start = cursor === null ? 0 : found.findIndex((c) => c.id === cursor) + 1;
+    if (cursor !== null && start === 0) return undefined;
+    const page = found.slice(start, start + Number(params.get('limit') ?? 50));
+    return {
+      items: page,
+      hasMore: start + page.length < found.length,
+      oldestCursor: page.at(-1)?.id ?? null,
+      newestCursor: page[0]?.id ?? null,
+    };
   }
 
   /**
    * A chat's messages a page at a time, as the SDK pages them: the newest
    * page first, then each `oldestCursor` fed back as `cursor` fetches the
-   * page before it. Within a page they run oldest first, so nothing above
-   * the provider can count on a page's order. Paging toward newer messages
-   * isn't modelled, and is refused.
+   * page before it. Messages sent the same moment are in the order of their
+   * sort keys. Within a page they run oldest first, so nothing above the
+   * provider can count on a page's order. Paging toward newer messages isn't
+   * modelled, and is refused.
    */
   private listMessages(chatID: string, params: URLSearchParams) {
     const direction = params.get('direction');
     if (direction !== null && direction !== 'before') return undefined;
     const newestFirst = this.messages
       .filter((m) => m.chatID === chatID)
-      .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+      .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp) || (a.sortKey < b.sortKey ? 1 : -1));
     const cursor = params.get('cursor');
     const start = cursor === null ? 0 : newestFirst.findIndex((m) => m.id === cursor) + 1;
     if (cursor !== null && start === 0) return undefined;

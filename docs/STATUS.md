@@ -85,9 +85,9 @@ and `docs/HOSTING-OPTIONS.md`._
   the policy layer and has Claude Code write what needs the owner first,
   then the rest. It runs on the owner's Claude subscription (Claude Code
   signed in on the host), never an API key, and its model has no tools and
-  can't be made to read a file. Design: `docs/ARCHITECTURE.md` (Language
-  model, Daily digest). How it is to run and reach the owner: "Daily
-  digest" below.
+  can't be made to read a file or act. Design: `docs/ARCHITECTURE.md`
+  (Language model, Daily digest). How it is to run and reach the owner:
+  "Daily digest" below.
 
 ## VERIFIED LIVE
 
@@ -127,24 +127,32 @@ and `docs/HOSTING-OPTIONS.md`._
   plan, each morning's run is:
   `cd ~/claude-messenger && node dist/cli/main.js digest --since "$(TZ=America/Los_Angeles date -d 'yesterday 07:46' -Iseconds)" --time-zone America/Los_Angeles`.
   - `--since` starts it where the day before's run started, so a late run
-    leaves nothing out between two days.
+    leaves no gap after the day before's. A morning that fails leaves its
+    day out of the next, and a message dated before the window it reached
+    Beeper in, as a bridge catching up can make, falls outside both.
   - It writes with Sonnet (`--model` to change), which spends less of the
     plan's usage limits than Opus.
   - It needs a Claude Code new enough for `--safe-mode` (the box has
     2.1.295). One too old, such as 2.1.42, rejects the flag, so the digest
     fails with `model_failed` before Claude sees anything.
   - It prints the digest and keeps no copy. The audit log gets its reads,
-    never the words. The text is in the transcripts of the sessions that
-    carry it: the Remote Control session that runs it and the project
-    thread that posts it.
+    never the words.
   - Failing, it prints the reason and no digest: `model_failed` with Claude
-    Code's own words (signed out: run `claude`, then `/login`; usage limit
-    reached), or Beeper's checklist when Beeper is unreachable.
+    Code's own words, or Beeper's checklist when Beeper is unreachable. A
+    lapsed sign-in fails at once (`Failed to authenticate. API Error: 401
+    …`: sign in again with `claude`, then `/login`). A rate limit Claude
+    Code retries for about three minutes first; the run gives up after ten.
 - **Delivery, being set up 2026-10-13:** each morning at 7:46 AM Pacific a
-  routine wakes the thread's session, which starts a Remote Control session
-  on the VPS to run the command and send the text back, and then posts it
-  in the thread. Nothing is written to Beeper, so the read-only token stays
-  read-only.
+  routine wakes the thread's session. It starts a Remote Control session on
+  the VPS that runs the command with its output piped through `gzip` and
+  `base64`, takes that output from the session's transcript, decodes it,
+  posts it in the thread, and stops the Remote Control session.
+  - The session on the VPS has tools within reach of the token, so it never
+    sees the digest as text, and a message can't steer it through the
+    digest. The thread's session reads the digest to post it, so the words
+    are in its transcript; a digest names no link, email address or phone
+    number for it to follow.
+  - Nothing is written to Beeper, so the read-only token stays read-only.
 
 ## Decided (2026-10-12): Claude Messenger runs on the automation VPS
 
@@ -239,6 +247,11 @@ and `docs/HOSTING-OPTIONS.md`._
    picks the timing. If he says go: confirm Beeper + Xvfb auto-start on boot
    (user-unit lingering) before rebooting, then verify `/healthz` and
    `doctor` after.
+7. **Put the digest on the VPS and schedule it** (thread "Daily message
+   digest"). Bring `~/claude-messenger` to `main` and rebuild it, through the
+   install's thread, which owns that checkout; run one digest from a Remote
+   Control session and post it in the thread; then create the daily routine
+   and record its id here. See "Daily digest" above.
 
 ### Hosting history (kept short)
 

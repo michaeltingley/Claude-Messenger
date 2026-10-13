@@ -1,8 +1,24 @@
+import { ModelError } from '../../core/errors.js';
 import type { LanguageModel } from '../../core/model.js';
 import type { Activity, ActivityCollector, DigestWindow } from './activity.js';
 import { renderBriefing } from './briefing.js';
 import { DIGEST_INSTRUCTIONS } from './instructions.js';
-import { formatDateTime } from './time.js';
+import { safeMarkdown } from './safe-markdown.js';
+import { formatDateTime, isTimeZone } from './time.js';
+
+/** A week at most: a digest is for catching up, not for reading history. */
+export const MAX_DIGEST_DAYS = 7;
+
+/** The day before `until`: what a digest covers unless told where it starts. */
+export function dayBefore(until: Date): DigestWindow {
+  return { since: new Date(until.getTime() - 24 * 3_600_000), until };
+}
+
+/** Whether a digest can cover `window`: it starts before it ends, and at most a week before. */
+export function isDigestWindow({ since, until }: DigestWindow): boolean {
+  const span = until.getTime() - since.getTime();
+  return span > 0 && span <= MAX_DIGEST_DAYS * 86_400_000;
+}
 
 /**
  * Writes the owner's digest of a window: what needs them first, then the
@@ -16,14 +32,23 @@ export class DigestWriter {
     private readonly model: LanguageModel,
   ) {}
 
-  /** The digest of `window`, its times in `timeZone`, an IANA time zone such as "America/Los_Angeles". */
+  /**
+   * The digest of `window`, its times in `timeZone`, an IANA time zone such
+   * as "America/Los_Angeles". A window no digest can cover, or a time zone
+   * this runtime doesn't know, is refused before anything is read.
+   */
   async write(window: DigestWindow, timeZone: string): Promise<string> {
+    if (!isDigestWindow(window)) {
+      throw new RangeError(`A digest covers at most ${MAX_DIGEST_DAYS} days, and ends after it starts.`);
+    }
+    if (!isTimeZone(timeZone)) throw new RangeError(`${timeZone} is not an IANA time zone, such as America/Los_Angeles.`);
     const activity = await this.collector.collect(window);
     const since = formatDateTime(window.since, timeZone);
     if (activity.chats.length === 0) return footnote(`No new messages since ${since}.`, gaps(activity, 0));
 
     const briefing = renderBriefing(activity, timeZone);
-    const summary = withoutLinks(await this.model.write({ instructions: DIGEST_INSTRUCTIONS, input: briefing.text }));
+    const summary = safeMarkdown(await this.model.write({ instructions: DIGEST_INSTRUCTIONS, input: briefing.text }));
+    if (summary.trim() === '') throw new ModelError('The model answered with nothing that can be shown.');
     const coverage = `Covers ${chats(briefing.chats)} and ${count(briefing.messages, 'message')} since ${since}.`;
     return `${summary}\n\n${footnote(coverage, gaps(activity, briefing.leftOut))}`;
   }
@@ -37,19 +62,6 @@ function gaps({ unreadable, partial, moreChats }: Activity, leftOut: number): st
     ...(leftOut > 0 ? [`${chats(leftOut)} left out for length`] : []),
     ...(moreChats ? ['more chats had activity than a digest reads'] : []),
   ];
-}
-
-/**
- * The model's text with every link and email address taken out. It is told
- * never to repeat one, but a message could still get one past it, and a
- * link reaches the owner inside a summary they trust more than the message.
- * A link ends before any punctuation that ends its sentence.
- */
-function withoutLinks(text: string): string {
-  return text
-    .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, '$1')
-    .replace(/<?(?:[a-z][a-z\d+.-]*:\/\/|\bwww\.)[^\s<>()]*[^\s<>().,;:!?'"*_~]>?/gi, '(link)')
-    .replace(/<?\b(?:mailto:)?[\w.+-]+[@＠][\w-]+(?:\.[\w-]+)+>?/gi, '(email address)');
 }
 
 /** One italic line: a sentence, then any gaps in what it covers as one more. */
