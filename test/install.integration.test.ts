@@ -457,6 +457,37 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expect(await listAccountsOverHttp()).toContain('whatsapp-1');
     }, 90_000);
 
+    it.each([
+      ['CLAUDE_MESSENGER_POLICY', 'policy.json'],
+      ['CLAUDE_MESSENGER_AUDIT_DIR', 'audit'],
+      ['CLAUDE_MESSENGER_STATE_DIR', 'state'],
+    ])('stops before anyone is asked to approve when .env keeps %s where the sandboxed service cannot reach it', async (name, place) => {
+      // As a .env carried over from another checkout would.
+      const elsewhere = join(host.root, 'another-checkout', place);
+      writeFileSync(join(install, '.env'), `BEEPER_BASE_URL=${beeperUrl}\n${name}=${elsewhere}\n`);
+
+      const run = await configure();
+
+      expect(run.code, why(run)).toBe(1);
+      expectInOrder(run.stderr, `${name}=${elsewhere}, not ${join(install, place)}`, 'Point those lines there');
+      expect(mock.approvalRequests).toEqual([]);
+      expect(existsSync(join(host.systemUnitDir, 'claude-messenger-mcp.service'))).toBe(false);
+    }, 90_000);
+
+    it('says where to look, not that it is hosted, when the MCP service fails once started', async () => {
+      host.set('sandbox-fails');
+
+      const started = Date.now();
+      const run = await configure();
+
+      expect(run.code, why(run)).toBe(1);
+      expect(run.stderr).toContain('MCP service failed to start — check: sudo journalctl -u claude-messenger-mcp.service');
+      expect(run.stdout).not.toContain('Claude Messenger is hosted');
+      expect(host.calls().filter((c) => /^claude mcp add|^tailscale serve --bg http:/.test(c))).toEqual([]);
+      // It stops once systemd has given up on the unit, not after the full wait for an answer.
+      expect(Date.now() - started).toBeLessThan(15_000);
+    }, 90_000);
+
     it('refuses to run as root, before changing anything', async () => {
       host.set('root');
       const homeMode = statSync(host.home).mode & 0o777;
@@ -479,6 +510,7 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
         encoding: 'utf8',
       });
       expect(start.status, start.stderr).toBe(0);
+      expect(host.has('enabled/claude-messenger-mcp.service')).toBe(true);
     };
 
     it('moves an MCP service an earlier install ran as a user unit to the system manager', async () => {
@@ -493,7 +525,7 @@ import { writeFileSync } from 'node:fs';
 createServer((_, res) => res.end('ok')).listen(${mcpPort}, '127.0.0.1', () => writeFileSync(${JSON.stringify(listening)}, ''));
 `,
       );
-      earlierUserUnit(`[Service]\nExecStart=${process.execPath} ${standIn}\n`);
+      earlierUserUnit(`[Service]\nExecStart=${process.execPath} ${standIn}\n\n[Install]\nWantedBy=default.target\n`);
       await until(() => existsSync(listening), 'the earlier service to listen');
 
       const run = await configure();
@@ -507,7 +539,7 @@ createServer((_, res) => res.end('ok')).listen(${mcpPort}, '127.0.0.1', () => wr
     }, 90_000);
 
     it('starts no second MCP service while one an earlier install ran as a user unit will not stop', async () => {
-      earlierUserUnit('[Service]\n');
+      earlierUserUnit('[Service]\n\n[Install]\nWantedBy=default.target\n');
       host.set('fail-stop');
 
       const run = await configure();

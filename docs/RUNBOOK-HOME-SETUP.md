@@ -74,10 +74,12 @@ step 3 (Tailscale) and step 6 (`deploy/configure.sh`):
 
 1. `sudo tailscale up` → give the user the printed URL to click.
 2. Run `~/claude-messenger/deploy/configure.sh` (it never prompts; run it in
-   the background and read its output). It waits up to 60 minutes for the
-   user, so give the background command a longer timeout: Claude Code's Bash
-   tool stops it after 30 minutes by default, so pass at least 65. Stop it
-   any way but `kill -9` and it closes Beeper's screen first. **Do not run
+   the background and read its output). It needs a sudo that asks no
+   password, as the image's default user has; without one it stops before
+   asking the user anything. It waits up to 60 minutes for the user, so give
+   the background command a longer timeout: Claude Code's Bash tool stops it
+   after 30 minutes by default, so pass at least 65. Stop it any way but
+   `kill -9` and it closes Beeper's screen first. **Do not run
    `beeper setup --server --install`** — see the warning in docs/DEPLOY.md;
    it can delete the user's cloud bridge connections across every device.
 
@@ -89,12 +91,13 @@ step 3 (Tailscale) and step 6 (`deploy/configure.sh`):
      prints its URL, then the steps for Beeper's approval box. Give the user
      both in one message. The URL carries a one-time viewer password in its
      `#` fragment, which never reaches the server.
-   - Waits while the user signs in (emailed code, then recovery key, typed
-     into the app, so neither passes through chat) and approves Claude
-     Messenger in Beeper's "Approve connection" box. `claude-messenger
-     connect` then saves the token straight into `.env`; nobody sees it.
-     After the code, Beeper first offers to verify with another device; the
-     user picks "Try another way", then "Enter Recovery Key".
+   - Waits while the user signs in with the emailed code, approves Claude
+     Messenger in Beeper's "Approve connection" box, which opens next, then
+     enters the recovery key; all typed into the app, so none passes through
+     chat. `claude-messenger connect` then saves the token straight into
+     `.env`; nobody sees it. For the key, Beeper first offers to verify with
+     another device; the user picks "Try another way", then "Enter Recovery
+     Key".
    - Closes the screen and verifies that nothing is left exposed, then runs
      `doctor`, starts the MCP service, publishes it with `tailscale serve`,
      and registers it with Claude Code on the host over stdio.
@@ -128,7 +131,9 @@ If the VPS order stalls (OVH can hold new orders for ID verification), there
 are two fallbacks, both in docs/HOSTING-OPTIONS.md:
 
 - Contabo Cloud VPS 4. Its API takes cloud-init `userData`.
-- The user's own always-on machine. Run Phase 3 locally.
+- The user's own always-on machine. Run Phase 3 locally, in a terminal
+  where sudo can ask for the password, or give the user a sudo that needs
+  none.
 
 Hetzner is no longer a fallback. Its US 4 GB plan is $38/mo, and its EU 4 GB
 plans are unavailable.

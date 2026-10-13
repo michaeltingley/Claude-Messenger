@@ -18,12 +18,20 @@ ExecStart=__NODE__ dist/cli/main.js serve --http --port __PORT__ --host 127.0.0.
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
-PrivateTmp=true
-# Writable surface is exactly the audit trail + rate-window state; the rest
-# of $HOME (SSH keys, dotfiles) stays read-only to a compromised process.
+# The sandbox. Of the home directories and /run/user it sees only the install,
+# read-only, and node. So a compromised server can't read SSH keys, other
+# tools' credentials, Beeper's own data (its login token is a full API token)
+# or the sign-in screen's X cookie and VNC password. It can change only its
+# audit trail and rate window: every other file it sees is read-only, apart
+# from a /tmp of its own, and the host's shared memory and message queues
+# are swapped for empty, read-only stand-ins. configure.sh refuses a .env
+# that keeps the policy, audit trail or rate window anywhere else.
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state
+ProtectHome=tmpfs
+BindReadOnlyPaths=__INSTALL_DIR__ __NODE__
+BindPaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state
+PrivateTmp=true
+TemporaryFileSystem=/dev/shm:ro /dev/mqueue:ro
 # Backstop for leaks on small hosts; normal footprint is well under this.
 MemoryMax=512M
 

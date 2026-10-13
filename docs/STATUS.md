@@ -53,11 +53,16 @@ and `docs/HOSTING-OPTIONS.md`._
     systemd really starts the built MCP service (`test/fake-host.ts`,
     `test/install.integration.test.ts`).
 - **MCP service sandbox (#23)**: the MCP service is a system unit run as the
-  install's owner (`User=`), not a user unit. On Ubuntu 24.04+ a user
-  unit's filesystem sandbox is silently dropped (see Notes), so this is what
-  keeps a compromised server out of the rest of `$HOME`.
-  `test/mcp-sandbox.integration.test.ts` proves it in CI under real systemd,
-  with Ubuntu's restriction on.
+  install's owner (`User=`), not a user unit, whose sandbox Ubuntu 24.04+
+  silently drops (see Notes).
+  - It sees nothing of the home directories or `/run/user` but the install,
+    read-only. So a compromised server can't read SSH keys, other tools'
+    credentials, Beeper's own data or the sign-in screen's secrets.
+  - It can change only its audit trail and rate window. `configure.sh`
+    stops first if `.env` keeps the policy, audit trail or rate window
+    anywhere else.
+  - `test/mcp-sandbox.integration.test.ts` proves both on GitHub's runners,
+    under real systemd with Ubuntu's restriction on.
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -151,9 +156,22 @@ and `docs/HOSTING-OPTIONS.md`._
      run `deploy/configure.sh` in the background. It keeps the token (no
      approval needed), writes `policy.json`, runs `doctor`, installs the MCP
      service as a system unit and publishes it, and registers it with Claude
-     Code on the box. The system unit needs sudo without a password prompt
-     (nobody can type one into a background run); check `sudo -n true`
-     first.
+     Code on the box.
+     - The system unit needs sudo without a password prompt (nobody can
+       type one into a background run); check `sudo -n true` first.
+     - It stops first if `.env` keeps the policy, audit trail or rate window
+       outside `~/claude-messenger`, as a `.env` written for `~/cm-pr22`
+       might: `grep -E '^CLAUDE_MESSENGER_(POLICY|AUDIT_DIR|STATE_DIR)=' .env`
+       shows them.
+   - **Then check it on the box.** CI proves the sandbox with systemd 255;
+     the box has 259.
+     - `systemctl show -p User --value claude-messenger-mcp` is the owner,
+       and `systemctl is-enabled claude-messenger-mcp` says `enabled`.
+     - One authenticated MCP call (`list_accounts`) answers, and today's
+       file in `audit/` grows.
+     - From inside the service, writing to the home or the install fails
+       with "Read-only file system", and `~/.ssh` isn't there:
+       `sudo nsenter -t "$(systemctl show -p MainPID --value claude-messenger-mcp)" -m -S "$(id -u)" -G "$(id -g)" -- sh -c 'touch "$1/probe"; touch "$1/claude-messenger/probe"; ls "$1/.ssh"' sh "$HOME"`
    - Whatever runs `configure.sh` or `bootstrap.sh` in the background must
      allow more than their 60-minute wait for sign-in and approval. Claude
      Code's Bash tool stops background commands after 30 minutes unless
@@ -248,6 +266,12 @@ and `docs/HOSTING-OPTIONS.md`._
     reads the same either way, so only a probe from inside can tell; a
     config grep passed this bug. Hence the system unit (#23). Loosening
     AppArmor host-wide would be the owner's call.
+  - Even where it applied, `ProtectHome=read-only` let the service read the
+    whole home: SSH keys, Claude's and Beeper's credentials (Beeper's login
+    token is a full API token) and, in `/run/user`, the sign-in screen's X
+    cookie and VNC password. So the unit now hides the home directories
+    (`ProtectHome=tmpfs`) and binds back only the install, read-only, plus
+    `audit/` and `state/`.
 - **Cloud sessions can't add GitHub deploy keys.** That API path is blocked
   through their proxy. Add deploy keys in the GitHub UI.
 - The user wants maximum autonomy ("do everything I can't"). The irreducibly

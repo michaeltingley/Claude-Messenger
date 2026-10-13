@@ -77,7 +77,8 @@ cli() { node dist/cli/main.js "$@"; }
 
 # The MCP service is a system unit (see its header in deploy/systemd/), so
 # installing it takes root. Find out now, before anyone is asked to approve
-# anything.
+# anything. -n first: on a cloud image, -v asks for a password even where
+# every command runs without one.
 sudo -n true 2>/dev/null || sudo -v ||
   die "this needs sudo, which it could not get; see above. Run ${SELF} where sudo can ask for your password, or let this user use sudo without one."
 
@@ -121,6 +122,23 @@ else
   fi
 fi
 unset mcp_token
+# The MCP service sees nothing of this home but the install, and can change
+# only its audit/ and state/ (see its unit). A policy, audit trail or rate
+# window that .env keeps anywhere else would be out of its reach: every call
+# would fail, or a policy it can't see would give way to the default one.
+# Read as Node loads .env, from the service's working directory.
+misplaced="$(node -e '
+  const { resolve } = require("node:path");
+  const env = require("node:util").parseEnv(require("node:fs").readFileSync(".env", "utf8"));
+  const dir = process.argv[1];
+  for (const [key, place] of [["CLAUDE_MESSENGER_POLICY", "policy.json"], ["CLAUDE_MESSENGER_AUDIT_DIR", "audit"], ["CLAUDE_MESSENGER_STATE_DIR", "state"]]) {
+    const value = env[key] ?? `./${place}`;
+    if (resolve(dir, value) !== resolve(dir, place)) console.log(`    ${key}=${value}, not ${resolve(dir, place)}`);
+  }' "$INSTALL_DIR")"
+[ -z "$misplaced" ] ||
+  die "the MCP service can reach only this install's policy.json, audit/ and state/, and .env puts some elsewhere:
+${misplaced}
+  Point those lines there, or delete them, then run ${SELF} again."
 ok ".env in $INSTALL_DIR"
 
 say "Beeper access"
@@ -164,10 +182,12 @@ if [ -e "$UNIT_DIR/$MCP_UNIT" ]; then
 fi
 # The unit may write only these, and systemd refuses to start it if either is missing.
 mkdir -p audit state
-# Run as this user. __NODE__ must be the RESOLVED interpreter: /usr/bin/node
-# only exists on apt installs; nvm/asdf setups would 203/EXEC with a
-# hardcoded path.
-sed "s|__INSTALL_DIR__|$INSTALL_DIR|g; s|__PORT__|$MCP_PORT|g; s|__NODE__|$(command -v node)|g; s|__USER__|$(id -un)|g" \
+# Run as this user. __NODE__ must be the interpreter itself: /usr/bin/node
+# only exists on apt installs, an nvm or asdf node lives in this home, which
+# the sandbox hides but for what the unit lets through, and an asdf shim is a
+# script that needs the rest of asdf.
+NODE="$(node -p process.execPath)"
+sed "s|__INSTALL_DIR__|$INSTALL_DIR|g; s|__PORT__|$MCP_PORT|g; s|__NODE__|$NODE|g; s|__USER__|$(id -un)|g" \
   "$INSTALL_DIR/deploy/systemd/claude-messenger-mcp.service" | sudo tee "/etc/systemd/system/$MCP_UNIT" >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable "$MCP_UNIT"
@@ -180,6 +200,9 @@ for _ in $(seq 1 30); do
     healthy=1
     break
   fi
+  # The restart reports success even when the start fails later (sandbox,
+  # user, node); the unit is then no longer active, and waiting won't help.
+  systemctl is-active --quiet "$MCP_UNIT" || break
   sleep 1
 done
 [ "$healthy" -eq 1 ] || die "MCP service failed to start — check: sudo journalctl -u ${MCP_UNIT}"

@@ -105,8 +105,11 @@ What the script does:
       one of those, run it again).
    4. Runs `doctor` end to end.
    5. Installs and restarts the MCP service: a boot-persistent system unit
-      that runs as you, sandboxed so that it can write only its audit trail
-      and rate window.
+      that runs as you, sandboxed. It sees nothing of your home directory
+      but the install, which it can't change, and it can write only its
+      audit trail and rate window. So `.env` must keep the policy, audit
+      trail and rate window in the install, as it does by default; the
+      script stops before anything else if it doesn't.
    6. Exposes the MCP endpoint on your tailnet over HTTPS via
       `tailscale serve`.
    7. If `claude` is installed, registers Claude Messenger with Claude Code
