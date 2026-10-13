@@ -161,14 +161,14 @@ and `docs/HOSTING-OPTIONS.md`._
   debug log: `[claudeai-mcp] Disabled via env var`, no server named) and
   left nothing in `~/.claude` or `/tmp`. Memory: 1357 MB available before,
   1148 MB at the lowest during the run, swap steady at 454 MB.
-  - It read its limit of 40 chats, the most recently active, and only 12 of
-    them had something to show in the window. Why is unconfirmed: the box's safety
-    check refused a count of messages per chat. Inferred, not checked:
-    Beeper's first sync after its sign-in on the box (02:12Z, inside this
-    window) marked chats active with nothing new to show. Activity that
-    never shows, such as hidden or deleted messages, would do the same
-    every day. If a later footnote again covers far fewer than 40 chats
-    yet says more chats had activity than a digest reads, have
+  - It read its limit of 40 chats, the most recently active, and only 12
+    of them had something to show in the window. Why is unconfirmed: the
+    box's safety check refused a count of messages per chat. Inferred, not
+    checked: Beeper's first sync after its sign-in on the box (02:12Z,
+    inside this window) marked chats active with nothing new to show.
+    Activity that never shows, such as hidden or deleted messages, would
+    do the same every day. If a later footnote again covers far fewer than
+    40 chats yet says more chats had activity than a digest reads, have
     `ActivityCollector` read on until it holds its limit of chats with
     something to show, within a bound on chats read, instead of stopping
     at its limit of chats read.
