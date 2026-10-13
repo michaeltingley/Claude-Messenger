@@ -134,6 +134,15 @@ describe('deploy/signin-surface.sh (subprocess against a fake host)', () => {
       expect(host.surfaceClosed()).toBe(true);
     });
 
+    it('publishes when sudo asks the person at the terminal for a password first', () => {
+      host.set('sudo-asks-password');
+
+      const { code, stderr } = surface(host, 'up');
+
+      expect(code, stderr).toBe(0);
+      expect(host.has('serve-8443')).toBe(true);
+    });
+
     it('says sudo wants a password, instead of hanging, when nobody can type one', () => {
       host.set('sudo-needs-password');
 

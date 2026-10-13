@@ -237,7 +237,7 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
 
       expect(mock.issuedTokens.has(grant.token)).toBe(true);
       expect(progress).toEqual([
-        { kind: 'action-required', step: 'Sign in to Beeper: your emailed code, then your recovery key.' },
+        { kind: 'action-required', step: 'Sign in to Beeper with your emailed code.' },
         { kind: 'approval-requested', attempt: 1 },
       ]);
     });
@@ -261,7 +261,7 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
           kind: 'action-required',
           step: "Beeper's Desktop API is switched off. Turn it on in Beeper, under Settings → Integrations → Beeper Desktop API.",
         },
-        { kind: 'action-required', step: 'Sign in to Beeper: your emailed code, then your recovery key.' },
+        { kind: 'action-required', step: 'Sign in to Beeper with your emailed code.' },
         { kind: 'approval-requested', attempt: 1 },
       ]);
     }, 15_000);
@@ -350,6 +350,27 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
       expect(error).toBeInstanceOf(ProviderError);
       expect((error as Error).message).toContain('could not ask for approval (server_error)');
       expect(mock.approvalRequests).toHaveLength(1);
+    });
+
+    it("passes on Beeper's own reason when it cannot ask", async () => {
+      mock.decide = () => ({ approve: false, error: 'server_error', description: 'No window to show the request in' });
+
+      const error = (await requester.requestAccess(request()).catch((e: unknown) => e)) as Error;
+
+      expect(error.message).toContain('could not ask for approval (server_error: No window to show the request in)');
+    });
+
+    it("passes on Beeper's own reason when it will not issue the token", async () => {
+      mock.shapeTokenResponse = () => ({
+        status: 400,
+        body: { error: 'invalid_grant', error_description: 'Invalid or expired authorization code' },
+      });
+
+      const error = (await requester.requestAccess(request()).catch((e: unknown) => e)) as Error;
+
+      expect(error.message).toBe(
+        'Beeper could not exchange the approval for a token (HTTP 400): invalid_grant: Invalid or expired authorization code',
+      );
     });
 
     it('refuses an approval that answers some other request, exchanging nothing', async () => {

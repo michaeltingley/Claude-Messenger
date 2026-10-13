@@ -144,4 +144,6 @@ else
 fi
 
 say "6/6 Connect to Beeper and start the MCP service"
-bash "$INSTALL_DIR/deploy/configure.sh"
+# exec: this process becomes configure.sh, so stopping bootstrap stops it
+# too, and configure's own traps close the sign-in screen on the way out.
+exec bash "$INSTALL_DIR/deploy/configure.sh"

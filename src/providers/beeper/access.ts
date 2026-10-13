@@ -60,7 +60,9 @@ const DESKTOP_API_SETTING = 'Settings → Integrations → Beeper Desktop API';
 /** What the person does in Beeper's window before it can ask for approval. */
 const READY_STEPS = {
   'switch-on-api': `Beeper's Desktop API is switched off. Turn it on in Beeper, under ${DESKTOP_API_SETTING}.`,
-  'sign-in': 'Sign in to Beeper: your emailed code, then your recovery key.',
+  // Only the code: the approval box opens next, before Beeper asks for the
+  // recovery key (see instructions()).
+  'sign-in': 'Sign in to Beeper with your emailed code.',
 } as const;
 type ReadyStep = keyof typeof READY_STEPS;
 

@@ -49,7 +49,9 @@ esac
 MANAGED=0
 [ -e "$UNIT_DIR/beeper-desktop.service" ] && MANAGED=1
 
-SURFACE_OPEN=0
+# Taken as open until `down` proves it closed: a manual `up` or a killed run
+# can have left it open, and no exit may leave it so.
+SURFACE_OPEN=$MANAGED
 CONNECT_PID=""
 # `down` verifies the end state, so this fails if anything is left exposed.
 # The flag drops only once that is proven.
@@ -79,6 +81,11 @@ say "Configuration"
 chmod go-rwx "$HOME"
 # Generated outside the heredoc, where a failure would go unnoticed.
 new_mcp_token() { openssl rand -hex 32 || die "openssl could not generate the MCP bearer token"; }
+# Whether .env gives $1 a value, read as Node loads it: grep would take
+# KEY="" for one, or a CRLF line's KEY=\r.
+env_has() {
+  node -e 'process.exit(require("node:util").parseEnv(require("node:fs").readFileSync(".env", "utf8"))[process.argv[1]] ? 0 : 1)' "$1"
+}
 if [ ! -f .env ]; then
   mcp_token="$(new_mcp_token)"
   # umask first: the file must never exist world-readable, even briefly. The
@@ -93,20 +100,25 @@ CLAUDE_MESSENGER_STATE_DIR=${INSTALL_DIR}/state
 CLAUDE_MESSENGER_MCP_TOKEN=${mcp_token}
 EOF
   )
-elif ! grep -q '^CLAUDE_MESSENGER_MCP_TOKEN=.' .env; then
-  # A hand-made .env (from .env.example, say) has none, and the service
-  # won't start without it. printf is a builtin: no command line shows it.
-  mcp_token="$(new_mcp_token)"
-  sed -i --follow-symlinks '/^CLAUDE_MESSENGER_MCP_TOKEN=/d' .env
-  printf 'CLAUDE_MESSENGER_MCP_TOKEN=%s\n' "$mcp_token" >> .env
+else
+  # One made by hand may be readable by others.
+  chmod 600 .env
+  if ! env_has CLAUDE_MESSENGER_MCP_TOKEN; then
+    # A hand-made .env (from .env.example, say) has none, and the service
+    # won't start without it. printf is a builtin: no command line shows it.
+    mcp_token="$(new_mcp_token)"
+    sed -i --follow-symlinks '/^CLAUDE_MESSENGER_MCP_TOKEN=/d' .env
+    # Appended to a last line that has no newline, it would corrupt that line.
+    [ -z "$(tail -c 1 .env)" ] || printf '\n' >> .env
+    printf 'CLAUDE_MESSENGER_MCP_TOKEN=%s\n' "$mcp_token" >> .env
+  fi
 fi
 unset mcp_token
 ok ".env in $INSTALL_DIR"
 
 say "Beeper access"
-if [ "$RECONNECT" -eq 1 ] || ! grep -q '^BEEPER_ACCESS_TOKEN=.' .env; then
+if [ "$RECONNECT" -eq 1 ] || ! env_has BEEPER_ACCESS_TOKEN; then
   if [ "$MANAGED" -eq 1 ]; then
-    SURFACE_OPEN=1
     bash "$SURFACE" up || die "the Beeper screen could not be opened; see above, then run ${SELF} again."
   fi
   # In the background, so a signal to this script ends the wait at once

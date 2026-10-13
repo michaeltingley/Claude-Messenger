@@ -125,6 +125,8 @@ describe('connect (subprocess integration)', () => {
 
     expect(code, stderr).toBe(0);
     expect(stdout).toContain('replaced an earlier token, which still works until you revoke it');
+    // The earlier token was in the file, not the environment.
+    expect(stdout).not.toContain("also set in this command's environment");
     expect(await readFile(envFile, 'utf8')).toBe(
       `BEEPER_BASE_URL=${baseUrl}\nBEEPER_ACCESS_TOKEN=${issued()[0]}\n# keep me\n`,
     );
@@ -156,7 +158,7 @@ describe('connect (subprocess integration)', () => {
 
     expect(code, stderr).toBe(0);
     expect(stdout).toMatch(
-      /Sign in to Beeper: your emailed code, then your recovery key\. Waiting\.\.\.\n[\s\S]*The approval box is open/,
+      /Sign in to Beeper with your emailed code\. Waiting\.\.\.\n[\s\S]*The approval box is open/,
     );
     expect(await readFile(envFile, 'utf8')).toBe(`BEEPER_ACCESS_TOKEN=${issued()[0]}\n`);
   }, 60_000);
@@ -240,6 +242,22 @@ describe('connect (subprocess integration)', () => {
     expect((await lstat(envFile)).isSymbolicLink()).toBe(true);
     expect(await readFile(real, 'utf8')).toBe(`BEEPER_BASE_URL=${baseUrl}\nBEEPER_ACCESS_TOKEN=${issued()[0]}\n`);
     expect((await stat(real)).mode & 0o777).toBe(0o600);
+  }, 60_000);
+
+  it('leaves a symlink that points nowhere in place, saving nothing and revoking the token', async () => {
+    await mkdir(join(dir, 'secrets'));
+    const missing = join(dir, 'secrets', 'claude-messenger.env');
+    await symlink(missing, envFile);
+
+    const { stdout, stderr, code } = await cli(['connect']);
+
+    expect(code).toBe(1);
+    expect(stderr).toContain('is a symlink to a file that does not exist');
+    expect(stderr).toContain('It was revoked');
+    expect(mock.issuedTokens.get(issued()[0]!)?.revoked).toBe(true);
+    expect(stdout + stderr).not.toContain(issued()[0]);
+    expect((await lstat(envFile)).isSymbolicLink()).toBe(true);
+    await expect(stat(missing)).rejects.toThrow();
   }, 60_000);
 
   it('saves nothing, and revokes the token, when the file would not load the token it was given', async () => {

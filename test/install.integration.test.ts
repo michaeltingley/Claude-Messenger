@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -134,6 +135,26 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
     }
   };
 
+  /**
+   * `run`'s result, or a failure with what it printed if it is not done
+   * within `ms`. Done means its output has closed, which also waits for
+   * anything it started that still runs.
+   */
+  const doneWithin = async (run: DetachedRun, ms: number): Promise<ScriptResult> => {
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const exited = run.child.exitCode ?? run.child.signalCode ?? 'no';
+        reject(new Error(`not done after ${ms} ms (it exited: ${exited}):\n${run.output()}\n${host.logs()}`));
+      }, ms);
+    });
+    try {
+      return await Promise.race([run.done, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   /** Beeper Desktop installed by bootstrap: headless, its window only on the sign-in surface. */
   const managedBeeper = () => {
     mkdirSync(host.unitDir, { recursive: true });
@@ -181,16 +202,22 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
   };
 
   /** Start the registered server as a Claude Code session does, from anywhere, with nothing else in its environment. */
-  const listAccountsOverStdio = ([command, ...args]: string[]) =>
-    listAccounts(
-      new StdioClientTransport({
-        command: command!,
-        args,
-        cwd: host.root,
-        env: { HOME: host.home, PATH: '/usr/bin:/bin' },
-        stderr: 'ignore',
-      }),
-    );
+  const listAccountsOverStdio = async ([command, ...args]: string[]) => {
+    const transport = new StdioClientTransport({
+      command: command!,
+      args,
+      cwd: host.root,
+      env: { HOME: host.home, PATH: '/usr/bin:/bin' },
+      stderr: 'pipe',
+    });
+    let said = '';
+    transport.stderr?.on('data', (chunk: Buffer) => (said += chunk.toString('utf8')));
+    try {
+      return await listAccounts(transport);
+    } catch (err) {
+      throw new Error(`${(err as Error).message}; the server said:\n${said}`, { cause: err });
+    }
+  };
 
   /** Neither credential may appear in anything the install prints. */
   const expectNoSecrets = (run: ScriptResult) => {
@@ -256,7 +283,7 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
 
       const run = await configure();
 
-      expect(run.code).toBe(1);
+      expect(run.code, why(run)).toBe(1);
       expect(run.stderr).toContain('[access_denied]');
       expect(run.stderr).toContain('run configure.sh again');
       expect(host.surfaceClosed()).toBe(true);
@@ -275,11 +302,9 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
 
       // The script alone, as `kill <pid>` does: connect is its child, not a target.
       process.kill(run.child.pid!, 'SIGTERM');
-      const stopped = Date.now();
-      const result = await run.done;
+      const result = await doneWithin(run, 10_000);
 
-      expect(result.code).toBe(130);
-      expect(Date.now() - stopped).toBeLessThan(10_000);
+      expect(result.code, why(result)).toBe(130);
       expect(host.surfaceClosed()).toBe(true);
       await until(() => mock.openBoxes === 0, 'connect to stop waiting on the box');
       expect(envValue('BEEPER_ACCESS_TOKEN')).toBeUndefined();
@@ -296,9 +321,22 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       process.kill(-run.child.pid!, 'SIGTERM');
       await until(() => closes() === 2, 'the close on the way out', run);
       process.kill(-run.child.pid!, 'SIGTERM');
-      const result = await run.done;
+      const result = await doneWithin(run, 10_000);
 
-      expect(result.code).toBe(130);
+      expect(result.code, why(result)).toBe(130);
+      expect(host.surfaceClosed()).toBe(true);
+    }, 90_000);
+
+    it('closes a sign-in screen left open even when it stops early', async () => {
+      managedBeeper();
+      host.exposeSurface();
+      // A checkout nobody built yet.
+      rmSync(join(install, 'dist'));
+
+      const run = await configure();
+
+      expect(run.code, why(run)).toBe(1);
+      expect(run.stderr).toContain('not built');
       expect(host.surfaceClosed()).toBe(true);
     }, 90_000);
 
@@ -329,7 +367,7 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
 
       const rerun = await configure();
 
-      expect(rerun.code).toBe(1);
+      expect(rerun.code, why(rerun)).toBe(1);
       expect(rerun.stderr).toContain('the Beeper sign-in surface is still exposed');
       expect(host.calls().slice(earlier).filter((c) => c.includes('claude-messenger-mcp'))).toEqual([]);
     }, 120_000);
@@ -340,7 +378,7 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
 
       const run = await configure([], { CLAUDE_MESSENGER_SERVE_TIMEOUT: '1' });
 
-      expect(run.code).toBe(1);
+      expect(run.code, why(run)).toBe(1);
       expect(run.stderr).toContain('https://login.tailscale.com/f/serve?node=nFAKE7');
       expect(host.surfaceClosed()).toBe(true);
       expect(mock.approvalRequests).toEqual([]);
@@ -371,6 +409,16 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expect(await listAccountsOverHttp()).toContain('whatsapp-1');
     }, 90_000);
 
+    it('publishes to the tailnet when sudo asks for a password first', async () => {
+      host.set('sudo-asks-password');
+
+      const run = await configure();
+
+      expect(run.code, why(run)).toBe(0);
+      expect(host.read('serve-443').trim()).toBe(String(mcpPort));
+      expect(run.stdout).toContain('URL:    https://box.example-tailnet.ts.net/mcp');
+    }, 90_000);
+
     it('never opens the sign-in screen for a Beeper it does not manage', async () => {
       const run = await configure();
 
@@ -380,21 +428,47 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expect(await listAccountsOverHttp()).toContain('whatsapp-1');
     }, 90_000);
 
-    it('completes a .env made by hand from .env.example', async () => {
+    it.each([
+      ['LF', '\n'],
+      ['CRLF', '\r\n'],
+    ])('completes a .env made by hand from .env.example, with %s line endings', async (_, eol) => {
       const example = readFileSync(join(REPO, '.env.example'), 'utf8');
-      writeFileSync(join(install, '.env'), example.replace(/^BEEPER_BASE_URL=.*$/m, `BEEPER_BASE_URL=${beeperUrl}`));
+      const filled = example.replace(/^BEEPER_BASE_URL=.*$/m, `BEEPER_BASE_URL=${beeperUrl}`);
+      expect(filled).not.toBe(example);
+      writeFileSync(join(install, '.env'), filled.replaceAll('\n', eol));
 
       const run = await configure();
 
       expect(run.code, why(run)).toBe(0);
-      const assignments = (name: string) => envText().split('\n').filter((l) => l.startsWith(`${name}=`));
+      const lines = envText().split(/\r?\n/);
+      const assignments = (name: string) => lines.filter((l) => l.startsWith(`${name}=`));
       expect(assignments('CLAUDE_MESSENGER_MCP_TOKEN')).toEqual([
         expect.stringMatching(/^CLAUDE_MESSENGER_MCP_TOKEN=[0-9a-f]{64}$/),
       ]);
       expect(assignments('BEEPER_ACCESS_TOKEN')).toEqual([`BEEPER_ACCESS_TOKEN=${[...mock.issuedTokens.keys()][0]}`]);
-      expect(envText()).toContain('# Copy to .env (never committed) and fill in.');
+      // Everything else in it, comments included, stays as written.
+      for (const line of filled.split('\n').filter((l) => !/^(BEEPER_ACCESS_TOKEN|CLAUDE_MESSENGER_MCP_TOKEN)=/.test(l))) {
+        expect(lines).toContain(line);
+      }
       expect(await listAccountsOverHttp()).toContain('whatsapp-1');
       expectNoSecrets(run);
+    }, 90_000);
+
+    it('keeps the token in a .env made by hand, adding what the service needs and making it owner-only', async () => {
+      // A token minted by hand in Beeper, in a file as an editor leaves it:
+      // readable by others, with no newline at the end.
+      mock.issuedTokens.set('minted-by-hand', { scope: 'read', revoked: false });
+      writeFileSync(join(install, '.env'), `BEEPER_BASE_URL=${beeperUrl}\nBEEPER_ACCESS_TOKEN=minted-by-hand`);
+      chmodSync(join(install, '.env'), 0o644);
+
+      const run = await configure();
+
+      expect(run.code, why(run)).toBe(0);
+      expect(mock.approvalRequests).toEqual([]);
+      expect(envValue('BEEPER_ACCESS_TOKEN')).toBe('minted-by-hand');
+      expect(envValue('CLAUDE_MESSENGER_MCP_TOKEN')).toMatch(/^[0-9a-f]{64}$/);
+      expect(statSync(join(install, '.env')).mode & 0o777).toBe(0o600);
+      expect(await listAccountsOverHttp()).toContain('whatsapp-1');
     }, 90_000);
 
     it('refuses to run as root, before changing anything', async () => {
@@ -403,7 +477,7 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
 
       const run = await configure();
 
-      expect(run.code).toBe(1);
+      expect(run.code, why(run)).toBe(1);
       expect(run.stderr).toContain('not root');
       expect(existsSync(join(install, '.env'))).toBe(false);
       expect(statSync(host.home).mode & 0o777).toBe(homeMode);
@@ -428,6 +502,7 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expect(mock.approvalRequests).toHaveLength(2);
       expect(envValue('BEEPER_ACCESS_TOKEN')).not.toBe(first);
       expect(reconnect.stdout).toContain('replaced an earlier token');
+      expect(reconnect.stdout).not.toContain("also set in this command's environment");
       expectNoSecrets(reconnect);
       // Only a service restarted onto the new token still answers once the old one is revoked.
       mock.issuedTokens.get(first!)!.revoked = true;
@@ -457,6 +532,19 @@ describe('the session-run install (subprocess, no terminal, fake host)', () => {
       expect(await listAccountsOverHttp()).toContain('whatsapp-1');
       expectNoSecrets(run);
     }, 120_000);
+
+    it('stops configure.sh, and its wait for approval, when only bootstrap is stopped', async () => {
+      mock.decide = () => 'no-answer';
+      const run = host.startDetached('bash', [bootstrap()], settings());
+      await until(() => mock.openBoxes === 1, 'the approval box to open', run);
+
+      // bootstrap alone, the script a session started.
+      process.kill(run.child.pid!, 'SIGTERM');
+      const result = await doneWithin(run, 10_000);
+
+      expect(result.code, why(result)).toBe(130);
+      await until(() => mock.openBoxes === 0, 'connect to stop waiting on the box');
+    }, 90_000);
 
     it("takes a Beeper with its Desktop API switched off as running, and waits for it to be switched on", async () => {
       mock.apiDisabled = true;

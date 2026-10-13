@@ -87,12 +87,13 @@ export interface ApprovalRequest {
  * sensitive actions" toggle ends up granting (omitted means as asked);
  * decline; or never answer, until Beeper closes the box itself.
  * `{ approve: false, error }` with another error stands for Beeper failing,
- * and an approval's `state` for Beeper answering some other request than
+ * `description` for the reason it gives (its `error_description`), and an
+ * approval's `state` for Beeper answering some other request than
  * the one asked (omitted means it echoes the request's own).
  */
 export type ApprovalDecision =
   | { approve: true; expiresInSeconds?: number; scopes?: string[]; state?: string }
-  | { approve: false; error?: string }
+  | { approve: false; error?: string; description?: string }
   | 'no-answer';
 
 interface RegisteredClient {
@@ -427,7 +428,13 @@ export class MockBeeperServer {
         if (closed) json(200, { error: 'server_error', state: request.state });
         return;
       }
-      if (!decision.approve) return json(200, { error: decision.error ?? 'access_denied', state: request.state });
+      if (!decision.approve) {
+        return json(200, {
+          error: decision.error ?? 'access_denied',
+          ...(decision.description !== undefined && { error_description: decision.description }),
+          state: request.state,
+        });
+      }
       const code = randomBytes(24).toString('base64url');
       this.codes.set(code, {
         clientId: client.clientId,

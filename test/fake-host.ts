@@ -149,7 +149,9 @@ esac
 // command gets a reset environment, so only leading VAR=value assignments
 // reach it (PATH stays, so it still finds the other shims). With the
 // \`sudo-needs-password\` flag it is a rule that wants a password, with no
-// terminal to ask on, as for a Claude session.
+// terminal to ask on, as for a Claude session. With \`sudo-asks-password\`
+// a person at a terminal types it when asked, and sudo then remembers it for
+// a while; until then, -n fails.
 const SUDO_SHIM = `#!/usr/bin/env bash
 S="$FAKE_HOST_STATE"
 echo "sudo $*" >> "$S/calls.log"
@@ -157,7 +159,11 @@ no_terminal() {
   echo "sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper" >&2
   exit 1
 }
-if [ "$*" = "-v" ]; then [ -e "$S/sudo-needs-password" ] && no_terminal; exit 0; fi
+if [ "$*" = "-v" ]; then
+  [ -e "$S/sudo-needs-password" ] && no_terminal
+  [ -e "$S/sudo-asks-password" ] && touch "$S/sudo-remembers"
+  exit 0
+fi
 asks=1
 if [ "\${1:-}" = "-n" ]; then asks=0; shift; fi
 assign=()
@@ -167,6 +173,10 @@ case " $* " in *" /opt"*) echo "fake sudo: a fake host has no /opt to install in
 if [ -e "$S/sudo-needs-password" ]; then
   [ "$asks" = 1 ] && no_terminal
   echo "sudo: a password is required" >&2; exit 1
+fi
+if [ -e "$S/sudo-asks-password" ] && [ ! -e "$S/sudo-remembers" ]; then
+  [ "$asks" = 1 ] || { echo "sudo: a password is required" >&2; exit 1; }
+  touch "$S/sudo-remembers"
 fi
 exec env -i PATH="$PATH" HOME="$HOME" FAKE_HOST_STATE="$S" FAKE_SUDO=1 "\${assign[@]}" "$@"
 `;

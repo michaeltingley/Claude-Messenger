@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { parseEnv } from 'node:util';
 import { z } from 'zod';
 
@@ -107,6 +107,10 @@ export async function saveAccessToken(file: string, token: string): Promise<{ re
     text = await readFile(target, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    // A link to nothing: renaming over it would replace the link itself.
+    if ((await lstat(file).catch(() => undefined))?.isSymbolicLink()) {
+      throw new Error(`${file} is a symlink to a file that does not exist; create that file, or remove the link. Nothing was saved.`);
+    }
   }
   const replaced = Boolean(parseEnv(text)[ACCESS_TOKEN_VAR]);
 

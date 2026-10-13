@@ -200,7 +200,9 @@ for anything else, use the surface script directly:
     `.env`, unreadable to other users.
 - One Beeper account per host.
 - **Only Beeper Cloud connections come along.** A network you connected
-  On-Device runs on each device separately, so the host doesn't get it. The
-  host's Beeper lists those under Settings → Accounts → "On Other Devices",
-  each with a Connect button: open the sign-in surface, press it, and sign
-  in to that network there.
+  On-Device runs on each device separately, so the host doesn't get it.
+  Either re-add it in Beeper as a Cloud connection, which then reaches every
+  device and runs nothing on the host, or set it up on the host itself: its
+  Beeper lists such networks under Settings → Accounts → "On Other
+  Devices", each with a Connect button, so open the sign-in surface, press
+  it, and sign in to that network there.

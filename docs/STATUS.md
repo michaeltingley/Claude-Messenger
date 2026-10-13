@@ -70,17 +70,16 @@ and `docs/HOSTING-OPTIONS.md`._
   Messages/Chat/Voice, and Matrix.
 - **2026-10-13, the VPS.** Beeper Desktop was signed in on the box and
   `connect` (built from #22) got a read-only token that never expires
-  through Beeper's own box. `doctor` passed with **9 accounts**, all Beeper
-  Cloud: Beeper, Discord, Facebook, Google Messages, Google Chat, Instagram,
-  LinkedIn, Signal, WhatsApp.
-  - **Google Voice and Telegram are missing** because they are Beeper
-    On-Device connections (Google Voice on four of the owner's devices,
-    Telegram on one phone). An on-device connection runs per device, so a
-    new device doesn't get it. The host's Beeper lists them under Settings →
-    Accounts → "On Other Devices", each with a Connect button that sets it
-    up on the host; that needs the owner's sign-in to that network on the
-    sign-in surface. The owner needs Google Voice there; the choice of how
-    is with him (see next actions).
+  through Beeper's own box. `doctor` passes with **11 accounts**, all
+  Beeper Cloud: Beeper, Discord, Facebook, Google Messages, Google Chat,
+  Google Voice, Instagram, LinkedIn, Signal, Telegram, WhatsApp.
+  - Google Voice and Telegram were missing at first: they were Beeper
+    On-Device connections on the owner's other devices, and an on-device
+    connection runs per device, so a new device doesn't get it. The owner
+    re-added both as Cloud connections the same night; each reached the host
+    within minutes and runs nothing there. His first try at Telegram set it
+    up on-device on his laptop instead, so check where a re-added network
+    lands.
 
 ## Decided (2026-10-12): Claude Messenger runs on the automation VPS
 
@@ -170,18 +169,7 @@ and `docs/HOSTING-OPTIONS.md`._
      given a longer timeout (at most 120): pass at least 65.
    - Decline any Beeper prompt that would add, move or re-connect a chat
      network, or sign out another device, unless the owner asked for it.
-3. **Google Voice on the host: the owner's call, asked 2026-10-13.** He
-   needs it there (see VERIFIED LIVE). The two ways:
-   - Press Connect next to Google Voice in the host's Beeper and have him
-     sign in to Google on the sign-in surface. The host becomes a fifth
-     device running it; his four keep theirs. Recommended.
-   - Move Google Voice to Beeper Cloud: remove it on all four devices and
-     re-add it once as Cloud. Beeper has no switch for this, and removing a
-     connection deletes its chats in Beeper.
-   - Telegram (on-device on one phone) is in the same spot; he hasn't said
-     whether he wants it on the host.
-   - Either way, measure memory again once it runs.
-4. **Memory after Beeper's first sync: measured 2026-10-13.** Signed in at
+3. **Memory after Beeper's first sync: measured 2026-10-13.** Signed in at
    02:11Z, settled by 02:25Z (Beeper's PSS flat within 4% for 9 minutes,
    CPU about 2%). Against the signed-out baseline at 00:04Z:
 
@@ -197,20 +185,21 @@ and `docs/HOSTING-OPTIONS.md`._
      cgroup), then settled.
    - "Used" fell only because that peak pushed about 730 MB of idle pages
      (the agent's Chrome, Claude sessions) into swap.
-   - Xvfb adds about 16 MB PSS. The MCP service isn't running yet, and an
-     on-device Google Voice would add its bridge on top.
+   - Xvfb adds about 16 MB PSS. The MCP service isn't running yet. Google
+     Voice and Telegram arrived later, as Cloud connections, which add no
+     bridge on the host.
    - Beeper's main process moves itself out of beeper-desktop.service into
      its own `app-Beeper-<pid>.scope`. Count that cgroup too.
-5. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
+4. **Remind the owner to upgrade to VPS-2 once setup is done.** The owner
    asked for this reminder, expecting 4 GB to be too tight for Beeper
    alongside the agent's Chrome and Claude sessions.
    - VPS-2 is 8 GB at $10/mo; OVH upgrades in place.
-   - Give the reminder with the numbers from step 4: Beeper settles at
+   - Give the reminder with the numbers from step 3: Beeper settles at
      about 0.66 GB, and the box keeps 1.9 GB available only by holding
      1.35 GB in swap.
-6. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
+5. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
-7. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
+6. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
    Orchestrator-started sessions on the VPS may make it unnecessary.
 
 ### Hosting history (kept short)
@@ -265,5 +254,6 @@ and `docs/HOSTING-OPTIONS.md`._
   - account signups (card, CAPTCHA, ID checks);
   - Beeper's recovery key, and its emailed code unless the owner lets Claude
     read it from his Gmail (he did on 2026-10-13);
-  - signing in to a network that Beeper runs on-device, such as Google
-    Voice.
+  - moving a network Beeper runs on-device to Beeper Cloud, in Beeper on
+    the owner's own devices (he did Google Voice and Telegram on
+    2026-10-13).
