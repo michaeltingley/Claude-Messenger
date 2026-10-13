@@ -108,8 +108,8 @@ and `docs/HOSTING-OPTIONS.md`._
   then the rest. It runs on the owner's Claude subscription (Claude Code
   signed in on the host), never an API key, and its model has no tools and
   can't be made to read a file or act. Design: `docs/ARCHITECTURE.md`
-  (Language model, Daily digest). How it is to run and reach the owner:
-  "Daily digest" below.
+  (Language model, Daily digest). How it runs each morning and reaches the
+  owner: "Daily digest" below.
 
 ## VERIFIED LIVE
 
@@ -153,6 +153,25 @@ and `docs/HOSTING-OPTIONS.md`._
   `send:false` / `markRead:false`; `digest --help` and `mentions --help` work.
   Neither the digest nor the mention listener runs yet — their threads
   schedule them.
+- **2026-10-13 23:05Z, the VPS — first digest.** Run by the thread's
+  Remote Control session from the install at 9ceacaa: exit 0, posted in the
+  thread. It covered 12 chats and 40 messages since the morning before and
+  said more chats had activity than a digest reads. Its model got none of
+  the subscription's claude.ai connectors and no MCP server (Claude Code's
+  debug log: `[claudeai-mcp] Disabled via env var`, no server named) and
+  left nothing in `~/.claude` or `/tmp`. Memory: 1357 MB available before,
+  1148 MB at the lowest during the run, swap steady at 454 MB.
+  - It read its limit of 40 chats, the most recently active, and only 12
+    of them had something to show in the window. Why is unconfirmed: the
+    box's safety check refused a count of messages per chat. Inferred, not
+    checked: Beeper's first sync after its sign-in on the box (02:12Z,
+    inside this window) marked chats active with nothing new to show.
+    Activity that never shows, such as hidden or deleted messages, would
+    do the same every day. If a later footnote again covers far fewer than
+    40 chats yet says more chats had activity than a digest reads, have
+    `ActivityCollector` read on until it holds its limit of chats with
+    something to show, within a bound on chats read, instead of stopping
+    at its limit of chats read.
 
 ## Daily digest (project thread "Daily message digest")
 
@@ -176,13 +195,25 @@ and `docs/HOSTING-OPTIONS.md`._
     lapsed sign-in fails at once (`Failed to authenticate. API Error: 401
     …`: sign in again with `claude`, then `/login`). A rate limit Claude
     Code retries for about three minutes first; the run gives up after ten.
-- **Delivery, being set up 2026-10-13:** each morning at 7:46 AM Pacific a
-  routine wakes the thread's session. It hands the thread's Remote Control
-  session on the VPS the morning's run, which pipes the command's output
-  through `gzip` and `base64` and sends that back with its SHA-256. The
-  thread's session checks the hash, decodes it and posts it in the thread.
-  The Remote Control session stays between mornings: stopping it would end
-  the owner's approval of it.
+- **Delivery, live since 2026-10-13:** each morning at 7:46 AM Pacific the
+  routine "Daily message digest" (`trig_01QEMFG4JEuAjwpTVFnuz78e`, cron
+  `CRON_TZ=America/Los_Angeles 46 7 * * *`) wakes the thread's session; its
+  stored prompt is the whole procedure, so change it there. It hands the
+  thread's Remote Control session on the VPS the morning's run, which pipes
+  the command's output through `gzip` and `base64` and sends that back with
+  its SHA-256. The thread's session checks the hash, decodes it and posts it
+  in the thread; when nothing comes back within 45 minutes, it says so
+  there. The Remote Control session stays between mornings: stopping it
+  would end the owner's approval of it.
+  - That session runs in auto mode, whose safety check weighs each command
+    against what the owner asked in that session, and the morning's
+    instructions come from another session, not from the owner. It let the
+    digest run on 2026-10-13 but refused two other commands that day, one
+    of them a count of messages per chat ("PII Data Handling"), and it
+    treats a refusal as final. A morning it refuses gets a one-line notice
+    in the thread instead of the digest. The fix is the owner's alone: a
+    permission rule allowing the digest's command, in that session's
+    Claude Code settings.
   - The session on the VPS has tools within reach of the token, so it never
     sees the digest as text, and a message can't steer it through the
     digest. The thread's session reads the digest to post it, so the words
@@ -333,9 +364,12 @@ owner, each send approved in the Claude chat.
    running at ~1.6 GB available with ~1.1 GB in swap, but the 2026-10-13
    reboot (item 6) cleared the swap (now ~1.7 GB available, 78 MB swap), so
    the pressure is off for now — 4 GB is still tight once the digest and
-   mention-listener land, so sizing up is worth doing before that. VPS-2 is
-   8 GB at $10/mo; OVH upgrades in place. **Ask before any purchase; card
-   entry is the owner's.** Awaiting his go; less pressing after the reboot.
+   mention-listener land, so sizing up is worth doing before that. The
+   digest's first run (2026-10-13 23:05Z) took about 200 MB for its few
+   minutes: 1357 MB available before, 1148 MB at the lowest, with swap
+   back up to 454 MB by then. VPS-2 is 8 GB at $10/mo; OVH upgrades in
+   place. **Ask before any purchase; card entry is the owner's.** Awaiting
+   his go; less pressing after the reboot.
 4. **Lock down public SSH** once tailnet SSH works. Close port 22 to the
    internet, or restrict it to the owner's IP.
 5. **Re-evaluate the session-channel relay** (`docs/SESSION-CHANNEL.md`).
@@ -372,11 +406,11 @@ owner, each send approved in the Claude chat.
    Each step runs only if the one before it worked, so a failed fetch can't
    reinstall the old unit and a failed `git show` can't empty the live one.
    It's a production change, so it waits for the owner's go.
-8. **Schedule the digest on the VPS** (thread "Daily message digest"). The
-   checkout is on `main` and built (9ceacaa, 2026-10-13 22:52Z — see VERIFIED
-   LIVE), so the deploy half is done. What remains, in that thread: run one
-   digest from a Remote Control session and post it in the thread, then create
-   the daily routine and record its id here. See "Daily digest" above.
+8. **Schedule the digest on the VPS — DONE 2026-10-13** (thread "Daily
+   message digest"). The checkout is on `main` and built (9ceacaa, 22:52Z);
+   the first digest ran there at 23:05Z and was posted in the thread; the
+   routine `trig_01QEMFG4JEuAjwpTVFnuz78e` runs it each morning at 7:46 AM
+   Pacific. See "Daily digest" above.
 
 ### Hosting history (kept short)
 
