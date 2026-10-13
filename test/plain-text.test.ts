@@ -33,6 +33,15 @@ describe('plainText (Beeper)', () => {
 
   it('breaks the line where an element ends one', () => {
     expect(plainText('<p>one</p><p>two</p>three<br/>four<ul><li>five</li></ul>')).toBe('one\n\ntwo\nthree\nfour\n\nfive');
+    expect(plainText('<details><summary>Plan</summary>Dinner at 8</details>')).toBe('Plan\nDinner at 8');
+  });
+
+  it("puts a table's caption and each of its rows on a line of their own, with the cells in a row apart", () => {
+    const table =
+      '<table><caption>Plan</caption><thead><tr><th>Day</th><th>Time</th></tr></thead>' +
+      '<tbody><tr><td>Fri</td><td>8pm</td></tr></tbody></table>';
+    const lines = plainText(table).split(/\n+/).map((line) => line.trim().split(/\s+/));
+    expect(lines).toEqual([['Plan'], ['Day', 'Time'], ['Fri', '8pm']]);
   });
 
   it('keeps the name in a pill, and only the text of a link, never where it points', () => {
@@ -56,6 +65,11 @@ describe('plainText (Beeper)', () => {
   it('shows an image as its alt text, as a custom emoji shows its name, and drops comments', () => {
     expect(plainText('nice <img data-mx-emoticon src="mxc://x/y" alt=":partyparrot:" height="32"> one')).toBe('nice :partyparrot: one');
     expect(plainText("<img src='mxc://x/y' alt='a &amp; b'><img src=\"mxc://x/z\">")).toBe('a & b');
+    expect(plainText('<IMG SRC="mxc://x/y" ALT=":wave:"> hi')).toBe(':wave: hi');
+    // One with no alt text is still something between the words either side.
+    expect(plainText('look<img src="mxc://x/y">here')).toBe('look here');
+    // Only an image shows its alt text, not a closing tag that names one.
+    expect(plainText('look</img alt="secret">here')).toBe('look here');
     expect(plainText('seen<!-- hidden from the chat -->, thanks')).toBe('seen, thanks');
   });
 

@@ -156,6 +156,22 @@ describe('mentions (subprocess integration)', { timeout: 60_000 }, () => {
     for (const m of mock.messages) expect(text).not.toContain(m.text!);
   });
 
+  it('reads a mention as the chat shows it, whatever markup runs through the words', async () => {
+    mock.messages = [
+      mine({ id: 'address', text: 'mail bob<b>@claude</b>.ai', timestamp: ago(5 * MINUTE) }),
+      mine({ id: 'longer-name', text: '@Claude<b>tte</b> is here', timestamp: ago(4 * MINUTE) }),
+      mine({ id: 'handle', text: '<b>@claude</b>_bot hi', timestamp: ago(3 * MINUTE) }),
+      mine({ id: 'path', text: 'x.com/<i>@claude</i>', timestamp: ago(2 * MINUTE) }),
+      mine({ id: 'partly-bold', text: '@<b>Claude</b> what is on today?', timestamp: ago(MINUTE) }),
+    ];
+    const cli = start(['--since', ago(10 * MINUTE)]);
+    // Oldest first, so by the time the last is printed, every other one was read.
+    await cli.until(() => expect(cli.printed().map((m) => m.id)).toEqual(['partly-bold']));
+    expect(cli.printed()[0]).toMatchObject({ text: '@Claude what is on today?' });
+    process.kill(cli.pid, 'SIGTERM');
+    expect(await cli.exited).toBe(0);
+  });
+
   it('starts from now unless told otherwise: a mention sent before it started is not printed', async () => {
     mock.messages = [mine({ id: 'earlier', text: '@Claude from before', timestamp: ago(MINUTE) })];
     const cli = start([]);
