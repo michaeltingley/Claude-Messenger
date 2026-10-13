@@ -4,7 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMcpServer } from '../src/mcp/server.js';
 import { GuardedMessenger } from '../src/policy/guarded.js';
 import { MemoryAuditLogger } from '../src/policy/audit.js';
-import { parsePolicy, PolicyEngine } from '../src/policy/policy.js';
+import { parsePolicy, PolicyEngine, type Policy } from '../src/policy/policy.js';
 import { BeeperMessenger } from '../src/providers/beeper/index.js';
 import { MockBeeperServer, wireChat, wireMessage } from './mock-beeper.js';
 
@@ -15,20 +15,34 @@ import { MockBeeperServer, wireChat, wireMessage } from './mock-beeper.js';
  */
 describe('full stack: MCP → policy → adapter → HTTP', () => {
   let mock: MockBeeperServer;
+  let baseUrl: string;
   let audit: MemoryAuditLogger;
   let client: Client;
 
-  const policy = () =>
+  const policy = ({ markRead = false } = {}) =>
     parsePolicy({
       version: 1,
-      capabilities: { read: true, send: true, markRead: false },
+      capabilities: { read: true, send: true, markRead },
       read: { accountAllowlist: '*', chatDenylist: ['!secret:beeper.com'] },
       send: { chatAllowlist: ['!chat1:beeper.com'], maxMessagesPerHour: 2, maxCharsPerMessage: 100 },
     });
 
+  /** An MCP client whose calls take the whole path, under `rules`. */
+  const connect = async (rules: Policy) => {
+    const messenger = new GuardedMessenger(
+      new BeeperMessenger({ accessToken: mock.token, baseUrl, maxRetries: 0 }),
+      new PolicyEngine(rules),
+      audit,
+    );
+    const connected = new Client({ name: 'test-client', version: '0.0.0' });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    await Promise.all([createMcpServer(messenger, '0.0.0-test').connect(st), connected.connect(ct)]);
+    return connected;
+  };
+
   beforeEach(async () => {
     mock = new MockBeeperServer();
-    const baseUrl = await mock.start();
+    baseUrl = await mock.start();
     mock.chats = [
       wireChat(),
       wireChat({ id: '!secret:beeper.com', title: 'Secret Chat' }),
@@ -39,14 +53,7 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     ];
 
     audit = new MemoryAuditLogger();
-    const messenger = new GuardedMessenger(
-      new BeeperMessenger({ accessToken: mock.token, baseUrl, maxRetries: 0 }),
-      new PolicyEngine(policy()),
-      audit,
-    );
-    client = new Client({ name: 'test-client', version: '0.0.0' });
-    const [ct, st] = InMemoryTransport.createLinkedPair();
-    await Promise.all([createMcpServer(messenger, '0.0.0-test').connect(st), client.connect(ct)]);
+    client = await connect(policy());
   });
 
   afterEach(async () => {
@@ -132,6 +139,17 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     const third = await send();
     expect(third.isError).toBe(true);
     expect(text(third)).toContain('send.maxMessagesPerHour');
+  });
+
+  it('mark_chat_read, where policy allows it, marks the chat read and says so', async () => {
+    const reader = await connect(policy({ markRead: true }));
+    const result = await reader.callTool({
+      name: 'mark_chat_read',
+      arguments: { chatId: '!chat1:beeper.com' },
+    });
+    expect(result.isError ?? false).toBe(false);
+    expect(JSON.parse(text(result))).toEqual({ ok: true });
+    expect(mock.requests.some((r) => r.method === 'POST' && r.path === '/v1/chats/!chat1:beeper.com/read')).toBe(true);
   });
 
   it('mark_chat_read is denied by this policy (capability off)', async () => {

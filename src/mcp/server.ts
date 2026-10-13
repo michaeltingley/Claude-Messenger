@@ -27,9 +27,15 @@ const withoutHidden = (key: string, value: unknown) => (HIDDEN.has(key) ? undefi
 export function createMcpServer(messenger: Messenger, version: string): McpServer {
   const server = new McpServer({ name: 'claude-messenger', version });
 
-  const asResult = (data: unknown) => ({
-    content: [{ type: 'text' as const, text: JSON.stringify(data, withoutHidden, 2) }],
-  });
+  /**
+   * A call that returns nothing, as marking a chat read does, reports
+   * `{ ok: true }`: JSON has no undefined, and a result without text is one
+   * the client rejects, though the call already happened.
+   */
+  const asResult = (data: unknown) => {
+    const shown = data === undefined ? { ok: true } : data;
+    return { content: [{ type: 'text' as const, text: JSON.stringify(shown, withoutHidden, 2) }] };
+  };
 
   const asError = (err: unknown) => {
     const message =
