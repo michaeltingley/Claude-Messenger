@@ -152,7 +152,9 @@ describe('BeeperAccessRequester (HTTP integration)', () => {
         .catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(AccessMismatchError);
-      const [[token, issued]] = [...mock.issuedTokens.entries()];
+      const tokens = [...mock.issuedTokens.entries()];
+      expect(tokens).toHaveLength(1);
+      const [token, issued] = tokens[0]!;
       expect(issued).toEqual({ scope: 'read write', revoked: true });
       expect((error as Error).message).not.toContain(token);
       expect((error as Error).message).toContain('It was revoked, and nothing was saved.');

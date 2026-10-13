@@ -118,7 +118,8 @@ built for hypothetical futures.
 
 CI runs `npm ci` → `typecheck` → `test` → `build` → CLI smoke test. Run
 `npm run typecheck && npm test` locally before pushing; don't outsource basic
-verification to CI.
+verification to CI. `typecheck` covers `test/` as well as `src/`: vitest
+strips types without checking them, so nothing else would.
 
 - Secrets live in `.env` (gitignored) or the environment. Never logged, never
   committed. The Beeper token is password-equivalent.
