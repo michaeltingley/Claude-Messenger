@@ -131,16 +131,20 @@ describe('BeeperMessenger (HTTP integration)', () => {
     expect(page.items[0]!.isFromMe).toBe(true);
   });
 
-  it('searchMessages asks Beeper for no more than the 20 a page holds, and hands back a cursor to the rest', async () => {
+  it('searchMessages asks Beeper for no more than the 20 a page holds, newest first, and hands back a cursor to the older rest', async () => {
     mock.messages = Array.from({ length: 30 }, (_, i) =>
       wireMessage({ id: `m${i}`, text: 'needle in the haystack', timestamp: new Date(Date.UTC(2026, 9, 1, 0, i)).toISOString() }),
     );
+    /** m<from> down to m<to>: newest first. */
+    const ids = (from: number, to: number) => Array.from({ length: from - to + 1 }, (_, k) => `m${from - k}`);
     const page = await messenger.searchMessages({ query: 'needle', limit: 50 });
-    expect(page.items).toHaveLength(20);
+    expect(page.items.map((m) => m.id)).toEqual(ids(29, 10));
     expect(page.hasMore).toBe(true);
     const rest = await messenger.searchMessages({ query: 'needle', limit: 50, cursor: page.nextCursor });
-    expect(rest.items).toHaveLength(10);
-    expect(new Set([...page.items, ...rest.items].map((m) => m.id)).size).toBe(30);
+    expect(rest.items.map((m) => m.id)).toEqual(ids(9, 0));
+    expect(rest.hasMore).toBe(false);
+    const limits = mock.requests.filter((r) => r.path === '/v1/messages/search').map((r) => r.query.get('limit'));
+    expect(limits).toEqual(['20', '20']);
   });
 
   it('sendMessage POSTs text and returns the pending ID', async () => {

@@ -124,7 +124,8 @@ export function createMcpServer(messenger: Messenger, version: string): McpServe
     {
       title: 'Search messages',
       description:
-        'Word search across chats (literal words, any order — not semantic). Filter by chat, account, date range, or media type.',
+        'Word search across chats (literal words, any order — not semantic), newest first. Filter by chat, account, date range, or media type. ' +
+        'A page can hold fewer than limit while hasMore is true: paginate with cursor.',
       inputSchema: {
         query: z.string().optional(),
         chatIds: z.array(z.string()).optional(),
@@ -134,7 +135,7 @@ export function createMcpServer(messenger: Messenger, version: string): McpServe
         dateBefore: z.string().optional().describe('ISO 8601, strictly before'),
         mediaTypes: z.array(z.enum(['any', 'video', 'image', 'link', 'file'])).optional(),
         limit: z.number().int().min(1).max(50).optional(),
-        cursor: z.string().optional(),
+        cursor: z.string().optional().describe('nextCursor from a previous page'),
       },
     },
     (args) => run(() => messenger.searchMessages(args)),

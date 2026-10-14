@@ -100,6 +100,23 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     }
   });
 
+  it('search_messages pages newest first, and a page the policy thins still hands Claude the cursor to the rest', async () => {
+    mock.messages = [
+      wireMessage({ id: 'oldest', text: 'hello one', timestamp: '2026-07-01T00:00:00.000Z' }),
+      wireMessage({ id: 'newest', chatID: '!secret:beeper.com', text: 'hello two', timestamp: '2026-07-03T00:00:00.000Z' }),
+      wireMessage({ id: 'middle', text: 'hello three', timestamp: '2026-07-02T00:00:00.000Z' }),
+    ];
+    const search = async (args: Record<string, unknown>) =>
+      JSON.parse(text(await client.callTool({ name: 'search_messages', arguments: { query: 'hello', ...args } })));
+
+    const first = await search({ limit: 2 });
+    expect(first.items.map((m: { id: string }) => m.id)).toEqual(['middle']);
+    expect(first.hasMore).toBe(true);
+    const rest = await search({ limit: 2, cursor: first.nextCursor });
+    expect(rest.items.map((m: { id: string }) => m.id)).toEqual(['oldest']);
+    expect(rest.hasMore).toBe(false);
+  });
+
   it('allowlisted send reaches the wire and is audited with its text', async () => {
     const result = await client.callTool({
       name: 'send_message',

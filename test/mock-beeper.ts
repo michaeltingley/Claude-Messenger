@@ -41,6 +41,14 @@ export interface WireMessage {
   reactions?: Array<{ id: string; participantID: string; reactionKey: string }>;
 }
 
+/** One page of a message search, as the API answers it. */
+export interface MessageSearchPage {
+  items: WireMessage[];
+  hasMore: boolean;
+  oldestCursor: string | null;
+  newestCursor: string | null;
+}
+
 export interface RecordedRequest {
   method: string;
   path: string;
@@ -199,6 +207,12 @@ export class MockBeeperServer {
    * chat to the top.
    */
   onChatSearch: (() => void) | undefined;
+  /**
+   * Reshapes each message search's answer, for answers the reference's types
+   * allow but this mock doesn't give on its own, such as more to come with
+   * no cursor to it.
+   */
+  shapeMessageSearch: ((page: MessageSearchPage) => MessageSearchPage) | undefined;
 
   private clients = new Map<string, RegisteredClient>();
   private codes = new Map<string, PendingCode>();
@@ -401,12 +415,13 @@ export class MockBeeperServer {
     const offset = Number(params.get('cursor')?.replace(/^older-than-/, '') ?? 0);
     const page = newestFirst.slice(offset, offset + limit);
     const next = offset + page.length;
-    return send(200, {
+    const answer: MessageSearchPage = {
       items: [...page].reverse(),
       hasMore: next < newestFirst.length,
       oldestCursor: page.length ? `older-than-${next}` : null,
       newestCursor: null,
-    });
+    };
+    return send(200, this.shapeMessageSearch?.(answer) ?? answer);
   }
 
   /**

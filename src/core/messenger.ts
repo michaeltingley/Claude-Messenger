@@ -35,7 +35,7 @@ export interface Messenger {
   /** Messages in one chat, newest first. */
   listMessages(chatId: string, query?: MessageListQuery): Promise<Page<Message>>;
 
-  /** Word search across chats/accounts. */
+  /** Word search across chats/accounts, newest first: older matches are on later pages. */
   searchMessages(query: MessageSearchQuery): Promise<Page<Message>>;
 
   /**

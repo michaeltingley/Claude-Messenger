@@ -101,24 +101,25 @@ export class BeeperMessenger implements Messenger {
   }
 
   searchMessages(query: MessageSearchQuery): Promise<Page<Message>> {
-    return this.wrap(async () =>
-      toPage(
-        await this.client.messages.search({
-          query: query.query,
-          chatIDs: query.chatIds,
-          accountIDs: query.accountIds,
-          chatType: query.chatType,
-          dateAfter: query.dateAfter,
-          dateBefore: query.dateBefore,
-          mediaTypes: query.mediaTypes,
-          includeMuted: query.includeMuted,
-          // A larger limit gets fewer, with a cursor to the rest, as paging allows.
-          limit: Math.min(query.limit ?? SEARCH_PAGE_LIMIT, SEARCH_PAGE_LIMIT),
-          cursor: query.cursor,
-        }),
-        toMessage,
-      ),
-    );
+    return this.wrap(async () => {
+      const { items, hasMore, oldestCursor } = await this.client.messages.search({
+        query: query.query,
+        chatIDs: query.chatIds,
+        accountIDs: query.accountIds,
+        chatType: query.chatType,
+        dateAfter: query.dateAfter,
+        dateBefore: query.dateBefore,
+        mediaTypes: query.mediaTypes,
+        includeMuted: query.includeMuted,
+        // A larger limit gets fewer, with a cursor to the rest, as paging allows.
+        limit: Math.min(query.limit ?? SEARCH_PAGE_LIMIT, SEARCH_PAGE_LIMIT),
+        cursor: query.cursor,
+      });
+      // Pages run newest first, but within one the reference's example puts
+      // the newest last. Pin the domain contract, newest first within a page
+      // too, as listMessages does.
+      return toPage({ items: [...items].sort(newestFirst), hasMore, oldestCursor }, toMessage);
+    });
   }
 
   /**
