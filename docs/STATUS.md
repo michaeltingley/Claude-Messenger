@@ -422,8 +422,9 @@ owner, each send approved in the Claude chat.
    checkout on `main`: `deploy/assistant-beeper.sh`. The owner's go is the
    account's ("Create it", 2026-10-14). CI proves the unit's sandbox with a
    stand-in server; on the box, check that the real one runs under it (it
-   answers on 127.0.0.1:23374, can't bind 23373, can't see `/home`), and
-   measure its memory beside Beeper Desktop.
+   answers on 127.0.0.1:23374 and can't see `/home`, and the install gave no
+   BPF warning, so it can't bind 23373), and measure its memory beside
+   Beeper Desktop.
 
 ### Hosting history (kept short)
 

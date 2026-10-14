@@ -11,13 +11,14 @@ import { unusedPort } from './ports.js';
  * The sandbox of the assistant's own Beeper runtime, proven under real
  * systemd. deploy/systemd/assistant-beeper.service promises that the server
  * runs as a user of its own, sees nothing of the home directories or of the
- * owner's processes, may listen on its own port and on no other (never the
- * owner's Beeper Desktop's), and keeps the account's data where only it can
- * read it. The unit file reads the same whether systemd keeps those promises
- * or not, so only a probe from inside can tell. This runs the real
- * deploy/assistant-beeper.sh with the real sudo and systemd, installing a
- * stand-in server from a stand-in feed (test/beeper-feed.ts); the stand-in
- * answers, from inside the running unit, what it can reach.
+ * owner's processes, keeps the account's data where only it can read it, and,
+ * where systemd was built with BPF, may listen on its own port and on no
+ * other (never the owner's Beeper Desktop's). The unit file reads the same
+ * whether systemd keeps those promises or not, so only a probe from inside
+ * can tell. This runs the real deploy/assistant-beeper.sh with the real sudo
+ * and systemd, installing a stand-in server from a stand-in feed
+ * (test/beeper-feed.ts); the stand-in answers, from inside the running unit,
+ * what it can reach.
  *
  * It installs into /opt and /etc/systemd/system, so it runs only on GitHub's
  * runners, which give every run a fresh VM: never on a real host, even one
@@ -64,6 +65,13 @@ describe.runIf(onRunner)('the assistant’s Beeper runtime sandbox (real systemd
   let feedUrl: string;
   let port: number;
   let config: string | undefined;
+  // SocketBindAllow/Deny, which hold the server to its port, need a systemd
+  // built with its BPF framework. CI runs one without (24.04) and one with
+  // (26.04); the script warns on the first.
+  let systemd = '';
+  let portLockApplies = false;
+  /** What the install printed. */
+  let installed = '';
   // What the server must not see, though the owner can.
   const homeMarker = join(homedir(), `assistant-sandbox-marker-${process.pid}`);
   const tmpMarker = join(tmpdir(), `assistant-sandbox-marker-${process.pid}`);
@@ -97,7 +105,10 @@ describe.runIf(onRunner)('the assistant’s Beeper runtime sandbox (real systemd
     port = await unusedPort();
     config = join(mkdtempSync(join(tmpdir(), 'assistant-config-')), 'assistant');
     for (const marker of [homeMarker, tmpMarker]) writeFileSync(marker, '');
-    await install();
+    systemd = spawnSync('systemctl', ['--version'], { encoding: 'utf8' }).stdout;
+    portLockApplies = /\+BPF_FRAMEWORK\b/.test(systemd);
+    const result = await install();
+    installed = result.stdout + result.stderr;
   }, 120_000);
 
   afterAll(async () => {
@@ -144,16 +155,30 @@ describe.runIf(onRunner)('the assistant’s Beeper runtime sandbox (real systemd
     expect((await inside('create', { path })).error).toBe('EROFS');
   });
 
-  it('may listen on its own port and on no other, the owner’s Beeper Desktop’s least of all', async () => {
+  it('may listen on its own port and, where systemd was built with BPF, on no other; elsewhere the install says so', async () => {
     const elsewhere = await unusedPort();
     // Free outside, so a refusal inside is the sandbox's.
-    await new Promise<void>((resolve, reject) => {
-      const server = createServer().once('error', reject);
-      server.listen(elsewhere, '127.0.0.1', () => server.close(() => resolve()));
-    });
+    for (const free of [OWNER_BEEPER_PORT, elsewhere]) {
+      await new Promise<void>((resolve, reject) => {
+        const server = createServer().once('error', reject);
+        server.listen(free, '127.0.0.1', () => server.close(() => resolve()));
+      });
+    }
+    const version = systemd.split('\n')[0];
 
-    expect(await inside('listen', { port: String(OWNER_BEEPER_PORT) })).toEqual({ error: 'EPERM' });
-    expect(await inside('listen', { port: String(elsewhere) })).toEqual({ error: 'EPERM' });
+    const owners = await inside('listen', { port: String(OWNER_BEEPER_PORT) });
+    const other = await inside('listen', { port: String(elsewhere) });
+
+    if (portLockApplies) {
+      expect(owners, `${version}, built with BPF, should refuse the owner's port`).toEqual({ error: 'EPERM' });
+      expect(other, `${version}, built with BPF, should refuse any other port`).toEqual({ error: 'EPERM' });
+      expect(installed).not.toContain('cannot hold Beeper Server to its own port');
+    } else {
+      // The gap the script warns of, pinned down so the warning stays true.
+      expect(owners, `${version}, built without BPF, is expected not to hold the server to its port`).toEqual({ ok: true });
+      expect(other).toEqual({ ok: true });
+      expect(installed).toContain('cannot hold Beeper Server to its own port');
+    }
     // Allowed, and taken: by the server itself.
     expect(await inside('listen', { port: String(port) })).toEqual({ error: 'EADDRINUSE' });
   });

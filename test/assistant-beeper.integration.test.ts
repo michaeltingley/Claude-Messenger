@@ -150,6 +150,28 @@ describe('deploy/assistant-beeper.sh (subprocess, no terminal, fake host)', { ti
       expect(statSync(envFile()).mode & 0o777).toBe(0o600);
       expect(statSync(configDir()).mode & 0o777).toBe(0o700);
     });
+
+    it('warns that the server is not held to its port on a host whose systemd lacks BPF, and installs anyway', async () => {
+      host.set('systemd-without-bpf');
+
+      const result = await run();
+
+      expect(result.code, why(result)).toBe(0);
+      // Named, with the port it could take, so the gap does not pass unnoticed.
+      expect(result.stdout).toContain('cannot hold Beeper Server to its own port');
+      expect(result.stdout).toContain("23373 too while the owner's Beeper Desktop is not running");
+      // Everything else still happened: the unit is installed, enabled and serving.
+      expect(host.has(`system/enabled/${UNIT}`)).toBe(true);
+      expect(await serving()).toBe('4.3.176');
+    });
+
+    it('says nothing of the port where systemd can hold the server to it', async () => {
+      const result = await run();
+
+      expect(result.code, why(result)).toBe(0);
+      expect(result.stdout + result.stderr).not.toContain('BPF');
+      expect(result.stdout + result.stderr).not.toContain('cannot hold');
+    });
   });
 
   describe('a run on an installed runtime', () => {

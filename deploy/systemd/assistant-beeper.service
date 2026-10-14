@@ -13,8 +13,7 @@
 # A user of its own, not the owner: the owner's home holds their Beeper
 # Desktop's data (their account's keys, history and login token), and nothing
 # of the assistant's account belongs there. So this runtime can't read the
-# owner's home or take the owner's Beeper port, and only it can read its own
-# account's data.
+# owner's home, and only it can read its own account's data.
 [Unit]
 Description=Beeper Server for the assistant's own Beeper account (Client API on 127.0.0.1:__PORT__)
 
@@ -58,7 +57,9 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 # It may listen on its own port and on no other: never the owner's Beeper
 # Desktop's (23373), whatever its own settings say. Connecting out is not
-# binding, so syncing with Beeper is unaffected.
+# binding, so syncing with Beeper is unaffected. These two need a systemd
+# built with its BPF framework, as Ubuntu 26.04's is; one without it, like
+# 24.04's, ignores them, and deploy/assistant-beeper.sh warns of that.
 SocketBindAllow=tcp:__PORT__
 SocketBindDeny=any
 # A backstop on a host it shares with the owner's Beeper Desktop. Signed out,

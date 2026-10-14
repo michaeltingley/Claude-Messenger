@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 727 tests / 37 files.
+- `npm test` must be green before any push. Currently 729 tests / 37 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -106,8 +106,10 @@ built for hypothetical futures.
   assistant's Beeper runtime with real sudo and systemd, a stand-in for
   Beeper Server in it, and has the stand-in probe its sandbox from inside:
   its user, the home directories, the owner's processes, which ports it may
-  bind, and who can read its data. That the real server runs under the
-  sandbox, only a host shows.
+  bind, and who can read its data. The unit holds the server to its own port
+  only where systemd was built with BPF, as 26.04's was and 24.04's wasn't;
+  on 24.04 the test asserts the port open and the install's warning given.
+  That the real server runs under the sandbox, only a host shows.
   `test/claude-code-binary.integration.test.ts` runs the installed Claude
   Code, as the digest's model runs it, against a stand-in Anthropic API,
   and proves a message's @-mention can't make it read a file, the host's

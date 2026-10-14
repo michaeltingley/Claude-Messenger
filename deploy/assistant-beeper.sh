@@ -202,6 +202,15 @@ else
   ok "Beeper Server ${VERSION} installed in ${SERVER%/*}"
 fi
 
+# SocketBindAllow and SocketBindDeny in the unit, which hold the server to its
+# own port, need a systemd built with its BPF framework. One built without it,
+# like Ubuntu 24.04's, quietly starts the unit without them; Ubuntu 26.04's has
+# it. Say so, rather than let the gap pass unnoticed.
+case "$(systemctl --version)" in
+  *+BPF_FRAMEWORK*) ;;
+  *) warn "this host's systemd was built without BPF, so it cannot hold Beeper Server to its own port: the server could listen on other ports, ${OWNER_PORT} too while the owner's Beeper Desktop is not running. The rest of its sandbox applies. Ubuntu 26.04's systemd has BPF; 24.04's does not." ;;
+esac
+
 unit_text="$(sed "s|__PORT__|${PORT}|g" "$UNIT_FILE")"
 # `systemctl cat` prints the installed file after a line naming it.
 if [ "$(systemctl cat "$UNIT" 2>/dev/null | tail -n +2)" != "$unit_text" ]; then

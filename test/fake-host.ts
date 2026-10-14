@@ -88,12 +88,17 @@ esac
 const SYSTEMCTL_SHIM = `#!/usr/bin/env bash
 S="$FAKE_HOST_STATE"
 echo "systemctl $*" >> "$S/calls.log"
-# The host's systemd version, as configure.sh reads it to decide whether the
-# sandbox can get PrivatePIDs. A fresh runner is new enough (259, like the
-# VPS); the \`systemd-version\` flag stands in for an older host.
+# The host's systemd, as the scripts read it: its version, which decides
+# whether configure.sh's sandbox can get PrivatePIDs, and its build features,
+# where +BPF_FRAMEWORK decides whether assistant-beeper.sh's unit can be held
+# to its port. Unless told otherwise it is the VPS's, 259 built with BPF; the
+# \`systemd-version\` and \`systemd-without-bpf\` flags stand in for an older host.
 if [ "\${1:-}" = "--version" ]; then
   v="$(cat "$S/systemd-version" 2>/dev/null || echo 259)"
+  bpf=+
+  [ ! -e "$S/systemd-without-bpf" ] || bpf=-
   echo "systemd $v ($v.4-1ubuntu1)"
+  echo "+PAM +AUDIT +SELINUX +APPARMOR +SECCOMP +OPENSSL +ACL +CURL +KMOD +LIBCRYPTSETUP +PCRE2 +TPM2 +ZSTD \${bpf}BPF_FRAMEWORK -XKBCOMMON +SYSVINIT"
   exit 0
 fi
 if [ "\${1:-}" = "--user" ]; then
