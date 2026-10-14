@@ -128,13 +128,15 @@ export class FakeMessenger implements Messenger {
     return this.page(items, query?.cursor);
   }
 
+  /** Newest first, as the port promises; past `limit` or `pageSize`, older matches are on later pages. */
   async searchMessages(query: MessageSearchQuery): Promise<Page<Message>> {
     let items = this.messages;
     if (query.query) {
       const q = query.query.toLowerCase();
       items = items.filter((m) => m.text?.toLowerCase().includes(q));
     }
-    return { items, hasMore: false };
+    const newestFirst = [...items].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+    return this.page(newestFirst, query.cursor, query.limit);
   }
 
   /** Catches up on matching messages already here, oldest first, then follows arrive(). */

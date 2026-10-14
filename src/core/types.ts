@@ -170,6 +170,7 @@ export interface MessageSearchQuery {
   dateBefore?: string;
   mediaTypes?: Array<'any' | 'video' | 'image' | 'link' | 'file'>;
   includeMuted?: boolean;
+  /** The most to return. A page may hold fewer while more remain, with `nextCursor` to the rest. */
   limit?: number;
   cursor?: string;
 }

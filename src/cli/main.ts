@@ -161,24 +161,37 @@ program
     console.log(JSON.stringify(await messenger.listAccounts(), null, 2));
   });
 
+/**
+ * What a listing prints when more remain: the run that picks up where it
+ * stopped. The cursor is the provider's own and may hold anything, so it is
+ * quoted to paste into a shell as it is. Without one, the rest can't be
+ * asked for, but they are there.
+ */
+const moreAvailable = (cursor: string | undefined) =>
+  cursor === undefined
+    ? '\n(more available, with no cursor to get them)'
+    : `\n(more available — run again with --cursor '${cursor.replaceAll("'", `'\\''`)}')`;
+
 program
   .command('chats')
   .description('Search or list chats')
   .option('-q, --query <text>', 'search titles/participants')
   .option('-n, --limit <n>', 'max results (1-50)', parseLimit, 10)
   .option('--unread', 'unread only')
-  .action(async (opts: { query?: string; limit: number; unread?: boolean }) => {
+  .option('--cursor <cursor>', 'pick up where an earlier run said more were available')
+  .action(async (opts: { query?: string; limit: number; unread?: boolean; cursor?: string }) => {
     const { messenger } = await app();
     const page = await messenger.searchChats({
       query: opts.query,
       unreadOnly: opts.unread,
       limit: opts.limit,
+      cursor: opts.cursor,
     });
     for (const c of page.items) {
       const unread = c.unreadCount > 0 ? `  [${c.unreadCount} unread]` : '';
       console.log(`${c.id}\n    ${c.network} · ${c.type} · ${c.title}${unread}`);
     }
-    if (page.hasMore) console.log(`\n(more available — cursor: ${page.nextCursor})`);
+    if (page.hasMore) console.log(moreAvailable(page.nextCursor));
   });
 
 program
@@ -194,17 +207,37 @@ program
     }
   });
 
+/**
+ * The most pages `search` reads to fill its limit. A page can hold fewer
+ * than asked for while more remain: a provider's pages have a size of their
+ * own (Beeper's hold 20), and policy hides the matches in chats it denies.
+ * So a search goes on to the next page, but not through every match a
+ * policy hides.
+ */
+const SEARCH_MAX_PAGES = 10;
+
 program
   .command('search <query>')
-  .description('Word search across all messages')
+  .description('Word search across all messages, newest first')
   .option('-n, --limit <n>', 'max results (1-50)', parseLimit, 10)
-  .action(async (query: string, opts: { limit: number }) => {
+  .option('--cursor <cursor>', 'pick up where an earlier run said more were available')
+  .action(async (query: string, opts: { limit: number; cursor?: string }) => {
     const { messenger } = await app();
-    const page = await messenger.searchMessages({ query, limit: opts.limit });
-    for (const m of page.items) {
+    const found: Message[] = [];
+    let cursor = opts.cursor;
+    let more = false;
+    for (let pages = 0; pages < SEARCH_MAX_PAGES && found.length < opts.limit; pages++) {
+      const page = await messenger.searchMessages({ query, limit: opts.limit - found.length, cursor });
+      found.push(...page.items);
+      more = page.hasMore;
+      cursor = page.nextCursor;
+      if (!more || cursor === undefined) break;
+    }
+    for (const m of found) {
       const who = m.isFromMe ? 'me' : (m.senderName ?? m.senderId);
       console.log(`[${m.timestamp}] (${m.chatId}) ${who}: ${m.text}`);
     }
+    if (more) console.log(moreAvailable(cursor));
   });
 
 program
