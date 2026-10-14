@@ -6,7 +6,7 @@ import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
 import { createAccessRequester, createAccountSignup, createApp, createLanguageModel, DEFAULT_LANGUAGE_MODEL } from '../app.js';
 import { ActivityCollector } from '../assistant/digest/activity.js';
 import { dayBefore, DigestWriter, isDigestWindow, MAX_DIGEST_DAYS } from '../assistant/digest/digest.js';
-import { hostTimeZone, isTimeZone } from '../assistant/digest/time.js';
+import { hostTimeZone, isTimeZone } from '../assistant/text/time.js';
 import { watchMentions } from '../assistant/mentions.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
 import type { AccountSignup } from '../core/signup.js';

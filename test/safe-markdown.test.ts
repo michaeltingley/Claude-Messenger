@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeMarkdown } from '../src/assistant/digest/safe-markdown.js';
+import { safeMarkdown } from '../src/assistant/text/safe-markdown.js';
 
 /**
  * What the owner is shown of the model's words. Every case is a way a link,
