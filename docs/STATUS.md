@@ -200,6 +200,21 @@ and `docs/HOSTING-OPTIONS.md`._
     signed in across it (`/v1/app/setup` = 401 before and after; ~192 MB,
     active). The owner's Beeper (23373, still 401) and the MCP (read-only, 11
     accounts) untouched; host after: 2180 MB available, swap 1204 MB, disk 31%.
+  - **Updated to `main` 864ec20 on 2026-10-14 (deploy 6)** for #46–#51 (the
+    signup wait-through, the digest's text-module move, and the @Claude
+    responder — a sandboxed service with its own Claude Code token). Clean
+    fast-forward from 70ef610 at 14:31Z (well clear of the 14:46Z digest
+    window), `npm ci` (same 148, lockfile untouched), rebuild,
+    `claude-messenger-mcp` restarted (0.08s, healthz ok). Verified read-only
+    FIRST: no `package.json`/lock, `.env` or `src/mcp` change; the `src/policy`
+    change is additive (a new `startChat` capability, default off). doctor:
+    read true, **send false, markRead false, startChat false**, policy from
+    `policy.json`, 11 accounts. The responder is deployed as CODE ONLY — its
+    unit is not installed, not enabled, not started, and `deploy/responder.sh`
+    was not run (it waits for the owner's go; see "@Claude assistant" item 3).
+    The owner's Beeper (23373, 401), the signed-in assistant runtime (23374,
+    401) and feed-trial (active) were untouched; host after: 1726 MB
+    available, swap 1000 MB, disk 31%.
 - **2026-10-13 23:05Z, the VPS — first digest.** Run by the thread's
   Remote Control session from the install at 9ceacaa: exit 0, posted in the
   thread. It covered 12 chats and 40 messages since the morning before and
@@ -222,7 +237,7 @@ and `docs/HOSTING-OPTIONS.md`._
 
 ## Daily digest (project thread "Daily message digest")
 
-- **On the VPS at `main` (70ef610) since 2026-10-13** (see VERIFIED
+- **On the VPS at `main` (864ec20) since 2026-10-13** (see VERIFIED
   LIVE). With Claude Code signed in to the owner's Max plan, each morning's
   run is:
   `cd ~/claude-messenger && node dist/cli/main.js digest --since "$(TZ=America/Los_Angeles date -d 'yesterday 07:46' -Iseconds)" --time-zone America/Los_Angeles`.
