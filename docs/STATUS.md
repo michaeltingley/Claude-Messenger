@@ -175,6 +175,17 @@ and `docs/HOSTING-OPTIONS.md`._
     the install succeeded but the server won't start under its sandbox (see
     NEXT ACTION 9); the owner's Beeper Desktop (23373) and the MCP were
     untouched.
+  - **Updated to `main` 48dffbc on 2026-10-14 (deploy 4)** for the #43
+    sandbox fix (also #41, the assistant's `signup` CLI command — a
+    non-sending, assistant-endpoint-only path that refuses a signed-in
+    endpoint; and #42, docs). Clean fast-forward from b146886, `npm ci` (same
+    148, lockfile untouched), rebuild, `claude-messenger-mcp` restarted; no
+    `src/mcp`, `src/policy`, `.env` or dependency change. `doctor` green, 11
+    accounts, `send:false`. This time `deploy/assistant-beeper.sh` WORKED:
+    Beeper Server 4.3.176 starts under the sandbox and is up, signed out, on
+    127.0.0.1:23374 (zero `tar` errors, ~178 MB, NRestarts=0). `--reset` still
+    fails, on a separate stop/clean bug (NEXT ACTION 9); the owner's Beeper
+    (23373) and the MCP stayed untouched.
 - **2026-10-13 23:05Z, the VPS — first digest.** Run by the thread's
   Remote Control session from the install at 9ceacaa: exit 0, posted in the
   thread. It covered 12 chats and 40 messages since the morning before and
@@ -197,7 +208,7 @@ and `docs/HOSTING-OPTIONS.md`._
 
 ## Daily digest (project thread "Daily message digest")
 
-- **On the VPS at `main` (b146886) since 2026-10-13** (see VERIFIED
+- **On the VPS at `main` (48dffbc) since 2026-10-13** (see VERIFIED
   LIVE). With Claude Code signed in to the owner's Max plan, each morning's
   run is:
   `cd ~/claude-messenger && node dist/cli/main.js digest --since "$(TZ=America/Los_Angeles date -d 'yesterday 07:46' -Iseconds)" --time-zone America/Los_Angeles`.
@@ -438,35 +449,30 @@ owner, each send approved in the Claude chat.
    the first digest ran there at 23:05Z and was posted in the thread; the
    routine `trig_01QEMFG4JEuAjwpTVFnuz78e` runs it each morning at 7:46 AM
    Pacific. See "Daily digest" above.
-9. **Install Claude's Beeper runtime on the VPS — deploy 3 (2026-10-14)
-   was BLOCKED on a unit bug, fixed in #43; redeploy next.** Deploy 3
-   installed Beeper Server 4.3.176 cleanly (SHA-512 OK, no BPF warning), but
-   the server would not start under the unit's sandbox. It unpacks its own
-   code on first start with GNU `tar` 1.35, whose `openat2(…,
+9. **Claude's Beeper runtime on the VPS — deploy 4 (2026-10-14): the #43 fix
+   WORKS; the runtime is up, signed out, on 127.0.0.1:23374, ready for
+   sign-up (item 10).** Deploy 3 had hit a sandbox bug — Beeper Server unpacks
+   its own code on first start with GNU `tar` 1.35, whose `openat2(…,
    RESOLVE_BENEATH)` returns ENOSYS under the `RestrictSUIDSGID` that
-   `DynamicUser=yes` implies; tar does not fall back, so every entry failed
-   "Function not implemented" and the server died (exit 2). Reproduced on the
-   box in throwaway units; `RestrictSUIDSGID=no` alone does not help, because
-   `DynamicUser` forces it. The sandbox is otherwise sound — it hides `/home`
-   (verified via `nsenter`). #43 has `deploy/assistant-beeper.sh` unpack that
-   code itself as it installs the server, into `/opt/beeper-server/payload`
-   (read-only to the runtime), and the unit point the launcher there.
-   **Box state until the redeploy:** the unit is installed and **enabled but
-   STOPPED** — it crash-looped on `Restart=always` (~300 MB / ~3 s CPU per ~8
-   s attempt) and was stopped by hand after 17 restarts; `/opt/beeper-server`,
-   the unit file, the config dir and `/var/lib/private/assistant-beeper` are
-   intact, and a reboot would restart the loop. *A health check showing
-   `assistant-beeper.service` inactive/failed is expected, not an alarm;
-   `sudo systemctl disable assistant-beeper` stops the reboot loop if
-   needed.* **To redeploy** (no account is on it yet, so nothing is lost):
-   bring the checkout to `main`, run `deploy/assistant-beeper.sh` (it finds
-   the server down, downloads it again, unpacks its code and installs the
-   new unit), then `deploy/assistant-beeper.sh --reset`, which deletes what
-   the failed starts left in the runtime's data (a copy of its packed code,
-   about 150 MB) and starts it clean. Then check
-   `curl -s 127.0.0.1:23374/v1/info` and `doctor` (green, read-only), and
-   note the unit's memory. The owner's Beeper Desktop (23373) and the MCP
-   service were untouched by deploy 3; 2176 MB free after.
+   `DynamicUser=yes` implies, and tar does not fall back. #43 fixes it
+   (option c): `deploy/assistant-beeper.sh` unpacks the code at install time
+   into `/opt/beeper-server/payload` (read-only to the runtime) and the unit
+   sets `XDG_CACHE_HOME` there. Deploy 4 brought the checkout to `main`
+   48dffbc and ran the script: Beeper Server 4.3.176 now starts under the
+   sandbox (zero `tar` errors; `/v1/info` = 4.3.176 / 23374; `/v1/app/setup` =
+   200, signed out; ~178 MB; NRestarts=0) and the service is **active**.
+   **Known bug, repo fix pending: `deploy/assistant-beeper.sh --reset`
+   fails.** Its `systemctl stop` makes the server exit 143 (SIGTERM), so the
+   unit lands in "failed", and `systemctl clean --what=state` refuses a
+   non-"dead" unit, aborting the script before it clears the ~145 MB the old
+   failed starts left in the state dir. Fix: `sudo systemctl reset-failed`
+   between the stop and the clean in the `--reset` path (preferred, surgical),
+   or `SuccessExitStatus=143` in the unit (simpler, but then no stop/restart
+   ever marks the unit failed). The ~145 MB leftovers remain for now
+   (harmless — headroom below); when the fix lands, redeploy and run `--reset`
+   to reclaim them. The owner's Beeper Desktop (23373) and the MCP (read-only,
+   11 accounts) were untouched; after deploy 4: 2476 MB free, swap 1239 MB,
+   disk 31%.
 10. **Sign Claude up**, once 9 is done, on the VPS:
     `cd ~/.config/claude-messenger/assistant && node ~/claude-messenger/dist/cli/main.js signup start --email <address>`,
     with the plus address of the owner's Gmail the owner chose; read
