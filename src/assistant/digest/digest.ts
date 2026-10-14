@@ -1,10 +1,10 @@
 import { ModelError } from '../../core/errors.js';
 import type { LanguageModel } from '../../core/model.js';
+import { safeMarkdown } from '../text/safe-markdown.js';
+import { formatDateTime, isTimeZone } from '../text/time.js';
 import type { Activity, ActivityCollector, DigestWindow } from './activity.js';
 import { type Briefing, renderBriefing } from './briefing.js';
 import { DIGEST_INSTRUCTIONS } from './instructions.js';
-import { safeMarkdown } from './safe-markdown.js';
-import { formatDateTime, isTimeZone } from './time.js';
 
 /** A week at most: a digest is for catching up, not for reading history. */
 export const MAX_DIGEST_DAYS = 7;
