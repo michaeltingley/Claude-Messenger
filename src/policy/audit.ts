@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { MessengerError } from '../core/errors.js';
 
 /**
  * Append-only audit trail of every action Claude attempts.
@@ -7,7 +8,8 @@ import { join } from 'node:path';
  * Content policy: outbound message text IS recorded (the user must be able
  * to review exactly what was said on their behalf); message content that was
  * merely read is NOT recorded — only which chats/queries were accessed, and
- * which messages a watch handed on, by ID.
+ * which messages a watch handed on, by ID. A failure is recorded by its code,
+ * never its message (see `errorCode`).
  */
 export interface AuditEntry {
   ts: string;
@@ -26,6 +28,7 @@ export interface AuditEntry {
   /** Pairs the entries of one mutation or watch under concurrency. */
   opId?: string;
   outcome?: 'ok' | 'error';
+  /** What kind of failure an error outcome was, from `errorCode`. */
   error?: string;
   /** Redacted parameters: chat/account IDs, queries, sent text. */
   context?: Record<string, unknown>;
@@ -33,6 +36,17 @@ export interface AuditEntry {
 
 export interface AuditLogger {
   record(entry: AuditEntry): Promise<void>;
+}
+
+/**
+ * What the audit records of a failure: its `MessengerError` code, such as
+ * `provider_error` or `not_found`, or `internal_error` for any other error.
+ * Never its message: a provider's error text comes from outside this program
+ * (an error body, a parser's excerpt of what it read), so it can quote a
+ * message that was read. Whoever made the call still gets the whole error.
+ */
+export function errorCode(err: unknown): string {
+  return err instanceof MessengerError ? err.code : 'internal_error';
 }
 
 /** One JSONL file per day under `dir`. */

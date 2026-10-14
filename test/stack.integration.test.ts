@@ -142,6 +142,21 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     }
   });
 
+  it("audits Beeper's failure by its code, never Beeper's text, which can quote a message, while Claude gets the text", async () => {
+    for (const [status, code] of [
+      [500, 'provider_error'],
+      [404, 'not_found'],
+    ] as const) {
+      mock.forcedError = { status, message: 'cannot render "meet me behind the mill at 8"' };
+      const result = await client.callTool({ name: 'list_messages', arguments: { chatId: '!chat1:beeper.com' } });
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain(`${code}: `);
+      expect(text(result)).toContain('behind the mill');
+      expect(audit.entries.at(-1)).toMatchObject({ action: 'listMessages', decision: 'allowed', outcome: 'error', error: code });
+    }
+    expect(JSON.stringify(audit.entries)).not.toContain('behind the mill');
+  });
+
   it('allowlisted send reaches the wire and is audited with its text', async () => {
     const result = await client.callTool({
       name: 'send_message',

@@ -149,22 +149,22 @@ describe('GuardedMessenger.watchMessages', () => {
     expect(watch.got).toEqual([]);
     expect(String(watch.state.error)).toContain('audit sink unavailable');
     expect(fake.openWatches).toBe(0);
-    expect(audit.entries.at(-1)).toMatchObject({ stage: 'outcome', outcome: 'error', error: 'audit sink unavailable' });
+    expect(audit.entries.at(-1)).toMatchObject({ stage: 'outcome', outcome: 'error', error: 'internal_error' });
   });
 
-  it('ends with the backend failure, recording it as the outcome', async () => {
+  it("ends with the backend failure, recording it as the outcome by its code, never the backend's text", async () => {
     const { audit, fake, guarded } = setup();
     const watch = follow(guarded);
     await settle();
-    fake.fail(new ProviderError('Beeper API error (500): boom'));
+    // A backend's error text can quote a message it read.
+    const failure = new ProviderError('Beeper API error (500): cannot render "private words in m3"');
+    fake.fail(failure);
     await settle();
     expect(watch.got).toEqual(['m1', 'm2']);
-    expect(watch.state.error).toBeInstanceOf(ProviderError);
-    expect((audit as MemoryAuditLogger).entries.at(-1)).toMatchObject({
-      stage: 'outcome',
-      outcome: 'error',
-      error: 'Beeper API error (500): boom',
-    });
+    expect(watch.state.error).toBe(failure);
+    const entries = (audit as MemoryAuditLogger).entries;
+    expect(entries.at(-1)).toMatchObject({ stage: 'outcome', outcome: 'error', error: 'provider_error' });
+    expect(JSON.stringify(entries)).not.toContain('private words');
   });
 
   it("hands on only the user's own messages, even from a provider that returns other people's", async () => {

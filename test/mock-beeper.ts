@@ -168,8 +168,8 @@ export class MockBeeperServer {
   /** The most messages one page of a chat holds; a longer chat pages, older messages on later pages. */
   messagePageSize = Infinity;
   requests: RecordedRequest[] = [];
-  /** When set, every route responds with this status and an error body. */
-  forcedError: { status: number; code?: string } | undefined;
+  /** When set, every route responds with this status and an error body, saying `message` if given. */
+  forcedError: { status: number; code?: string; message?: string } | undefined;
 
   /** The person at Beeper's screen. Approves with "Never" unless a test says otherwise. */
   decide: (request: ApprovalRequest) => ApprovalDecision = () => ({ approve: true });
@@ -285,7 +285,8 @@ export class MockBeeperServer {
       return error(401, 'unauthorized', 'Invalid access token');
     }
     if (this.forcedError) {
-      return error(this.forcedError.status, this.forcedError.code ?? 'forced', 'Forced test error');
+      const { status, code = 'forced', message = 'Forced test error' } = this.forcedError;
+      return error(status, code, message);
     }
     if (this.stalls?.(path)) {
       return new Promise((resolve) => res.on('close', resolve));

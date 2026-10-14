@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GuardedMessenger } from '../src/policy/guarded.js';
 import { MemoryAuditLogger } from '../src/policy/audit.js';
 import { parsePolicy, PolicyEngine } from '../src/policy/policy.js';
-import { PolicyDeniedError } from '../src/core/errors.js';
+import { PolicyDeniedError, ProviderError } from '../src/core/errors.js';
 import { FakeMessenger, makeChat, makeMessage } from './fake-messenger.js';
 
 function setup(policyOverrides: Record<string, unknown> = {}) {
@@ -112,13 +112,76 @@ describe('GuardedMessenger', () => {
     expect(JSON.stringify(entry.context)).not.toContain('hidden hello');
   });
 
-  it('audits provider failures as errors', async () => {
+  it('audits provider failures as errors, by their code', async () => {
     const { guarded, audit } = setup();
     await expect(guarded.getChat('missing')).rejects.toThrow();
     expect(audit.entries.at(-1)).toMatchObject({
       action: 'getChat',
       decision: 'allowed',
       outcome: 'error',
+      error: 'not_found',
     });
+  });
+
+  it("records a failure by its code, never the provider's text, which can quote a message it read, while the caller gets the whole error", async () => {
+    const { fake, audit, guarded } = setup({
+      capabilities: { read: true, send: true, markRead: true },
+      send: { chatAllowlist: '*' },
+    });
+    const quoting = new ProviderError('Beeper API error (500): cannot render "meet me behind the mill at 8"');
+    const fail = async (): Promise<never> => {
+      throw quoting;
+    };
+    Object.assign(fake, {
+      checkConnection: fail,
+      listAccounts: fail,
+      searchChats: fail,
+      getChat: fail,
+      listMessages: fail,
+      searchMessages: fail,
+      sendMessage: fail,
+      markChatRead: fail,
+    });
+
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ['checkConnection', () => guarded.checkConnection()],
+      ['listAccounts', () => guarded.listAccounts()],
+      ['searchChats', () => guarded.searchChats()],
+      ['getChat', () => guarded.getChat('chat-1')],
+      ['listMessages', () => guarded.listMessages('chat-1')],
+      ['searchMessages', () => guarded.searchMessages({ query: 'hello' })],
+      ['sendMessage', () => guarded.sendMessage({ chatId: 'chat-1', text: 'on my way' })],
+      ['markChatRead', () => guarded.markChatRead('chat-1')],
+    ];
+    for (const [action, call] of calls) {
+      await expect(call()).rejects.toBe(quoting);
+      expect(audit.entries.at(-1)).toMatchObject({ action, decision: 'allowed', outcome: 'error', error: 'provider_error' });
+    }
+    expect(JSON.stringify(audit.entries)).not.toContain('behind the mill');
+  });
+
+  it('records any other failure as internal_error, without its text', async () => {
+    const { fake, audit, guarded } = setup();
+    // What V8 says of a body that isn't JSON quotes the start of the body.
+    let notJson: unknown;
+    try {
+      JSON.parse('meet me behind the mill at 8');
+    } catch (err) {
+      notJson = err;
+    }
+    expect(String(notJson)).toContain('meet me');
+    fake.searchMessages = async () => {
+      throw notJson;
+    };
+    fake.listAccounts = async () => {
+      // A provider may throw what isn't an Error at all.
+      throw 'meet me behind the mill at 8';
+    };
+
+    await expect(guarded.searchMessages({ query: 'hello' })).rejects.toBe(notJson);
+    expect(audit.entries.at(-1)).toMatchObject({ action: 'searchMessages', outcome: 'error', error: 'internal_error' });
+    await expect(guarded.listAccounts()).rejects.toBe('meet me behind the mill at 8');
+    expect(audit.entries.at(-1)).toMatchObject({ action: 'listAccounts', outcome: 'error', error: 'internal_error' });
+    expect(JSON.stringify(audit.entries)).not.toContain('meet me');
   });
 });
