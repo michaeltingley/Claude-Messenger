@@ -5,10 +5,12 @@ import type { Config, EndpointConfig } from './config.js';
 import type { AccessRequester } from './core/access.js';
 import type { Messenger } from './core/messenger.js';
 import type { LanguageModel } from './core/model.js';
+import type { AccountSignup } from './core/signup.js';
 import type { ServerInfo } from './core/types.js';
 import { MessengerError } from './core/errors.js';
 import { BeeperAccessRequester } from './providers/beeper/access.js';
 import { BeeperMessenger } from './providers/beeper/index.js';
+import { BeeperAccountSignup } from './providers/beeper/signup.js';
 import { ClaudeCodeModel } from './providers/claude-code/model.js';
 import { GuardedAccessRequester } from './policy/access.js';
 import { JsonlAuditLogger } from './policy/audit.js';
@@ -101,6 +103,16 @@ export async function createApp(config: Config): Promise<App> {
  */
 export function createAccessRequester(endpoint: EndpointConfig): AccessRequester {
   return new GuardedAccessRequester(new BeeperAccessRequester({ baseUrl: endpoint.beeperBaseUrl }));
+}
+
+/**
+ * The provider's sign-up, for `signup`: an account of this app's own, for an
+ * assistant that answers as itself. Like the approval flow, it needs only the
+ * endpoint, which must be one of its own: signing up refuses one that is
+ * signed in.
+ */
+export function createAccountSignup(endpoint: EndpointConfig): AccountSignup {
+  return new BeeperAccountSignup({ baseUrl: endpoint.beeperBaseUrl });
 }
 
 /**

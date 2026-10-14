@@ -5,6 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import type { AccessGrant, AccessProgress, AccessRequest, AccessRequester } from '../../core/access.js';
 import { AccessDeniedError, AccessTimeoutError, ConnectionError, ProviderError } from '../../core/errors.js';
+import { parseJson, parseOrUndefined } from './json.js';
 
 /**
  * Gets a Beeper access token through Beeper Desktop's own approval box.
@@ -421,25 +422,6 @@ function readTerms(body: string, askedScope: string): { write: boolean; expiresA
 
 function isApiDisabled(res: HttpResponse): boolean {
   return res.status === 404 && ApiDisabled.safeParse(parseOrUndefined(res.body)).success;
-}
-
-function parseOrUndefined(body: string): unknown {
-  try {
-    return JSON.parse(body);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Parses a response body, naming only the fields that didn't fit: never the
- * values, since a token response's values include the token.
- */
-function parseJson<S extends z.ZodTypeAny>(schema: S, body: string, what: string): z.output<S> {
-  const parsed = schema.safeParse(parseOrUndefined(body));
-  if (parsed.success) return parsed.data;
-  const fields = [...new Set(parsed.error.issues.map((i) => i.path.join('.') || 'body'))].join(', ');
-  throw new ProviderError(`Beeper sent an unexpected ${what} (${fields}).`);
 }
 
 /** Beeper reports authorize-page errors as HTML; reduce it to its words. */

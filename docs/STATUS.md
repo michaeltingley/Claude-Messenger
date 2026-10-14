@@ -1,6 +1,6 @@
 # Project Status & Session Handoff
 
-_Last updated: 2026-10-13. This file is the pick-up point for any new session,
+_Last updated: 2026-10-14. This file is the pick-up point for any new session,
 cloud or local. Read `CLAUDE.md` first, then this, then `docs/SHARED-HOST.md`
 and `docs/HOSTING-OPTIONS.md`._
 
@@ -302,12 +302,18 @@ owner, each send approved in the Claude chat.
      Beeper's runtime, and `providers/beeper` reaches it unchanged. It
      holds about 0.35 GB signed out (Server 4.3.176, measured in a cloud
      container).
-   - **Next: the sign-up command**, through the Server's setup API:
-     `POST /v1/app/setup/start`, `/email`, `/response`, then `/register`
-     with a username and `acceptTerms` when the address is new
-     (`client.app.setup` in `@beeper/desktop-api` 6.x). If `/response`
-     doesn't ask to register, the address already has an account (a plus
-     address is untried): sign that session out and stop.
+   - **Its sign-up:** `claude-messenger signup start --email <address>`
+     has Beeper email a code; `signup finish --request <id> --code <code>
+     --accept-terms` creates the account (Beeper's first suggested
+     username unless `--username`), saves its token straight to `.env`,
+     and sets up its encryption with a recovery key it neither shows nor
+     keeps; `signup encrypt` picks that up if it stopped. It refuses an
+     endpoint already signed in, signs straight back out of an account the
+     address already had (a plus address is untried), and sets encryption
+     up afresh only on an account that never had any and has no chat
+     networks ("Signing it up" in `docs/ARCHITECTURE.md`). After a refused
+     or failed sign-up, `deploy/assistant-beeper.sh --reset` starts the
+     runtime signed out again.
    - Resetting a recovery key disconnects every cloud network on that
      account (Beeper's maintainer on beeper/cli#21). Claude's account sets
      up its encryption that way, harmless while it has no networks; never
@@ -425,6 +431,13 @@ owner, each send approved in the Claude chat.
    answers on 127.0.0.1:23374 and can't see `/home`, and the install gave no
    BPF warning, so it can't bind 23373), and measure its memory beside
    Beeper Desktop.
+10. **Sign Claude up**, once 9 is done, on the VPS:
+    `cd ~/.config/claude-messenger/assistant && node ~/claude-messenger/dist/cli/main.js signup start --email <address>`,
+    with the plus address of the owner's Gmail the owner chose; read
+    Beeper's code from that inbox; then `signup finish --request <id> --code
+    <code> --accept-terms` the same way. The owner agreed to Beeper's terms
+    for this account ("Create it", 2026-10-14). If Beeper says the address
+    already has an account, ask the owner for another.
 
 ### Hosting history (kept short)
 

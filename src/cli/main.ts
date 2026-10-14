@@ -3,12 +3,13 @@ import { writeFile } from 'node:fs/promises';
 import { Command, InvalidArgumentError } from 'commander';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
-import { createAccessRequester, createApp, createLanguageModel, DEFAULT_LANGUAGE_MODEL } from '../app.js';
+import { createAccessRequester, createAccountSignup, createApp, createLanguageModel, DEFAULT_LANGUAGE_MODEL } from '../app.js';
 import { ActivityCollector } from '../assistant/digest/activity.js';
 import { dayBefore, DigestWriter, isDigestWindow, MAX_DIGEST_DAYS } from '../assistant/digest/digest.js';
 import { hostTimeZone, isTimeZone } from '../assistant/digest/time.js';
 import { watchMentions } from '../assistant/mentions.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
+import type { AccountSignup } from '../core/signup.js';
 import type { Message } from '../core/types.js';
 import { createMcpServer } from '../mcp/server.js';
 import { startHttpMcpServer } from '../mcp/http.js';
@@ -116,6 +117,24 @@ function parseSince(value: string): Date {
     throw new InvalidArgumentError(`must be in the past, at most ${MAX_DIGEST_DAYS} days back`);
   }
   return since;
+}
+
+function parseEmail(value: string): string {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw new InvalidArgumentError('must be an email address');
+  return value;
+}
+
+/**
+ * Sets up a new account's encryption, saying what Beeper is doing, and how
+ * to pick up again if this stops: the account and its token stay.
+ */
+async function setUpEncryption(accountSignup: AccountSignup, token: string, minutes: number): Promise<void> {
+  console.log('Setting up its encryption. If this stops, the account stays; finish with: claude-messenger signup encrypt');
+  await accountSignup.setUpEncryption(token, {
+    timeoutMs: minutes * 60_000,
+    onProgress: (step) => console.log(step),
+  });
+  console.log('✓ The account is ready, its encryption set up.');
 }
 
 function parseTimeZone(value: string): string {
@@ -341,6 +360,84 @@ program
       );
     }
     console.log('Next: claude-messenger doctor');
+  });
+
+const signup = program
+  .command('signup')
+  .description(
+    `Create an account of this app's own, for the assistant, on the Beeper endpoint ${ENV_FILE} names, saving its token there, never displayed`,
+  );
+
+signup
+  .command('start')
+  .description("Have Beeper email a sign-up code to the new account's address")
+  .requiredOption('--email <address>', "the new account's email address", parseEmail)
+  .action(async (opts: { email: string }) => {
+    const request = await createAccountSignup(loadEndpointConfig()).sendCode(opts.email);
+    console.log(`✓ Beeper emailed a sign-up code to ${opts.email}.`);
+    console.log('Next, with that code:');
+    console.log(`  claude-messenger signup finish --request ${request.id} --code <code> --accept-terms [--username <name>]`);
+  });
+
+signup
+  .command('finish')
+  .description(`Create the account with the emailed code, save its token to ${ENV_FILE}, and set up its encryption`)
+  .requiredOption('--request <id>', 'the request `signup start` printed')
+  .requiredOption('--code <code>', 'the code Beeper emailed')
+  .option('--username <name>', "the account's username (default: Beeper's first suggestion)")
+  .option('--accept-terms', "agree to Beeper's Terms of Use and Privacy Policy for the new account")
+  .option('--timeout <minutes>', 'how long to wait for Beeper to set the account up', parseMinutes, 5)
+  .action(async (opts: { request: string; code: string; username?: string; acceptTerms?: boolean; timeout: number }) => {
+    // Before Beeper hears of it: the code works once.
+    if (!opts.acceptTerms) {
+      throw new Error(
+        "Creating a Beeper account accepts Beeper's Terms of Use (https://www.beeper.com/terms-onboarding) and " +
+          'Privacy Policy (https://www.beeper.com/privacy) for it. Pass --accept-terms once its owner has agreed. ' +
+          'Nothing was sent to Beeper.',
+      );
+    }
+    const accountSignup = createAccountSignup(loadEndpointConfig());
+    const account = await accountSignup.createAccount({ id: opts.request }, opts.code, {
+      ...(opts.username !== undefined && { username: opts.username }),
+      acceptTerms: true,
+    });
+
+    let replaced: boolean;
+    try {
+      ({ replaced } = await saveAccessToken(ENV_FILE, account.token));
+    } catch (err) {
+      // A token this command could not keep must not keep working either.
+      const signedOut = await account.signOut().then(
+        () => true,
+        () => false,
+      );
+      throw new Error(
+        `Created the Beeper account ${account.userId}, but could not save its token to ${ENV_FILE} ` +
+          `(${(err as Error).message}). ` +
+          (signedOut ? 'The token was signed out, so it works nowhere.' : 'Signing the token out failed, so it still works.') +
+          ' Nothing here can use that account. To sign up again, with another address, first delete what Beeper ' +
+          "here kept of it (for the assistant's runtime: deploy/assistant-beeper.sh --reset).",
+        { cause: err },
+      );
+    }
+    console.log(`✓ Created the Beeper account ${account.userId}. Its token is in ${ENV_FILE}; it was never displayed.`);
+    if (replaced) console.log(`  It replaced an earlier token in ${ENV_FILE}.`);
+    if (TOKEN_IN_ENVIRONMENT) {
+      console.log(
+        `⚠ BEEPER_ACCESS_TOKEN is also set in this command's environment, and that wins over ${ENV_FILE}. ` +
+          'Remove it there, or commands keep using another token.',
+      );
+    }
+    await setUpEncryption(accountSignup, account.token, opts.timeout);
+  });
+
+signup
+  .command('encrypt')
+  .description(`Set up the encryption of the account whose token is in ${ENV_FILE}, if \`signup finish\` stopped short`)
+  .option('--timeout <minutes>', 'how long to wait for Beeper to set the account up', parseMinutes, 5)
+  .action(async (opts: { timeout: number }) => {
+    const config = loadConfig();
+    await setUpEncryption(createAccountSignup(config), config.beeperAccessToken, opts.timeout);
   });
 
 program

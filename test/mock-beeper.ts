@@ -114,6 +114,33 @@ export type ApprovalDecision =
   | { approve: false; error?: string; description?: string }
   | 'no-answer';
 
+/** A code Beeper emailed, as the inbox it went to shows it. */
+export interface EmailedCode {
+  email: string;
+  code: string;
+}
+
+/** An account a sign-up created on this Beeper, with the token Beeper answered with. */
+export interface CreatedAccount {
+  email: string;
+  username: string;
+  userID: string;
+  accessToken: string;
+}
+
+interface SignupAttempt {
+  email?: string;
+  code?: string;
+  leadToken?: string;
+  used: boolean;
+}
+
+interface SessionToken {
+  userID: string;
+  deviceID: string;
+  signedOut: boolean;
+}
+
 interface RegisteredClient {
   clientId: string;
   redirectUris: string[];
@@ -214,15 +241,46 @@ export class MockBeeperServer {
    */
   shapeMessageSearch: ((page: MessageSearchPage) => MessageSearchPage) | undefined;
 
+  /**
+   * Where an account signed in here stands in setting up encryption, as GET
+   * /v1/app/setup reports it with a token: 'ready' unless a sign-up is under
+   * way.
+   */
+  setupState = 'ready';
+  /** Addresses that already have a Beeper account: a sign-up with one signs in to it instead. */
+  existingAccounts = new Set<string>();
+  /** Usernames someone already has. */
+  takenUsernames = new Set<string>();
+  /** What Beeper suggests for a new account's username. */
+  usernameSuggestions: string[] = ['claude-1a2b'];
+  /** Where a new account stands once created; a new account has no encryption until one is set up. */
+  newAccountState = 'needs-cross-signing-setup';
+  /** How many times a client asks how setup is going while Beeper syncs the account for the first time. */
+  firstSyncPolls = 0;
+  /** Every code Beeper emailed, in order: the inbox the test reads, as a person reads their mail. */
+  emailedCodes: EmailedCode[] = [];
+  /** Accounts sign-ups created, in order. */
+  createdAccounts: CreatedAccount[] = [];
+  /** Recovery keys made by resetting encryption, in order, and whether each was put in use. */
+  recoveryKeys: Array<{ key: string; confirmed: boolean }> = [];
+  /** Session tokens the homeserver was asked to sign out, in order. */
+  signedOutTokens: string[] = [];
+  /** Makes a setup route fail, as Beeper failing would: answered with this status and message instead. */
+  failSetup: ((path: string) => { status: number; message: string } | undefined) | undefined;
+
   private clients = new Map<string, RegisteredClient>();
   private codes = new Map<string, PendingCode>();
+  private signups = new Map<string, SignupAttempt>();
+  private sessionTokens = new Map<string, SessionToken>();
+  private baseUrl = '';
   private server: Server | undefined;
 
   async start(): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
     await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve));
     const { port } = this.server!.address() as AddressInfo;
-    return `http://127.0.0.1:${port}`;
+    this.baseUrl = `http://127.0.0.1:${port}`;
+    return this.baseUrl;
   }
 
   async stop(): Promise<void> {
@@ -238,6 +296,8 @@ export class MockBeeperServer {
     const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
     if (token === undefined) return false;
     if (token === this.token) return true;
+    const session = this.sessionTokens.get(token);
+    if (session !== undefined) return !session.signedOut;
     const issued = this.issuedTokens.get(token);
     return issued !== undefined && !issued.revoked;
   }
@@ -270,7 +330,11 @@ export class MockBeeperServer {
       if (!this.authorized(req.headers.authorization)) {
         return send(401, { message: 'Unauthorized: Invalid or missing token', code: 'unauthorized' });
       }
-      return send(200, { state: 'ready' });
+      if (this.setupState === 'needs-first-sync' && this.firstSyncPolls-- <= 0) this.setupState = 'ready';
+      return send(200, { state: this.setupState });
+    }
+    if (path.startsWith('/v1/app/setup/') || path === '/_matrix/client/v3/logout') {
+      return this.handleSetup(req, res, path, body, send);
     }
 
     // Like the real Client API, /v1/info and the OAuth routes are
@@ -593,6 +657,134 @@ export class MockBeeperServer {
     }
 
     json(404, { message: 'Not found', code: 'not_found' });
+  }
+
+  /**
+   * Beeper Server 4.3.176's setup API, from its OpenAPI spec: email sign-up
+   * and sign-in with a code, account creation, and encryption set up afresh
+   * by a recovery-key reset. The sign-in steps answer without a token; the
+   * encryption steps need the new account's. Errors carry Beeper's
+   * `{ message, code }` body. Also the homeserver's Matrix logout, at this
+   * same address, which every session token here names as its homeserver.
+   */
+  private handleSetup(
+    req: IncomingMessage,
+    res: ServerResponse,
+    path: string,
+    body: unknown,
+    send: (status: number, payload: unknown) => void,
+  ): void {
+    const fail = (status: number, code: string, message: string) => send(status, { message, code });
+    const forced = this.failSetup?.(path);
+    if (forced) return fail(forced.status, 'forced', forced.message);
+    const input = (body ?? {}) as Record<string, unknown>;
+    const attempt = this.signups.get(String(input.setupRequestID));
+    const signIn = (email: string, state: string) => {
+      const accessToken = `syt_${randomBytes(18).toString('base64url')}`;
+      const userID = `@${email.split('@')[0]!.replace(/[^a-z0-9]/gi, '')}:beeper.local`;
+      const matrix = { userID, deviceID: `DEV${randomBytes(4).toString('hex').toUpperCase()}`, homeserver: this.baseUrl };
+      this.sessionTokens.set(accessToken, { userID, deviceID: matrix.deviceID, signedOut: false });
+      this.signedIn = true;
+      this.setupState = state;
+      return { matrix: { ...matrix, accessToken }, session: { state, matrix } };
+    };
+
+    if (req.method !== 'POST') return fail(404, 'not_found', `no route: ${req.method} ${path}`);
+    switch (path) {
+      case '/v1/app/setup/start': {
+        if (this.signedIn) return fail(409, 'conflict', 'Already signed in');
+        const id = randomBytes(9).toString('hex');
+        this.signups.set(id, { used: false });
+        return send(200, { setupRequestID: id, signInMethods: ['email'] });
+      }
+      case '/v1/app/setup/email': {
+        if (attempt === undefined) return fail(404, 'not_found', 'Setup request not found');
+        if (typeof input.email !== 'string' || !input.email.includes('@')) {
+          return fail(400, 'invalid_request', 'email must be an email address');
+        }
+        attempt.email = input.email;
+        attempt.code = String(100_000 + (randomBytes(3).readUIntBE(0, 3) % 900_000));
+        this.emailedCodes.push({ email: input.email, code: attempt.code });
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      case '/v1/app/setup/response': {
+        if (attempt === undefined || attempt.used) return fail(404, 'not_found', 'Setup request not found');
+        if (attempt.code === undefined || input.response !== attempt.code) {
+          return fail(400, 'invalid_code', 'That code is not right, or has expired');
+        }
+        if (this.existingAccounts.has(attempt.email!)) {
+          attempt.used = true;
+          return send(200, signIn(attempt.email!, 'needs-verification'));
+        }
+        attempt.leadToken = randomBytes(12).toString('base64url');
+        return send(200, {
+          registrationRequired: true,
+          setupRequestID: String(input.setupRequestID),
+          leadToken: attempt.leadToken,
+          usernameSuggestions: this.usernameSuggestions,
+          copy: {
+            title: 'Choose your username',
+            usernamePlaceholder: 'Username',
+            submit: 'Continue',
+            terms: 'By continuing, you agree to the Terms of Use and acknowledge the Privacy Policy.',
+          },
+        });
+      }
+      case '/v1/app/setup/register': {
+        if (attempt === undefined || attempt.used || attempt.leadToken === undefined) {
+          return fail(404, 'not_found', 'Setup request not found');
+        }
+        if (input.leadToken !== attempt.leadToken) return fail(400, 'invalid_request', 'Invalid lead token');
+        if (input.acceptTerms !== true) return fail(400, 'invalid_request', 'acceptTerms must be true');
+        if (typeof input.username !== 'string' || input.username === '') {
+          return fail(400, 'invalid_request', 'username is required');
+        }
+        if (this.takenUsernames.has(input.username)) return fail(409, 'conflict', 'That username is taken');
+        attempt.used = true;
+        this.takenUsernames.add(input.username);
+        const answer = signIn(`${input.username}@`, this.newAccountState);
+        this.createdAccounts.push({
+          email: attempt.email!,
+          username: input.username,
+          userID: answer.matrix.userID,
+          accessToken: answer.matrix.accessToken,
+        });
+        return send(200, answer);
+      }
+    }
+
+    // The rest need a token.
+    const header = req.headers.authorization;
+    const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+    if (path === '/_matrix/client/v3/logout') {
+      const session = this.sessionTokens.get(token);
+      if (session === undefined || session.signedOut) {
+        return send(401, { errcode: 'M_UNKNOWN_TOKEN', error: 'Unrecognised access token' });
+      }
+      session.signedOut = true;
+      this.signedOutTokens.push(token);
+      return send(200, {});
+    }
+    if (!this.authorized(header)) return fail(401, 'unauthorized', 'Unauthorized: Invalid or missing token');
+    switch (path) {
+      case '/v1/app/setup/verification/recovery-key/reset': {
+        const key = Array.from({ length: 12 }, () => randomBytes(2).toString('hex').toUpperCase()).join(' ');
+        this.recoveryKeys.push({ key, confirmed: false });
+        return send(200, { recoveryKey: key, session: { state: this.setupState } });
+      }
+      case '/v1/app/setup/verification/recovery-key/reset/confirm': {
+        const pending = this.recoveryKeys.at(-1);
+        if (pending === undefined || pending.confirmed || input.recoveryKey !== pending.key) {
+          return fail(400, 'invalid_request', 'That is not the new recovery key');
+        }
+        pending.confirmed = true;
+        this.setupState = this.firstSyncPolls > 0 ? 'needs-first-sync' : 'ready';
+        return send(200, { session: { state: this.setupState } });
+      }
+    }
+    return fail(404, 'not_found', `no route: ${req.method} ${path}`);
   }
 
   private async readBody(req: IncomingMessage): Promise<unknown> {
