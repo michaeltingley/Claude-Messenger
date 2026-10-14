@@ -43,6 +43,7 @@ describe('respond (subprocess integration)', { timeout: 60_000 }, () => {
   /** Starts the CLI; output accumulates while it runs, and `exited` settles with its exit code. */
   const start = (shim: Shim = claude) => {
     const run = { stdout: '', stderr: '', exitCode: undefined as number | null | undefined };
+    const startedAt = Date.now();
     child = spawn(
       process.execPath,
       ['--import', TSX, join(REPO, 'src', 'cli', 'main.ts'), 'respond', '--assistant', assistantDir, '--time-zone', 'America/Los_Angeles'],
@@ -69,14 +70,38 @@ describe('respond (subprocess integration)', { timeout: 60_000 }, () => {
         resolve(code);
       }),
     );
-    /** Waits for `assertion` to hold while the CLI runs; a CLI that exits first fails the test at once. */
-    const until = (assertion: () => void) =>
-      vi.waitFor(() => {
-        if (run.exitCode !== undefined) {
-          throw new Error(`The CLI exited (${run.exitCode}) first. It said:\n${run.stdout}\n${run.stderr}`);
-        }
-        assertion();
-      }, 20_000);
+    /**
+     * Where the CLI stands, so a failure says where it stopped: what it
+     * printed, what it asked each Beeper and when, and how often the model ran.
+     */
+    const standing = async () => {
+      const asked = (beeper: MockBeeperServer) =>
+        beeper.requests.map((r) => `  ${r.at < startedAt ? '' : '+'}${r.at - startedAt} ms ${r.method} ${r.path}`).join('\n');
+      const state = run.exitCode === undefined ? 'is still running' : `exited (${run.exitCode})`;
+      return (
+        `The CLI ${state}, ${Date.now() - startedAt} ms after it started. It said:\n${run.stdout}${run.stderr}` +
+        `The owner's Beeper was asked:\n${asked(owner)}\nThe assistant's Beeper was asked:\n${asked(assistant)}\n` +
+        `The model ran ${(await shim.calls()).length} time(s).`
+      );
+    };
+    /**
+     * Waits for `assertion` to hold while the CLI runs. A CLI that exits first
+     * fails it at once, and either failure says where the CLI stood.
+     */
+    const until = async (assertion: () => void) => {
+      try {
+        // A CLI that has exited can't make the assertion hold, so stop waiting.
+        const exitedFirst = await vi.waitFor(() => {
+          if (run.exitCode !== undefined) return true;
+          assertion();
+          return false;
+        }, 20_000);
+        if (exitedFirst) throw new Error('The CLI exited first.');
+      } catch (err) {
+        if (err instanceof Error) err.message += `\n${await standing()}`;
+        throw err;
+      }
+    };
     const answering = () => until(() => expect(run.stdout).toContain(`Answering in ${DM} as ${CLAUDE}, from `));
     return { run, exited, until, answering, pid: child.pid! };
   };
