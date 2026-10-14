@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BeeperFeed, type FeedEntry } from './beeper-feed.js';
+import { BeeperFeed, type FeedEntry, type Packaging } from './beeper-feed.js';
 import { FakeHost, type ScriptResult } from './fake-host.js';
 import { unusedPort } from './ports.js';
 
@@ -15,9 +15,11 @@ import { unusedPort } from './ports.js';
  * fake host (test/fake-host.ts) whose systemd really starts what it installs.
  *
  * The feed and the server are stand-ins (test/beeper-feed.ts): the real
- * build is 275 MB, and signs in to Beeper. The unit's sandbox under the real
- * systemd is proven in test/assistant-beeper-sandbox.integration.test.ts;
- * the real server under it, only on a host.
+ * build is 275 MB, and signs in to Beeper. The stand-in is packaged as the
+ * real one is, a launcher holding the rest of the server's code, which the
+ * script unpacks. The unit's sandbox under the real systemd is proven in
+ * test/assistant-beeper-sandbox.integration.test.ts; the real server under
+ * it, only on a host.
  */
 
 const SCRIPT = join(import.meta.dirname, '..', 'deploy', 'assistant-beeper.sh');
@@ -59,6 +61,10 @@ describe('deploy/assistant-beeper.sh (subprocess, no terminal, fake host)', { ti
   /** The unit's StateDirectory=, which the fake systemd keeps under the fake root. */
   const stateDir = () => join(host.sysroot, 'var', 'lib', 'assistant-beeper');
   const installedServer = () => join(host.sysroot, 'opt', 'beeper-server', 'beeper-server');
+  /** Where the script unpacks the server's code: the unit's XDG_CACHE_HOME. */
+  const payload = () => join(host.sysroot, 'opt', 'beeper-server', 'payload');
+  /** The builds whose code is unpacked there, as the launcher names them. */
+  const unpackedBuilds = () => readdirSync(join(payload(), 'BeeperServer'));
   const installedUnit = () => join(host.systemUnitDir, UNIT);
   /** A failing run's message: what it printed, and what the units it started printed. */
   const why = (result: ScriptResult) => `${result.stdout}\n${result.stderr}\n${host.logs()}`;
@@ -68,14 +74,14 @@ describe('deploy/assistant-beeper.sh (subprocess, no terminal, fake host)', { ti
     const info = (await (await fetch(`${url()}/v1/info`)).json()) as { app: { version: string } };
     return info.app.version;
   };
-  /** Each start of the server since its data was last deleted, oldest first. */
-  const starts = (): Array<{ argv: string[]; version: string }> => {
+  /** Each start of the server since its data was last deleted, oldest first: its command line, and the file it ran. */
+  const starts = (): Array<{ argv: string[]; main: string; version: string }> => {
     const log = join(stateDir(), 'starts.log');
     if (!existsSync(log)) return [];
     return readFileSync(log, 'utf8')
       .split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as { argv: string[]; version: string });
+      .map((line) => JSON.parse(line) as { argv: string[]; main: string; version: string });
   };
   /** Kills the server as a crash would, leaving systemd's record of it, and waits until it is gone. */
   const killServer = async () => {
@@ -100,6 +106,7 @@ describe('deploy/assistant-beeper.sh (subprocess, no terminal, fake host)', { ti
   /** Nothing of the runtime anywhere: no server, no unit, nothing done as root but asking for sudo. */
   const expectNothingInstalled = () => {
     expect(existsSync(installedServer()), 'the server').toBe(false);
+    expect(existsSync(payload()), 'its code').toBe(false);
     expect(existsSync(installedUnit()), 'the unit').toBe(false);
     expect(rootCalls().filter((call) => call !== 'sudo -n true')).toEqual([]);
   };
@@ -120,13 +127,31 @@ describe('deploy/assistant-beeper.sh (subprocess, no terminal, fake host)', { ti
       expect(starts()).toEqual([
         expect.objectContaining({
           version: '4.3.176',
-          argv: ['--host=127.0.0.1', `--port=${port}`, `--data-dir=${stateDir()}`],
+          argv: [installedServer(), '--host=127.0.0.1', `--port=${port}`, `--data-dir=${stateDir()}`],
         }),
       ]);
       expect(host.has(`system/enabled/${UNIT}`)).toBe(true);
       expect(readFileSync(installedUnit(), 'utf8')).not.toContain('__PORT__');
       expect(result.stdout).toContain(`${UNIT}: Beeper Server 4.3.176 on ${url()}`);
       expect(result.stdout).toContain('not signed in to an account yet');
+    });
+
+    it('unpacks the server’s code where its launcher looks, which then runs it as it is', async () => {
+      const result = await run();
+
+      expect(result.code, why(result)).toBe(0);
+      expect(unpackedBuilds()).toEqual([expect.stringMatching(new RegExp(`^4\\.3\\.176-Production-linux-${ARCH}-[0-9a-f]{12}$`))]);
+      const unpacked = join(payload(), 'BeeperServer', unpackedBuilds()[0]!);
+      const main = join(unpacked, 'app', 'build', 'main', 'server.mjs');
+      // Marked complete, so the launcher ran the server from it, and unpacked nothing itself.
+      expect(existsSync(join(unpacked, '.complete'))).toBe(true);
+      expect(starts()).toEqual([expect.objectContaining({ main })]);
+      expect(host.logs()).not.toContain('unpacking');
+      // Not into the account's data either, where the launcher unpacks it without the unit's XDG_CACHE_HOME.
+      expect(existsSync(join(stateDir(), '.cache'))).toBe(false);
+      // The runtime's own user may read it; only its owner, root on a host, may change it.
+      for (const dir of [payload(), unpacked, dirname(main)]) expect(statSync(dir).mode & 0o777).toBe(0o755);
+      expect(statSync(main).mode & 0o777).toBe(0o644);
     });
 
     it('makes the assistant’s configuration, owner-only, pointing at its own runtime', async () => {
@@ -203,6 +228,9 @@ describe('deploy/assistant-beeper.sh (subprocess, no terminal, fake host)', { ti
       expect(result.stdout).toContain('Beeper Server 4.3.100 installed');
       expect(await serving()).toBe('4.3.100');
       expect(starts().map((start) => start.version)).toEqual(['4.3.99', '4.3.100']);
+      // Its code is all that is unpacked now: none of the old build's is left behind.
+      expect(unpackedBuilds()).toEqual([expect.stringMatching(/^4\.3\.100-/)]);
+      expect(starts()[1]!.main).toContain(`/BeeperServer/${unpackedBuilds()[0]}/`);
       expect(result.stdout).toContain("signed in to the assistant's account");
     });
 
@@ -319,6 +347,51 @@ describe('deploy/assistant-beeper.sh (subprocess, no terminal, fake host)', { ti
         expectNothingInstalled();
       },
     );
+
+    it.each<[Packaging, string]>([
+      ['without its payload', 'it holds 0 payloads, not one'],
+      ['with two payloads', 'it holds 2 payloads, not one'],
+      [
+        'to unpack elsewhere',
+        "its launcher has no path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), cacheAppName, cacheKey)",
+      ],
+      ['without a cache key', 'its launcher sets cacheKey 0 times, not once'],
+      ['with a cache key that is a path', 'its launcher sets cacheKey to what is not a directory name'],
+    ])('refuses a server packaged %s, installing nothing', async (packaged, reason) => {
+      feed.latest = { version: '4.3.176', packaged };
+
+      const result = await run();
+
+      expect(result.code, why(result)).toBe(1);
+      expect(result.stderr).toContain(
+        `Beeper Server 4.3.176 is not packaged as this script expects (${reason}); nothing was installed.`,
+      );
+      expectNothingInstalled();
+    });
+
+    it('refuses a server whose payload does not unpack, installing nothing', async () => {
+      feed.latest = { version: '4.3.176', packaged: 'with a payload tar cannot unpack' };
+
+      const result = await run();
+
+      expect(result.code, why(result)).toBe(1);
+      expect(result.stderr).toContain('the payload of Beeper Server 4.3.176 would not unpack; nothing was installed.');
+      expectNothingInstalled();
+    });
+
+    it('keeps the running build, and its code, when the newer one is refused', async () => {
+      expect((await run()).code).toBe(0);
+      const unpacked = unpackedBuilds();
+      feed.latest = { version: '4.3.177', packaged: 'to unpack elsewhere' };
+
+      const result = await run();
+
+      expect(result.code, why(result)).toBe(1);
+      expect(result.stderr).toContain('Beeper Server 4.3.177 is not packaged as this script expects');
+      expect(await serving()).toBe('4.3.176');
+      expect(starts()).toHaveLength(1);
+      expect(unpackedBuilds()).toEqual(unpacked);
+    });
 
     it('fails, pointing at the journal, when the build it installs does not start', async () => {
       feed.latest = { version: '4.3.176', crashes: true };

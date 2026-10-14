@@ -31,6 +31,8 @@ const UNIT = 'assistant-beeper.service';
 const OWNER_BEEPER_PORT = 23373;
 /** Where DynamicUser= keeps the unit's StateDirectory=; /var/lib/assistant-beeper links to it. */
 const DATA = '/var/lib/private/assistant-beeper';
+/** Where the install unpacks the server's code, and the unit points its launcher. */
+const PAYLOAD = '/opt/beeper-server/payload';
 
 // GitHub's own runners give every run a fresh VM; a self-hosted runner that
 // set GITHUB_ACTIONS could be a real machine, which this test would change.
@@ -147,8 +149,19 @@ describe.runIf(onRunner)('the assistant’s Beeper runtime sandbox (real systemd
     expect((await inside('stat', { path: path() })).error, `inside: ${path()}`).toMatch(/^(ENOENT|EACCES)$/);
   });
 
+  it('runs the server’s code from where the install unpacked it, unpacking none itself', async () => {
+    const [first] = starts().map((line) => JSON.parse(line) as { main: string });
+    expect(first!.main).toMatch(
+      new RegExp(`^${PAYLOAD}/BeeperServer/4\\.3\\.176-Production-linux-\\w+-[0-9a-f]{12}/app/build/main/server\\.mjs$`),
+    );
+    expect(journal()).not.toContain('unpacking');
+    // Not into the account's data either, where its launcher unpacks it without the unit's XDG_CACHE_HOME.
+    expect(asRoot('test', '-e', `${DATA}/.cache`).status).not.toBe(0);
+  });
+
   it.each([
     ['the server it runs', '/opt/beeper-server/probe'],
+    ['the server’s unpacked code', `${PAYLOAD}/BeeperServer/probe`],
     ['the system’s configuration', '/etc/assistant-beeper-probe'],
     ['other services’ data', '/var/lib/assistant-beeper-probe'],
   ])('cannot change %s', async (_, path) => {

@@ -21,7 +21,8 @@ import { join } from 'node:path';
  * /etc/systemd/system for the system manager. Like systemd, it checks that
  * the paths the unit's sandbox names exist (ReadWritePaths, BindPaths,
  * BindReadOnlyPaths), then starts its ExecStart in WorkingDirectory, with
- * only the environment that manager gives its units. As for any Type=simple
+ * only the environment that manager gives its units and the unit's own
+ * Environment= (unquoted, without specifiers). As for any Type=simple
  * unit, a start that fails after the fork (226/NAMESPACE, 217/USER; the
  * `sandbox-fails` flag forces one) still reports success: the unit is just
  * not active, and the reason is in its log. A system unit must name the
@@ -35,8 +36,8 @@ import { join } from 'node:path';
  * starts and deleted by `clean --what=state`. A system unit's paths under
  * /opt and /var/lib are the fake root's where root wrote there (sudo's
  * writes and state directories), and the machine's own otherwise, as node
- * may be. `cat` prints a unit's file after a line naming it, as the real one
- * does.
+ * may be; in its Environment=, they are always the fake root's. `cat` prints
+ * a unit's file after a line naming it, as the real one does.
  *
  * `sudo` runs only the commands the scripts use, as that same user, but
  * every argument naming a path under /etc or /opt is moved into the fake
@@ -186,11 +187,24 @@ start_unit() {
       cmd="\${words[*]}"
     fi
     # Its own process group, so stopping it stops everything it started. And
-    # none of the caller's environment: a unit gets only its manager's, so
-    # whatever it needs must come from its own config. Only the user manager
-    # passes on XDG_RUNTIME_DIR.
+    # none of the caller's environment: a unit gets only its manager's and its
+    # own Environment=, so whatever it needs must come from its own config.
+    # Only the user manager passes on XDG_RUNTIME_DIR.
     unit_env=(HOME="$HOME" PATH=/usr/local/bin:/usr/bin:/bin)
     [ "$scope" = user ] && unit_env+=(XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR")
+    for assignment in $(sed -n 's/^Environment=//p' "$f"); do
+      # Quoting and specifiers (%h, %t) are not modeled.
+      case "$assignment" in
+        *[\\"\\'%]*) echo "fake systemctl: unmodeled Environment= in $u: $assignment" >&2; exit 64 ;;
+      esac
+      # In a system unit, a path under /opt or /var/lib names what root put
+      # there, which is the fake root's.
+      value="\${assignment#*=}"
+      if [ "$scope" = system ]; then
+        case "$value" in /opt/* | /var/lib/*) assignment="\${assignment%%=*}=$FAKE_HOST_ROOT$value" ;; esac
+      fi
+      unit_env+=("$assignment")
+    done
     ( cd "\${wd:-$HOME}" && exec env -i "\${unit_env[@]}" setsid $cmd ) >> "$S/logs/$u.log" 2>&1 < /dev/null &
     echo "$!" > "$T/pids/$u"
   fi
@@ -303,6 +317,9 @@ case "$*" in
   "tee /etc/"*) [ $# -eq 2 ] || { echo "fake sudo: unmodeled invocation: $*" >&2; exit 64; } ;;
   # A file put in place under /opt, as an installer does.
   "install -D -m 0755 "*) [ $# -eq 6 ] && [[ "$6" == /opt/* ]] || { echo "fake sudo: unmodeled invocation: $*" >&2; exit 64; } ;;
+  # A tree put in place under /opt, or taken away; never above it.
+  "cp -R --preserve=mode "*) [ $# -eq 5 ] && [[ "$5" == /opt/* && "$5" != *..* ]] || { echo "fake sudo: unmodeled invocation: $*" >&2; exit 64; } ;;
+  "rm -rf /opt/"*) [ $# -eq 3 ] && [[ "$3" != *..* ]] || { echo "fake sudo: unmodeled invocation: $*" >&2; exit 64; } ;;
   *) echo "fake sudo: unmodeled invocation: $*" >&2; exit 64 ;;
 esac
 if [ -e "$S/sudo-needs-password" ]; then
