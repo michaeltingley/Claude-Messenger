@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 729 tests / 37 files.
+- CI's `npm test` must be green before any merge. Currently 729 tests / 37 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -124,10 +124,14 @@ built for hypothetical futures.
 
 ### CI and hygiene
 
-CI runs `npm ci` → `typecheck` → `test` → `build` → CLI smoke test. Run
-`npm run typecheck && npm test` locally before pushing; don't outsource basic
-verification to CI. `typecheck` covers `test/` as well as `src/`: vitest
-strips types without checking them, so nothing else would.
+CI runs `npm ci` → `typecheck` → `test` → `build` → CLI smoke test once per
+push to a pull request, on Ubuntu 26.04, the VPS's. On 24.04 it runs only the
+two sandbox tests, whose assertions differ on that older systemd. Nothing
+reruns on main after a merge. CI is the one full run: before pushing, run
+`npm run typecheck` and the test files that cover what changed
+(`npx vitest run <files>`), not the whole suite again. `typecheck` covers
+`test/` as well as `src/`: vitest strips types without checking them, so
+nothing else would.
 
 - Secrets live in `.env` (gitignored) or the environment. Never logged, never
   committed. The Beeper token is password-equivalent.
@@ -176,9 +180,11 @@ actually happened: failing tests, skipped steps, unverified claims.
 > "Make sure to do EXTENSIVE ADVERSARIAL CODE REVIEW from MANY DIFFERENT LENSES
 > yourself, before you merge anything."
 
-Many lenses, not one pass: correctness, removed-behavior, cross-file/contract,
+Many lenses, not one: correctness, removed-behavior, cross-file/contract,
 reuse, simplification, efficiency, altitude, conventions. Verify candidates
-before reporting; drop only what you can refute from the code itself.
+before reporting; drop only what you can refute from the code itself. All of
+them in one review of the author's own diff, before merging (see "Lean
+process" below).
 
 ### Tests must be best-in-class, not change detectors
 
@@ -190,6 +196,24 @@ before reporting; drop only what you can refute from the code itself.
 
 A test that only fails when someone edits the line above it is worse than no
 test. Assert behavior at real seams.
+
+### Lean process
+
+> "WHY are we doing DUPLICATE checks in our own containers, if we're using
+> GHA for most CI???!!!!"
+
+> "we need to make this drastically, drastically simpler"
+
+Said on 2026-10-14 of another project's process, which had grown local runs
+that duplicated CI, landing sessions, review agents polling on timers and
+repeated review rounds; the user then asked that this project be checked
+against it. So here: GitHub Actions is the one full test run; the author reviews
+their own diff once, through every lens above, and merges on green. No
+review agents, no polling, no repeated rounds, no rerun after a merge.
+Mutation testing and fuzzing are for the message-text parsers
+`docs/STATUS.md` names, where every review found a new way in, not for
+every change. Every session here spends the owner's Claude plan, whose
+weekly limit stopped this project's threads for most of 2026-10-13.
 
 ### CI is yours to keep green
 

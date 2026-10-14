@@ -1,21 +1,20 @@
 name: CI
 
+# Once per push to a pull request, and nowhere else: a merge reruns nothing
+# on main, since the pull request's run already tested the change, and the
+# next pull request's run would catch two changes that break together.
 on:
-  push:
-    branches: [main]
   pull_request:
 
+# A newer push to the same pull request makes the run for the older one moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test-matrix:
-    # Both the systemd the MCP sandbox must hold under: 24.04 ships 255, whose
-    # append_static_mounts bug the TemporaryFileSystem stand-ins work around
-    # and which is too old for PrivatePIDs; 26.04 ships 259, where PrivatePIDs
-    # closes the /proc escape. The sandbox test asserts each in turn.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, ubuntu-26.04]
-    runs-on: ${{ matrix.os }}
+  # The whole suite, once, on the VPS's Ubuntu (26.04, systemd 259).
+  suite:
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -44,13 +43,33 @@ jobs:
       - name: CLI smoke test
         run: node dist/cli/main.js --help
 
-  # Branch protection requires one check named "test"; the matrix above reports
-  # as "test-matrix (os)", so this gate collapses every leg into that single
-  # check — green only when all of them are, red if any failed or was cancelled.
+  # Ubuntu 24.04's systemd (255, built without BPF) gives the services less of
+  # their sandbox: no PrivatePIDs for the MCP service, no port lock for the
+  # assistant's Beeper Server. Only the two sandbox tests assert anything
+  # different there (that each gap is the one the install scripts warn of),
+  # so only they run. 255's append_static_mounts bug, which the MCP unit's
+  # TemporaryFileSystem stand-ins work around, shows up in the first.
+  older-systemd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Restrict unprivileged user namespaces, as Ubuntu 24.04+ hosts do
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+      - run: npm ci
+      - run: npx vitest run test/mcp-sandbox.integration.test.ts test/assistant-beeper-sandbox.integration.test.ts
+
+  # Branch protection requires one check named "test"; this gate collapses the
+  # jobs above into it: green only when all of them are, red if any failed or
+  # was cancelled.
   test:
-    needs: test-matrix
+    needs: [suite, older-systemd]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: All matrix legs passed
-        run: test "${{ needs.test-matrix.result }}" = "success"
+      - name: Every job passed
+        run: test "${{ needs.suite.result }}" = "success" && test "${{ needs.older-systemd.result }}" = "success"
