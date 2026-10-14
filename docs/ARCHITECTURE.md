@@ -2,11 +2,11 @@
 
 ## The constraint that shapes everything
 
-Beeper is Matrix under the hood with end-to-end encryption: **only a device logged into your account can decrypt your messages**. Beeper therefore has no third-party cloud API. The official surface is the **Beeper Client API** — an HTTP + MCP server embedded in a logged-in Beeper client, historically Beeper Desktop (`localhost:23373`) and now also the official headless **Beeper Server** (`beeper setup --server --install`, same API, same port, no GUI).
+Beeper is Matrix under the hood with end-to-end encryption: **only a device logged into your account can decrypt your messages**. Beeper therefore has no third-party cloud API. The official surface is the **Beeper Client API** — an HTTP + MCP server embedded in a logged-in Beeper client, historically Beeper Desktop (`localhost:23373`) and now also the official headless **Beeper Server** (same API, no GUI).
 
 Consequence: Claude Messenger is a *client* of a Beeper endpoint that must run somewhere logged into your account. Where that endpoint runs is pure configuration (`BEEPER_BASE_URL`); nothing else changes.
 
-> In practice we run **Beeper Desktop** for that endpoint, including on headless hosts (under Xvfb). The headless **Beeper Server** is deliberately unused: [beeper/cli#21](https://github.com/beeper/cli/issues/21) is open and unanswered, and reports it deleting a legacy account's bridge connections across every device. Because the endpoint is pure configuration, this choice touches nothing above `providers/` — which is the property this seam exists to provide.
+> In practice the owner's account runs in **Beeper Desktop**, including on headless hosts (under Xvfb), and never in the headless **Beeper Server**: [beeper/cli#21](https://github.com/beeper/cli/issues/21) is open, and reports a Server install deleting a legacy account's bridge connections across every device. Server runs only the assistant's own, new account ([below](#the-assistants-own-account)). Because the endpoint is pure configuration, this choice touches nothing above `providers/` — which is the property this seam exists to provide.
 
 ## Layers
 
@@ -49,10 +49,19 @@ Beeper cloud bridges ⇄ WhatsApp / Signal / Telegram / iMessage / ...
 |---|---|---|
 | Local | `http://localhost:23373` | Claude Code/Desktop on the same machine as Beeper Desktop |
 | Tunnel | `https://<tunnel-host>` | Remote Claude (web sessions, automations) reaching your desktop via Tailscale/cloudflared |
-| Headless server | `http://<vps>:23373` (behind tunnel/VPN) | 24/7 always-on: official Beeper Server on a small VPS (beta as of mid-2026) |
+| Assistant's own account | `http://127.0.0.1:23374` | The @Claude assistant's own Beeper account, on Beeper Server beside the owner's Beeper Desktop ([below](#the-assistants-own-account)) |
 | Always-on desktop | `https://<tunnel-host>` | 24/7 GA fallback: Beeper Desktop + Remote Access on a machine that stays awake |
 
 Beeper Desktop's *Remote Access* setting (Settings → Integrations → Advanced) binds the API to all interfaces and is designed for tunnels; auth stays bearer-token. Beeper ships no TLS — never expose the port raw.
+
+## The assistant's own account
+
+The @Claude assistant answers from a Beeper account of its own, in a private chat with the owner, so nothing it says is ever sent as the owner, and the owner's token stays read-only. That account needs a logged-in Beeper endpoint of its own. It runs on **Beeper Server**, not a second Beeper Desktop: Desktop's Client API is off until someone switches it on in its window, so a new account there can't be set up without a person at its screen, while Server's API answers from the start, sign-up included.
+
+`deploy/assistant-beeper.sh` installs it as the system unit `assistant-beeper.service` on `127.0.0.1:23374`, and makes the assistant's own configuration directory, `~/.config/claude-messenger/assistant`, whose `.env` points there. Commands run from that directory act as the assistant. Nothing above `providers/` changes: only `BEEPER_BASE_URL` differs.
+
+- **The owner's account never runs on Server.** [beeper/cli#21](https://github.com/beeper/cli/issues/21)'s data loss hit an existing account's bridges. Its maintainer traced the nightly build to the CLI, which installed Server's nightly channel whatever was asked (fixed on the CLI's main branch, but its latest release, 0.6.2, still does), and suspects a recovery-key reset, the one action that disconnects every cloud bridge, for the loss; the cause is unconfirmed. The assistant's account is new and has no bridges, and its build comes straight from Beeper's stable update feed, checked against the feed's SHA-512. The script refuses anything else the feed announces.
+- **It can't reach the owner.** It runs as a user of its own (`DynamicUser=`), sees no home directory and none of the owner's processes, and keeps the account's keys where only it can read them. Where systemd was built with BPF, as Ubuntu 26.04's is, it may also listen on its own port and on no other (never Desktop's 23373); a systemd built without it, like 24.04's, ignores that part, and `deploy/assistant-beeper.sh` warns of it. `test/assistant-beeper-sandbox.integration.test.ts` proves each under the real systemd, the port held on one and not on the other; that the real server runs under it, only a host can.
 
 ## Extension points (deliberate, not speculative)
 

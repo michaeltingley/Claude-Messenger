@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- `npm test` must be green before any push. Currently 681 tests / 35 files.
+- `npm test` must be green before any push. Currently 729 tests / 37 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -102,6 +102,14 @@ built for hypothetical futures.
   CI runs it on both Ubuntu 24.04 (systemd 255, too old for `PrivatePIDs`)
   and 26.04 (259), and it asserts the /proc escape open on the first and
   closed on the second.
+  `test/assistant-beeper-sandbox.integration.test.ts` likewise installs the
+  assistant's Beeper runtime with real sudo and systemd, a stand-in for
+  Beeper Server in it, and has the stand-in probe its sandbox from inside:
+  its user, the home directories, the owner's processes, which ports it may
+  bind, and who can read its data. The unit holds the server to its own port
+  only where systemd was built with BPF, as 26.04's was and 24.04's wasn't;
+  on 24.04 the test asserts the port open and the install's warning given.
+  That the real server runs under the sandbox, only a host shows.
   `test/claude-code-binary.integration.test.ts` runs the installed Claude
   Code, as the digest's model runs it, against a stand-in Anthropic API,
   and proves a message's @-mention can't make it read a file, the host's
@@ -232,5 +240,8 @@ to hold the ML expertise here, not to be handed it.
   (checked 2026-10-08). Use transcripts to recover something that was missed,
   then commit it. Assume the next session knows nothing that isn't committed.
 - iMessage bridging requires macOS on-device; no Linux host provides it.
-- The Beeper CLI still installs the **nightly** server channel (data-loss risk,
-  beeper/cli#21). Beeper Desktop + Remote Access is the GA fallback.
+- The Beeper CLI's latest release (0.6.2) still installs the **nightly**
+  server channel (data-loss risk, beeper/cli#21). The owner's account never
+  runs on Beeper Server; only the assistant's own account does, installed
+  from Beeper's stable feed by `deploy/assistant-beeper.sh`, never through
+  the CLI. Beeper Desktop + Remote Access is the GA fallback.

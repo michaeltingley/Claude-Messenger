@@ -24,7 +24,9 @@ const installedUnits = (source: string): string[] => {
 describe('deploy/ contracts', () => {
   it('every deploy shell script parses', () => {
     const scripts = readdirSync(DEPLOY).filter((f) => f.endsWith('.sh'));
-    expect(scripts).toEqual(expect.arrayContaining(['bootstrap.sh', 'configure.sh', 'signin-surface.sh']));
+    expect(scripts).toEqual(
+      expect.arrayContaining(['assistant-beeper.sh', 'bootstrap.sh', 'configure.sh', 'signin-surface.sh']),
+    );
 
     for (const script of scripts) {
       const { status, stderr } = spawnSync('bash', ['-n', join(DEPLOY, script)], { encoding: 'utf8' });
@@ -42,8 +44,8 @@ describe('deploy/ contracts', () => {
     }
   });
 
-  it('every unit file in deploy/systemd is installed by bootstrap.sh or the configure.sh it ends with', () => {
-    const scripts = read('bootstrap.sh') + read('configure.sh');
+  it('every unit file in deploy/systemd is installed by bootstrap.sh, the configure.sh it ends with, or assistant-beeper.sh', () => {
+    const scripts = read('bootstrap.sh') + read('configure.sh') + read('assistant-beeper.sh');
     const shipped = readdirSync(join(DEPLOY, 'systemd')).map((f) => f.replace(/\.service$/, ''));
     const installed = new Set(installedUnits(read('bootstrap.sh')));
 
@@ -98,8 +100,8 @@ describe('deploy/ contracts', () => {
     expect(read('cloud-init.yaml')).toMatch(/^\s+- xauth$/m);
   });
 
-  it('signin-surface.sh and configure.sh are executable, because the docs invoke them directly', () => {
-    for (const script of ['signin-surface.sh', 'configure.sh']) {
+  it('signin-surface.sh, configure.sh and assistant-beeper.sh are executable, because the docs invoke them directly', () => {
+    for (const script of ['signin-surface.sh', 'configure.sh', 'assistant-beeper.sh']) {
       expect(statSync(join(DEPLOY, script)).mode & 0o111, script).not.toBe(0);
     }
   });

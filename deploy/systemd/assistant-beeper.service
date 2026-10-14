@@ -1,0 +1,70 @@
+# systemd SYSTEM unit: Beeper Server signed in to the assistant's own Beeper
+# account, serving the Client API on 127.0.0.1:__PORT__. The owner's account
+# stays in their Beeper Desktop; this one is the assistant's alone (see "The
+# assistant's own account" in docs/ARCHITECTURE.md). deploy/assistant-beeper.sh
+# installs this unit into /etc/systemd/system with the port substituted, and
+# the server itself into /opt/beeper-server, from Beeper's stable update feed.
+#
+# Beeper Server rather than a second Beeper Desktop: Desktop's Client API is
+# off until someone switches it on in its window, so a new one can't be signed
+# up without a person at its screen. The Server has no window, and its API
+# answers from the start.
+#
+# A user of its own, not the owner: the owner's home holds their Beeper
+# Desktop's data (their account's keys, history and login token), and nothing
+# of the assistant's account belongs there. So this runtime can't read the
+# owner's home, and only it can read its own account's data.
+[Unit]
+Description=Beeper Server for the assistant's own Beeper account (Client API on 127.0.0.1:__PORT__)
+
+[Service]
+DynamicUser=yes
+# /var/lib/assistant-beeper: the account's keys, history and sign-in. Kept
+# across restarts and updates; `deploy/assistant-beeper.sh --reset` deletes it.
+# Only this runtime may open it, or anything it writes.
+StateDirectory=assistant-beeper
+StateDirectoryMode=0700
+UMask=0077
+Environment=HOME=/var/lib/assistant-beeper BEEPER_SERVER_DATA_DIR=/var/lib/assistant-beeper
+ExecStart=/opt/beeper-server/beeper-server --host=127.0.0.1 --port=__PORT__ --data-dir=/var/lib/assistant-beeper
+Restart=always
+RestartSec=5
+# DynamicUser= already gives ProtectSystem=strict, ProtectHome=read-only,
+# PrivateTmp=, RemoveIPC=, NoNewPrivileges= and RestrictSUIDSGID=. The home
+# directories go further here: not even readable.
+ProtectHome=yes
+# The owner's processes, Beeper Desktop among them, are out of sight. Their
+# /proc/<pid>/root and environ were already out of reach (ptrace's access
+# check), but not their command lines; this hides even that they exist. Not
+# PrivatePIDs: the server would become PID 1 of its namespace, which ignores
+# any signal it has no handler for.
+ProtectProc=invisible
+PrivateIPC=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Only the system calls a service needs; any other kills it.
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# It may listen on its own port and on no other: never the owner's Beeper
+# Desktop's (23373), whatever its own settings say. Connecting out is not
+# binding, so syncing with Beeper is unaffected. These two need a systemd
+# built with its BPF framework, as Ubuntu 26.04's is; one without it, like
+# 24.04's, ignores them, and deploy/assistant-beeper.sh warns of that.
+SocketBindAllow=tcp:__PORT__
+SocketBindDeny=any
+# A backstop on a host it shares with the owner's Beeper Desktop. Signed out,
+# it holds about 0.35 GB.
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

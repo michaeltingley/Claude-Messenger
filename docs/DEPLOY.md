@@ -13,15 +13,17 @@ the public internet; the Beeper token never leaves the host.
 └──────────────────────────────────────────────────────┘
 ```
 
-> **Beeper Server (`beeper setup --server --install`) is deliberately not
-> used.** [beeper/cli#21](https://github.com/beeper/cli/issues/21) is open and
-> unanswered: installing it on a legacy cloud-bridge account deleted every
-> bridge connection — WhatsApp, Telegram, Google Messages — **across all
-> devices, including the phone**, and its chats API returned empty results,
-> making it useless for automation regardless. `beeper-cli` is still 0.6.2
-> from 2026-05-18, so this is not quietly fixed. Beeper Desktop serves the
-> identical Client API on the same port, so nothing above the provider seam
-> changes (`docs/ARCHITECTURE.md`).
+> **Your account never runs on Beeper Server (`beeper setup --server
+> --install`).** [beeper/cli#21](https://github.com/beeper/cli/issues/21) is
+> open: installing it on a legacy cloud-bridge account deleted every bridge
+> connection — WhatsApp, Telegram, Google Messages — **across all devices,
+> including the phone**. The cause is unconfirmed, and `beeper-cli`'s latest
+> release (0.6.2, 2026-05-18) still installs Server's nightly channel whatever
+> is asked. Beeper Desktop serves the identical Client API, so nothing above
+> the provider seam changes (`docs/ARCHITECTURE.md`). Only the @Claude
+> assistant's own, new account runs on Server, a stable build installed
+> without the CLI (`deploy/assistant-beeper.sh`; "The assistant's own account"
+> in `docs/ARCHITECTURE.md`).
 
 ## What you need (the only human parts)
 

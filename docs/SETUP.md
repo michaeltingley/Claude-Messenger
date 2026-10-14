@@ -11,21 +11,24 @@ Three steps: get a Beeper endpoint + token, point Claude Messenger at it, connec
 2. The API is now at `http://localhost:23373` while the app runs.
 3. Get the token in step 2 below, with `claude-messenger connect`: Beeper asks you to approve, and the token goes straight into `.env`.
 
-### Option B — Headless Beeper Server on a VPS — ⚠️ DO NOT USE
+### Option B — Headless Beeper Server on a VPS — ⚠️ DO NOT USE FOR YOUR ACCOUNT
 
 > **`beeper setup --server --install` can destroy your account's bridge
 > connections.** [beeper/cli#21](https://github.com/beeper/cli/issues/21) is
-> **open and unanswered**: running it on a legacy cloud-bridge account deleted
-> every bridge connection — WhatsApp, Telegram, Google Messages — **across all
-> devices, including the phone.** Separately, its chats API returned empty
-> results on a fresh account, so it is non-functional for automation even when
-> it doesn't destroy anything. `beeper-cli` is still **0.6.2 (2026-05-18)**, so
-> this is not quietly fixed.
+> **open**: running it on a legacy cloud-bridge account deleted every bridge
+> connection — WhatsApp, Telegram, Google Messages — **across all devices,
+> including the phone.** Its maintainer traced the nightly build it installed
+> to the CLI, whose latest release (**0.6.2, 2026-05-18**) still installs
+> Server's nightly channel whatever is asked, and suspects a recovery-key
+> reset for the loss; the cause is unconfirmed. (The empty chats it also
+> reported were fixed in Server 4.3.121, per the maintainer.)
 >
 > This option is kept documented only so nobody rediscovers it and assumes it
-> was an oversight. Use Option C, which serves the identical Client API on the
-> same port. Nothing in Claude Messenger changes between them — the endpoint's
-> location is pure configuration (`BEEPER_BASE_URL`, see `ARCHITECTURE.md`).
+> was an oversight. Use Option C, which serves the identical Client API.
+> Nothing in Claude Messenger changes between them — the endpoint's location
+> is pure configuration (`BEEPER_BASE_URL`, see `ARCHITECTURE.md`). Server
+> runs only the @Claude assistant's own, new account, installed without the
+> CLI ("The assistant's own account" in `ARCHITECTURE.md`).
 
 ### Option C — Beeper Desktop on an always-on machine (24/7, GA path, recommended)
 
