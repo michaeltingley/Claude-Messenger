@@ -41,7 +41,7 @@ npx claude-messenger serve     # MCP server on stdio for Claude Code / Desktop
 npx claude-messenger mentions  # follow the messages you send that mention @Claude
 ```
 
-See **[docs/SETUP.md](docs/SETUP.md)** for creating the Beeper token and connecting Claude locally, **[docs/DEPLOY.md](docs/DEPLOY.md)** for the one-command 24/7 hosted setup (VPS + headless Beeper Server + HTTP MCP over Tailscale), and **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for design decisions.
+See **[docs/SETUP.md](docs/SETUP.md)** for creating the Beeper token and connecting Claude locally, **[docs/DEPLOY.md](docs/DEPLOY.md)** for the one-command 24/7 hosted setup (VPS + headless Beeper Desktop + HTTP MCP over Tailscale), and **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for design decisions.
 
 ## Permissions model in one paragraph
 

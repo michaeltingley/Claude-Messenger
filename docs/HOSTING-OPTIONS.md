@@ -28,9 +28,10 @@ the public endpoints listed under [Re-verifying](#re-verifying).
   threat model, not just its price.
 - **Outbound-only networking.** Inbound access rides Tailscale.
 - **arm64 or x86_64.** Beeper ships official AppImages for both.
-- **Never Beeper Server.** [beeper/cli#21](https://github.com/beeper/cli/issues/21)
+- **Never Beeper Server for your account.** [beeper/cli#21](https://github.com/beeper/cli/issues/21)
   deleted a legacy account's bridge connections across every device. See
-  `DEPLOY.md`.
+  `DEPLOY.md`. (The assistant's own, new account does run on it, beside your
+  Beeper Desktop: about 0.35 GB more.)
 - **iMessage needs a Mac.** Beeper's help center says "only offered for Mac",
   and chats live only on the Mac where the connection was made. No Linux host
   of any kind provides it.

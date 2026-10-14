@@ -10,10 +10,11 @@ import { join } from 'node:path';
  * `claude` and `id`. The shims model the real CLIs' exit codes and output
  * over a state directory, and reject any invocation they don't model (exit
  * 64), so a script can't drift to a CLI form these tests don't cover without
- * failing them. Everything else (node, curl, openssl, timeout) is the real
- * thing, except that curl refuses the installers' downloads and sudo refuses
- * /opt: a script under test that goes wrong must fail, not install software
- * on the machine running the tests.
+ * failing them. Everything else (node, curl, openssl, tar, timeout) is the
+ * real thing, except that curl refuses the installers' downloads, and what
+ * sudo writes under /etc and /opt lands in a fake root: a script under test
+ * that goes wrong must fail, not install software on the machine running the
+ * tests.
  *
  * `systemctl` runs a unit for real when its file is installed: under
  * ~/.config/systemd/user for the user manager, or under the fake root's
@@ -29,11 +30,17 @@ import { join } from 'node:path';
  * drops. Like systemd, `start` leaves an active unit alone; only `restart`
  * swaps the process, and `enable` enables only a unit whose [Install]
  * section says where. Units that exist only as state flags (`units/<name>`)
- * are just marked active.
+ * are just marked active. A system unit may run under DynamicUser= instead
+ * of the host's user, and gets the StateDirectory= it names, made before it
+ * starts and deleted by `clean --what=state`. A system unit's paths under
+ * /opt and /var/lib are the fake root's where root wrote there (sudo's
+ * writes and state directories), and the machine's own otherwise, as node
+ * may be. `cat` prints a unit's file after a line naming it, as the real one
+ * does.
  *
  * `sudo` runs only the commands the scripts use, as that same user, but
- * every argument naming a path under /etc is moved into the fake root,
- * where root's writes land.
+ * every argument naming a path under /etc or /opt is moved into the fake
+ * root, where root's writes land.
  */
 
 const TAILSCALE_SHIM = `#!/usr/bin/env bash
@@ -139,10 +146,15 @@ start_unit() {
       user="$(sed -n 's/^User=//p' "$f" | tail -n 1)"
       case "$user" in
         "$FAKE_HOST_USER") ;;
-        "") echo "fake systemctl: $u names no User=, so it would run as root" >&2; return 1 ;;
+        "")
+          # A user of its own, made as it starts; here, it runs as the host's.
+          if [ "$(sed -n 's/^DynamicUser=//p' "$f" | tail -n 1)" != yes ]; then
+            echo "fake systemctl: $u names no User=, so it would run as root" >&2; return 1
+          fi ;;
         *) failed_after_fork "$u" "217/USER"; return ;;
       esac
       if [ -e "$S/sandbox-fails" ]; then failed_after_fork "$u" "226/NAMESPACE"; return; fi
+      for state in $(sed -n 's/^StateDirectory=//p' "$f"); do mkdir -p "$FAKE_HOST_ROOT/var/lib/$state"; done
     fi
     for key in ReadWritePaths BindPaths BindReadOnlyPaths; do
       for rw in $(sed -n "s/^$key=//p" "$f"); do
@@ -154,6 +166,20 @@ start_unit() {
     done
     wd="$(sed -n 's/^WorkingDirectory=//p' "$f" | tail -n 1)"
     cmd="$(sed -n 's/^ExecStart=//p' "$f" | tail -n 1)"
+    if [ "$scope" = system ]; then
+      # What root put under /opt or /var/lib is the fake root's; anything else
+      # there is the machine's own (node, say). A path may follow a flag's =.
+      words=()
+      for word in $cmd; do
+        flag="\${word%%/*}"
+        path="\${word#"$flag"}"
+        case "$path" in
+          /opt/* | /var/lib/*) [ -e "$FAKE_HOST_ROOT$path" ] && word="$flag$FAKE_HOST_ROOT$path" ;;
+        esac
+        words+=("$word")
+      done
+      cmd="\${words[*]}"
+    fi
     # Its own process group, so stopping it stops everything it started. And
     # none of the caller's environment: a unit gets only its manager's, so
     # whatever it needs must come from its own config. Only the user manager
@@ -167,7 +193,12 @@ start_unit() {
 }
 case "$verb" in
   daemon-reload) ;;
-  cat) installed "$1" ;;
+  cat)
+    if ! installed "$1"; then echo "No files found for $1." >&2; exit 1; fi
+    if [ -e "$(file_of "$1")" ]; then
+      printf '# %s\n' "$(file_of "$1")"
+      cat "$(file_of "$1")"
+    fi ;;
   is-active)
     [ "\${1:-}" = "--quiet" ] && shift
     [ -e "$T/active/$1" ] || exit 1
@@ -182,7 +213,10 @@ case "$verb" in
       if ! installed "$u"; then echo "Unit $u not found." >&2; exit 5; fi
     done
     for u in "$@"; do
-      if [ "$verb" = start ] && [ -e "$T/active/$u" ]; then continue; fi
+      # An active unit is left alone; one whose process has died is not active.
+      if [ "$verb" = start ] && [ -e "$T/active/$u" ] && { [ ! -e "$T/pids/$u" ] || kill -0 "$(cat "$T/pids/$u")" 2>/dev/null; }; then
+        continue
+      fi
       start_unit "$u" || exit 1
     done ;;
   enable)
@@ -198,6 +232,21 @@ case "$verb" in
       fi
       if [ "$now" = 1 ] && [ ! -e "$T/active/$u" ]; then start_unit "$u" || exit 1; fi
     done ;;
+  stop)
+    for u in "$@"; do
+      if ! installed "$u"; then echo "Failed to stop $u: Unit $u not loaded." >&2; exit 5; fi
+      stop_unit "$u"
+    done ;;
+  clean)
+    # Only the form the scripts use: delete a unit's StateDirectory=.
+    if [ "\${1:-}" != "--what=state" ] || [ $# -ne 2 ]; then
+      echo "fake systemctl: unmodeled invocation: $verb $*" >&2; exit 64
+    fi
+    if ! installed "$2"; then echo "Failed to clean unit $2: Unit $2 not loaded." >&2; exit 5; fi
+    if [ -e "$T/active/$2" ]; then
+      echo "Failed to clean unit $2: Unit is not inactive or has pending job." >&2; exit 1
+    fi
+    for state in $(sed -n 's/^StateDirectory=//p' "$(file_of "$2")"); do rm -rf "$FAKE_HOST_ROOT/var/lib/$state"; done ;;
   disable)
     now=0
     if [ "\${1:-}" = "--now" ]; then now=1; shift; fi
@@ -223,7 +272,7 @@ esac
 // then, -n fails. The command gets a reset environment, so only leading
 // VAR=value assignments reach it (PATH stays, so it still finds the other
 // shims). Only the commands and forms the scripts use run; paths under /etc
-// move into the fake root.
+// and /opt move into the fake root.
 const SUDO_SHIM = `#!/usr/bin/env bash
 S="$FAKE_HOST_STATE"
 echo "sudo $*" >> "$S/calls.log"
@@ -242,12 +291,13 @@ if [ "\${1:-}" = "-n" ]; then asks=0; shift; fi
 assign=()
 while [ $# -gt 0 ] && [[ "$1" == [A-Z_]*=* ]]; do assign+=("$1"); shift; done
 case "\${1:-}" in -*|"") echo "fake sudo: unmodeled invocation: $*" >&2; exit 64 ;; esac
-case " $* " in *" /opt"*) echo "fake sudo: a fake host has no /opt to install into: $*" >&2; exit 64 ;; esac
 # Root can write anywhere, so nothing else may run as root here. Installers
 # piped in (bash -, sh) get only what the fake curl refuses to download.
 case "$*" in
   true|"bash -"|sh|"systemctl "*|"tailscale "*|"apt-get "*|"loginctl "*) ;;
   "tee /etc/"*) [ $# -eq 2 ] || { echo "fake sudo: unmodeled invocation: $*" >&2; exit 64; } ;;
+  # A file put in place under /opt, as an installer does.
+  "install -D -m 0755 "*) [ $# -eq 6 ] && [[ "$6" == /opt/* ]] || { echo "fake sudo: unmodeled invocation: $*" >&2; exit 64; } ;;
   *) echo "fake sudo: unmodeled invocation: $*" >&2; exit 64 ;;
 esac
 if [ -e "$S/sudo-needs-password" ]; then
@@ -260,7 +310,7 @@ if [ -e "$S/sudo-asks-password" ] && [ ! -e "$S/sudo-remembers" ]; then
 fi
 args=()
 for arg in "$@"; do
-  case "$arg" in /etc/*) args+=("$FAKE_HOST_ROOT$arg") ;; *) args+=("$arg") ;; esac
+  case "$arg" in /etc/* | /opt/*) args+=("$FAKE_HOST_ROOT$arg") ;; *) args+=("$arg") ;; esac
 done
 exec env -i PATH="$PATH" HOME="$HOME" FAKE_HOST_STATE="$S" FAKE_HOST_ROOT="$FAKE_HOST_ROOT" FAKE_HOST_USER="$FAKE_HOST_USER" \\
   FAKE_SUDO=1 "\${assign[@]}" "\${args[@]}"

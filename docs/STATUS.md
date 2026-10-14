@@ -27,9 +27,10 @@ and `docs/HOSTING-OPTIONS.md`._
     - `deploy/configure.sh` closes it as soon as the token is saved, however
       the run ends.
   - Systemd units are single-sourced in `deploy/systemd/`.
-  - Beeper Server / `beeper-cli` is gone everywhere.
-    [beeper/cli#21](https://github.com/beeper/cli/issues/21) wiped a legacy
-    account's bridges across all devices.
+  - The owner's account never runs on Beeper Server, and `beeper-cli` is
+    gone everywhere: [beeper/cli#21](https://github.com/beeper/cli/issues/21)
+    wiped a legacy account's bridges across all devices. Only Claude's own
+    account runs on Server (see "@Claude assistant").
 - **Session-runnable install (#22)**:
   - `deploy/bootstrap.sh` never prompts, so a Claude session can run it.
     apt runs non-interactively. The tty rebind and the token paste are gone.
@@ -285,32 +286,32 @@ owner's messages, Gmail and Calendar. Phase 3 "Acts for you" sends as the
 owner, each send approved in the Claude chat.
 
 1. **Done:** the read-only listener (#24, above).
-2. **Next: Claude's own Beeper account**, so answers come from Claude, not
-   from the owner, whose own token stays read-only. Creating it is the
-   owner's call: it accepts Beeper's Terms of Use, and Beeper emails a
-   code to the sign-up address. What's known (2026-10-13):
-   - A Beeper Desktop or Server that isn't signed in can create one
-     through its setup API: `POST /v1/app/setup/start`, `/email`,
-     `/response`, then `/register` with a username and `acceptTerms` when
-     the address is new (`client.app.setup` in `@beeper/desktop-api`
-     6.x; `beeper auth email start|response --username … --yes`). Run it
-     on a runtime of its own, as a separate Unix user, so nothing reaches
-     the owner's signed-in Desktop: `beeper setup` offers to reuse a
-     running local Desktop by default.
-   - If `/response` doesn't ask to register, the address already has an
-     account (a plus address of the owner's Gmail is untried): sign that
-     session out and stop.
+2. **Now: Claude's own Beeper account**, so answers come from Claude, not
+   from the owner, whose own token stays read-only. The owner chose to
+   create it (2026-10-14), with a plus address of their Gmail, Beeper's
+   emailed code read from that inbox; signing up accepts Beeper's Terms of
+   Use for that account.
+   - **Its runtime:** Beeper Server, signed in as Claude, beside the
+     owner's Desktop. `deploy/assistant-beeper.sh` installs it as the
+     system unit `assistant-beeper.service` on 127.0.0.1:23374, under a
+     user of its own, and makes Claude's config dir,
+     `~/.config/claude-messenger/assistant` ("The assistant's own account"
+     in `docs/ARCHITECTURE.md`). Chosen over Beeper's
+     `@beeper/chat-adapter-matrix` (npm 0.2.0), which never sets up
+     cross-signing or verifies its device: here encryption stays in
+     Beeper's runtime, and `providers/beeper` reaches it unchanged. It
+     holds about 0.35 GB signed out (Server 4.3.176, measured in a cloud
+     container).
+   - **Next: the sign-up command**, through the Server's setup API:
+     `POST /v1/app/setup/start`, `/email`, `/response`, then `/register`
+     with a username and `acceptTerms` when the address is new
+     (`client.app.setup` in `@beeper/desktop-api` 6.x). If `/response`
+     doesn't ask to register, the address already has an account (a plus
+     address is untried): sign that session out and stop.
    - Resetting a recovery key disconnects every cloud network on that
-     account (Beeper's maintainer on beeper/cli#21). Harmless on Claude's
-     new account; never on the owner's.
-   - Two ways to run the account, still to choose. Beeper's
-     `@beeper/chat-adapter-matrix` (npm 0.2.0) needs a token, user ID and
-     device ID of its own; it never sets up cross-signing and doesn't
-     verify its device. Or a Beeper Server signed in as Claude, reached
-     through `providers/beeper` with a second token: encryption stays in
-     Beeper's runtime, at the cost of a second Beeper process on a 4 GB
-     box. The CLI's nightly-only Server install (see CLAUDE.md) is fixed
-     by beeper/cli#25, per that maintainer; untried here.
+     account (Beeper's maintainer on beeper/cli#21). Claude's account sets
+     up its encryption that way, harmless while it has no networks; never
+     the owner's.
 3. **Then the runtime, as a service on the VPS.** For each mention, read
    the message again (it may have been edited or deleted since), answer
    with `claude -p` on the owner's Max login, and post the answer in
@@ -417,6 +418,12 @@ owner, each send approved in the Claude chat.
    the first digest ran there at 23:05Z and was posted in the thread; the
    routine `trig_01QEMFG4JEuAjwpTVFnuz78e` runs it each morning at 7:46 AM
    Pacific. See "Daily digest" above.
+9. **Install Claude's Beeper runtime on the VPS**, as the owner, from the
+   checkout on `main`: `deploy/assistant-beeper.sh`. The owner's go is the
+   account's ("Create it", 2026-10-14). CI proves the unit's sandbox with a
+   stand-in server; on the box, check that the real one runs under it (it
+   answers on 127.0.0.1:23374, can't bind 23373, can't see `/home`), and
+   measure its memory beside Beeper Desktop.
 
 ### Hosting history (kept short)
 
@@ -433,7 +440,8 @@ owner, each send approved in the Claude chat.
   and the host SSH key with it.
   - Anything a later session needs must be committed.
   - Keys belong with the user or on the host, never only in a container.
-- **Never install Beeper Server.** See above.
+- **Never run the owner's account on Beeper Server, and never install
+  Server through `beeper-cli`.** See above.
 - **What the VPS taught the install (2026-10-12/13):**
   - Every apt package name in `bootstrap.sh` resolves on Ubuntu 26.04
     (checked by the first VPS session).
