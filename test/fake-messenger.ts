@@ -11,6 +11,7 @@ import type {
   SendMessageInput,
   SendMessageResult,
   ServerInfo,
+  StartDirectChatInput,
 } from '../src/core/types.js';
 import { NotFoundError } from '../src/core/errors.js';
 
@@ -55,6 +56,8 @@ export class FakeMessenger implements Messenger {
   messages: Message[] = [];
   sent: SendMessageInput[] = [];
   markedRead: string[] = [];
+  /** Every direct chat asked for, in order. */
+  started: StartDirectChatInput[] = [];
   /** Every watch opened, in order. */
   watchQueries: MessageWatchQuery[] = [];
   private readonly watchers = new Set<(event: WatchEvent) => void>();
@@ -170,6 +173,24 @@ export class FakeMessenger implements Messenger {
       this.watchers.delete(push);
       signal.removeEventListener('abort', onAbort);
     }
+  }
+
+  /** The direct chat with that person on that account, or else a new one. */
+  async startDirectChat(input: StartDirectChatInput): Promise<Chat> {
+    this.started.push(input);
+    const existing = this.chats.find(
+      (c) => c.accountId === input.accountId && c.type === 'single' && c.participants.some((p) => p.id === input.userId),
+    );
+    if (existing) return existing;
+    const chat = makeChat({
+      id: `chat-with-${input.userId}`,
+      accountId: input.accountId,
+      network: this.chats.find((c) => c.accountId === input.accountId)?.network ?? 'unknown',
+      title: input.userId,
+      participants: [{ id: 'me', isSelf: true }, { id: input.userId }],
+    });
+    this.chats.push(chat);
+    return chat;
   }
 
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {

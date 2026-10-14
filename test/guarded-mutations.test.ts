@@ -131,3 +131,64 @@ describe('GuardedMessenger mutations', () => {
     expect(audit.entries.at(-1)).toMatchObject({ decision: 'denied', rule: 'read.accountAllowlist' });
   });
 });
+
+describe('GuardedMessenger starting a direct chat', () => {
+  const policy = parsePolicy({
+    version: 1,
+    capabilities: { read: true, startChat: true },
+    read: { accountAllowlist: '*', chatDenylist: ['chat-secret'] },
+    startChat: { userAllowlist: ['@owner:beeper.com'] },
+  });
+
+  it('audits who it is with before the provider is asked, and the chat it opened after', async () => {
+    const audit = new MemoryAuditLogger();
+    const fake = new FakeMessenger();
+    const guarded = new GuardedMessenger(fake, new PolicyEngine(policy), audit);
+
+    const chat = await guarded.startDirectChat({ accountId: 'matrix', userId: '@owner:beeper.com' });
+
+    expect(fake.started).toEqual([{ accountId: 'matrix', userId: '@owner:beeper.com' }]);
+    expect(audit.entries).toEqual([
+      expect.objectContaining({
+        action: 'startDirectChat',
+        stage: 'intent',
+        context: { accountId: 'matrix', userId: '@owner:beeper.com' },
+      }),
+      expect.objectContaining({
+        action: 'startDirectChat',
+        stage: 'outcome',
+        outcome: 'ok',
+        context: { accountId: 'matrix', userId: '@owner:beeper.com', chatId: chat.id },
+      }),
+    ]);
+    expect(audit.entries[1]!.opId).toBe(audit.entries[0]!.opId);
+  });
+
+  it('never asks the provider for a chat with someone the policy leaves out, and records the denial with its rule', async () => {
+    const audit = new MemoryAuditLogger();
+    const fake = new FakeMessenger();
+    const guarded = new GuardedMessenger(fake, new PolicyEngine(policy), audit);
+
+    await expect(guarded.startDirectChat({ accountId: 'matrix', userId: '@stranger:beeper.com' })).rejects.toMatchObject({
+      rule: 'startChat.userAllowlist',
+    });
+    expect(fake.started).toEqual([]);
+    expect(audit.entries).toEqual([
+      expect.objectContaining({ action: 'startDirectChat', decision: 'denied', rule: 'startChat.userAllowlist' }),
+    ]);
+  });
+
+  it('keeps a chat the read policy hides from the caller, though it was opened', async () => {
+    const audit = new MemoryAuditLogger();
+    const fake = new FakeMessenger();
+    fake.chats = [
+      makeChat({ id: 'chat-secret', accountId: 'matrix', participants: [{ id: '@owner:beeper.com' }] }),
+    ];
+    const guarded = new GuardedMessenger(fake, new PolicyEngine(policy), audit);
+
+    await expect(guarded.startDirectChat({ accountId: 'matrix', userId: '@owner:beeper.com' })).rejects.toMatchObject({
+      rule: 'read.chatDenylist',
+    });
+    expect(audit.entries.at(-1)).toMatchObject({ action: 'startDirectChat', decision: 'denied', rule: 'read.chatDenylist' });
+  });
+});

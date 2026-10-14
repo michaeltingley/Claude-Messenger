@@ -388,6 +388,14 @@ owner, each send approved in the Claude chat.
    - Like the audit, its journal must hold nothing it read: log a failure
      by its code (`errorCode` in `policy/audit.ts`), since a provider's
      error text can quote a message.
+   - **Claude's chat with the owner:** `claude-messenger start-chat --with
+     <owner's Beeper user ID>`, run from Claude's config dir, opens it (the
+     one there is, or a new one the owner is invited to) and prints its ID.
+     Claude's policy must allow it first: `capabilities.startChat` and the
+     owner in `startChat.userAllowlist`; answering there then needs
+     `capabilities.send` and that chat in `send.chatAllowlist`. Not run yet:
+     it reaches the owner, and turning on sends from Claude's account waits
+     for the owner's go, with the responder.
 
 ## NEXT ACTION (for the picking-up session)
 

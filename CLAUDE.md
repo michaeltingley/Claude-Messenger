@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- CI's `npm test` must be green before any merge. Currently 756 tests / 38 files.
+- CI's `npm test` must be green before any merge. Currently 768 tests / 39 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
