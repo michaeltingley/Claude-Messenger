@@ -307,7 +307,10 @@ owner, each send approved in the Claude chat.
      system unit `assistant-beeper.service` on 127.0.0.1:23374, under a
      user of its own, and makes Claude's config dir,
      `~/.config/claude-messenger/assistant` ("The assistant's own account"
-     in `docs/ARCHITECTURE.md`). Chosen over Beeper's
+     in `docs/ARCHITECTURE.md`). The script unpacks the server's code
+     itself, into `/opt/beeper-server/payload`, read-only to the server,
+     because the server's own unpacking can't run in its sandbox (#43;
+     NEXT ACTION 9). Chosen over Beeper's
      `@beeper/chat-adapter-matrix` (npm 0.2.0), which never sets up
      cross-signing or verifies its device: here encryption stays in
      Beeper's runtime, and `providers/beeper` reaches it unchanged. It
@@ -435,30 +438,35 @@ owner, each send approved in the Claude chat.
    the first digest ran there at 23:05Z and was posted in the thread; the
    routine `trig_01QEMFG4JEuAjwpTVFnuz78e` runs it each morning at 7:46 AM
    Pacific. See "Daily digest" above.
-9. **Install Claude's Beeper runtime on the VPS — ATTEMPTED 2026-10-14
-   (deploy 3), BLOCKED on a unit bug.** `deploy/assistant-beeper.sh` installed
-   Beeper Server 4.3.176 cleanly (SHA-512 OK, no BPF warning), but the server
-   will not start under the unit's sandbox. Beeper Server unpacks its payload
-   with GNU `tar` 1.35, whose `openat2(…, RESOLVE_BENEATH)` returns ENOSYS
-   under the `RestrictSUIDSGID` that `DynamicUser=yes` implies; tar 1.35 does
-   not fall back, so every entry fails "Function not implemented" and the
-   server dies (exit 2). Reproduced on the box in throwaway units;
-   `RestrictSUIDSGID=no` alone does not help, because `DynamicUser` forces it.
-   The sandbox is otherwise sound — it hides `/home` (verified via `nsenter`).
-   **Box state:** the unit is installed and **enabled but STOPPED** — it
-   crash-looped on `Restart=always` (~300 MB / ~3 s CPU per ~8 s attempt) and
-   was stopped by hand after 17 restarts; `/opt/beeper-server`, the unit file,
-   the config dir and `/var/lib/private/assistant-beeper` are intact, and a
-   reboot would restart the loop until the unit is fixed. *A health check
-   showing `assistant-beeper.service` inactive/failed is expected, not an
-   alarm; `sudo systemctl disable assistant-beeper` stops the reboot loop if
-   needed.* The fix is a repo change to
-   `deploy/systemd/assistant-beeper.service`, owned by thread "Talk to Claude
-   inside Beeper" (options: a static system user minus `RestrictSUIDSGID` —
-   needs the owner's word on a new user; a `tar` for the unit that avoids
-   openat2; or unpacking at install time). When that lands on `main`,
-   redeploy and `sudo systemctl start assistant-beeper`. The owner's Beeper
-   Desktop (23373) and the MCP service were untouched; 2176 MB free after.
+9. **Install Claude's Beeper runtime on the VPS — deploy 3 (2026-10-14)
+   was BLOCKED on a unit bug, fixed in #43; redeploy next.** Deploy 3
+   installed Beeper Server 4.3.176 cleanly (SHA-512 OK, no BPF warning), but
+   the server would not start under the unit's sandbox. It unpacks its own
+   code on first start with GNU `tar` 1.35, whose `openat2(…,
+   RESOLVE_BENEATH)` returns ENOSYS under the `RestrictSUIDSGID` that
+   `DynamicUser=yes` implies; tar does not fall back, so every entry failed
+   "Function not implemented" and the server died (exit 2). Reproduced on the
+   box in throwaway units; `RestrictSUIDSGID=no` alone does not help, because
+   `DynamicUser` forces it. The sandbox is otherwise sound — it hides `/home`
+   (verified via `nsenter`). #43 has `deploy/assistant-beeper.sh` unpack that
+   code itself as it installs the server, into `/opt/beeper-server/payload`
+   (read-only to the runtime), and the unit point the launcher there.
+   **Box state until the redeploy:** the unit is installed and **enabled but
+   STOPPED** — it crash-looped on `Restart=always` (~300 MB / ~3 s CPU per ~8
+   s attempt) and was stopped by hand after 17 restarts; `/opt/beeper-server`,
+   the unit file, the config dir and `/var/lib/private/assistant-beeper` are
+   intact, and a reboot would restart the loop. *A health check showing
+   `assistant-beeper.service` inactive/failed is expected, not an alarm;
+   `sudo systemctl disable assistant-beeper` stops the reboot loop if
+   needed.* **To redeploy** (no account is on it yet, so nothing is lost):
+   bring the checkout to `main`, run `deploy/assistant-beeper.sh` (it finds
+   the server down, downloads it again, unpacks its code and installs the
+   new unit), then `deploy/assistant-beeper.sh --reset`, which deletes what
+   the failed starts left in the runtime's data (a copy of its packed code,
+   about 150 MB) and starts it clean. Then check
+   `curl -s 127.0.0.1:23374/v1/info` and `doctor` (green, read-only), and
+   note the unit's memory. The owner's Beeper Desktop (23373) and the MCP
+   service were untouched by deploy 3; 2176 MB free after.
 10. **Sign Claude up**, once 9 is done, on the VPS:
     `cd ~/.config/claude-messenger/assistant && node ~/claude-messenger/dist/cli/main.js signup start --email <address>`,
     with the plus address of the owner's Gmail the owner chose; read

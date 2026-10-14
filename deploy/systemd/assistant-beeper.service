@@ -3,7 +3,8 @@
 # stays in their Beeper Desktop; this one is the assistant's alone (see "The
 # assistant's own account" in docs/ARCHITECTURE.md). deploy/assistant-beeper.sh
 # installs this unit into /etc/systemd/system with the port substituted, and
-# the server itself into /opt/beeper-server, from Beeper's stable update feed.
+# the server itself into /opt/beeper-server, from Beeper's stable update feed,
+# its code unpacked there (see XDG_CACHE_HOME below).
 #
 # Beeper Server rather than a second Beeper Desktop: Desktop's Client API is
 # off until someone switches it on in its window, so a new one can't be signed
@@ -26,6 +27,14 @@ StateDirectory=assistant-beeper
 StateDirectoryMode=0700
 UMask=0077
 Environment=HOME=/var/lib/assistant-beeper BEEPER_SERVER_DATA_DIR=/var/lib/assistant-beeper
+# The server is one executable that, started, unpacks the rest of its code
+# with tar into $XDG_CACHE_HOME/BeeperServer/<build>, unless it finds it there
+# already. tar can't run in this sandbox: Ubuntu 26.04's opens files with
+# openat2(), which the RestrictSUIDSGID= that DynamicUser= implies refuses
+# (ENOSYS), and it does not fall back. So deploy/assistant-beeper.sh unpacks
+# it as it installs the server, under /opt, where this runtime can read its
+# code but not change it.
+Environment=XDG_CACHE_HOME=/opt/beeper-server/payload
 ExecStart=/opt/beeper-server/beeper-server --host=127.0.0.1 --port=__PORT__ --data-dir=/var/lib/assistant-beeper
 Restart=always
 RestartSec=5

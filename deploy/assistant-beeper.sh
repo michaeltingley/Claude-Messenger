@@ -29,6 +29,8 @@ FEED="${ASSISTANT_BEEPER_FEED:-https://api.beeper.com/desktop/update-feed.json}"
 # Where the owner's Beeper Desktop serves its Client API. Never this runtime's.
 OWNER_PORT=23373
 SERVER=/opt/beeper-server/beeper-server
+# The rest of its code, unpacked (see below); the unit's XDG_CACHE_HOME.
+PAYLOAD=/opt/beeper-server/payload
 UNIT=assistant-beeper.service
 UNIT_FILE="$INSTALL_DIR/deploy/systemd/assistant-beeper.service"
 # The assistant's own configuration: a .env with this runtime's address and,
@@ -186,7 +188,9 @@ elif [ -n "$current" ] && [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V
   warn "Beeper Server ${current} runs, newer than the stable feed's ${VERSION}; kept."
   VERSION="$current"
 else
-  TMP="$(mktemp -d)"
+  # On disk, not in /tmp, which may be held in memory: the server and its
+  # unpacked code come to about 0.65 GB.
+  TMP="$(mktemp -d -p /var/tmp)"
   echo "Downloading Beeper Server ${VERSION}..."
   curl -fsSL --max-time 900 -o "$TMP/server.tar.gz" "$ARTIFACT" || die "the download of Beeper Server ${VERSION} failed: ${ARTIFACT}"
   actual="$(openssl dgst -sha512 -binary "$TMP/server.tar.gz" | openssl base64 -A)"
@@ -195,9 +199,77 @@ else
   member="beeper-server-${VERSION}-linux-${ARCH}/beeper-server"
   tar -xzf "$TMP/server.tar.gz" -C "$TMP" "$member" 2>/dev/null && [ -f "$TMP/$member" ] && [ ! -L "$TMP/$member" ] ||
     die "the Beeper Server ${VERSION} download has no ${member}; nothing was installed."
+  rm "$TMP/server.tar.gz"
+
+  # The server is one executable whose launcher, started, unpacks the rest of
+  # its code with tar into $XDG_CACHE_HOME/<app>/<build>, then runs it from
+  # there; marked .complete, what is there is used as it is. Under the unit's
+  # sandbox tar can't run (the unit says why), so the code is unpacked here
+  # instead, exactly as the launcher would, and the unit points it there.
+  # First, the launcher's lines that say where it looks and that it uses what
+  # it finds, and where in the executable the payload lies: stored as a Node
+  # single executable stores an asset, its name's length in 8 bytes
+  # little-endian, the name, then the data's length and the data. Printed:
+  # "<app> <build> <offset> <size>", or why it is not packaged so.
+  packaged="$(node -e '
+    const [file, ...lines] = process.argv.slice(1);
+    const bin = require("node:fs").readFileSync(file);
+    const refuse = (why) => { console.log(why); process.exit(1); };
+    // Every offset in it at which `needle` starts.
+    const all = (needle) => {
+      const found = [];
+      for (let at = bin.indexOf(needle); at !== -1; at = bin.indexOf(needle, at + 1)) found.push(at);
+      return found;
+    };
+    // What the launcher sets `const <name> = "<value>"` to: a directory name.
+    const constant = (name) => {
+      const opening = Buffer.from(`const ${name} = "`);
+      const found = all(opening);
+      if (found.length !== 1) refuse(`its launcher sets ${name} ${found.length} times, not once`);
+      const start = found[0] + opening.length;
+      const value = bin.toString("latin1", start, bin.indexOf("\"", start));
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(value)) refuse(`its launcher sets ${name} to what is not a directory name`);
+      return value;
+    };
+    const app = constant("cacheAppName");
+    const key = constant("cacheKey");
+    for (const line of lines) if (bin.indexOf(line) === -1) refuse(`its launcher has no ${line}`);
+    const name = Buffer.from("payload.tar.gz");
+    const header = Buffer.alloc(8 + name.length);
+    header.writeBigUInt64LE(BigInt(name.length));
+    name.copy(header, 8);
+    // Each place the asset might start: its whole length in the file, and a gzip.
+    const payloads = all(header).flatMap((at) => {
+      const start = at + header.length + 8;
+      if (start > bin.length) return [];
+      const size = bin.readBigUInt64LE(at + header.length);
+      if (size < 2n || BigInt(start) + size > BigInt(bin.length)) return [];
+      return bin[start] === 0x1f && bin[start + 1] === 0x8b ? [`${start} ${size}`] : [];
+    });
+    if (payloads.length !== 1) refuse(`it holds ${payloads.length} payloads, not one`);
+    console.log(`${app} ${key} ${payloads[0]}`);' "$TMP/$member" \
+    "path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), cacheAppName, cacheKey)" \
+    "const targetDir = cacheDir()" \
+    "const completePath = path.join(targetDir, '.complete')" \
+    "if (fs.existsSync(completePath)) return")" ||
+    die "Beeper Server ${VERSION} is not packaged as this script expects (${packaged}); nothing was installed."
+  read -r app key at size <<<"$packaged"
+  unpacked="$TMP/payload/$app/$key"
+  mkdir -p "$unpacked"
+  dd if="$TMP/$member" iflag=skip_bytes,count_bytes skip="$at" count="$size" bs=1M status=none |
+    tar -xzf - -C "$unpacked" ||
+    die "the payload of Beeper Server ${VERSION} would not unpack; nothing was installed."
+  touch "$unpacked/.complete"
+  # The runtime's own user must read it; only root will change it.
+  chmod -R u=rwX,go=rX "$TMP/payload"
+
   # install unlinks the old file first, so a server running from it keeps
-  # running until the restart below.
+  # running until the restart below. The old build's unpacked code goes with
+  # it, so none is left behind; a server running from it keeps what it has
+  # loaded until then.
   sudo install -D -m 0755 "$TMP/$member" "$SERVER"
+  sudo rm -rf "$PAYLOAD"
+  sudo cp -R --preserve=mode "$TMP/payload" "$PAYLOAD"
   changed=1
   ok "Beeper Server ${VERSION} installed in ${SERVER%/*}"
 fi

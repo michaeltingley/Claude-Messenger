@@ -18,7 +18,9 @@ import { unusedPort } from './ports.js';
  * can tell. This runs the real deploy/assistant-beeper.sh with the real sudo
  * and systemd, installing a stand-in server from a stand-in feed
  * (test/beeper-feed.ts); the stand-in answers, from inside the running unit,
- * what it can reach.
+ * what it can reach. It is packaged as Beeper Server is, so it starts as the
+ * real one does: its launcher unpacks its code with tar, which this sandbox
+ * refuses on 26.04, unless the install already did.
  *
  * It installs into /opt and /etc/systemd/system, so it runs only on GitHub's
  * runners, which give every run a fresh VM: never on a real host, even one
