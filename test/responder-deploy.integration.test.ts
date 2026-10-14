@@ -337,7 +337,7 @@ describe('deploy/responder.sh (subprocess, no terminal, fake host)', { timeout: 
       expect(unit).not.toContain('__');
       expect(unit).toContain(`User=${FakeHost.USER}\n`);
       expect(unit).toContain(
-        `ExecStart=${node} dist/cli/main.js respond --assistant ${assistantDir} --time-zone America/Los_Angeles\n`,
+        `ExecStart=/bin/sh -c 'trap : TERM; "$$@"; exit' responder ${node} dist/cli/main.js respond --assistant ${assistantDir} --time-zone America/Los_Angeles\n`,
       );
       expect(unit).toContain(`Environment=PATH=${join(host.root, 'bin')}:/usr/local/bin:/usr/bin:/bin\n`);
       expect(unit).toContain(`Environment=CLAUDE_CONFIG_DIR=${claudeConfig()}\n`);

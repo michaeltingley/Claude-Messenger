@@ -174,20 +174,25 @@ start_unit() {
     done
     wd="$(sed -n 's/^WorkingDirectory=//p' "$f" | tail -n 1)"
     cmd="$(sed -n 's/^ExecStart=//p' "$f" | tail -n 1)"
-    if [ "$scope" = system ]; then
-      # What root put under /opt or /var/lib is the fake root's; anything else
-      # there is the machine's own (node, say). A path may follow a flag's =.
-      words=()
-      for word in $cmd; do
+    # Its words as systemd splits them: at blanks, but not within quotes, and
+    # with $$ for a literal $. Escapes are not modeled.
+    case "$cmd" in
+      *\\\\*) echo "fake systemctl: unmodeled ExecStart= in $u: $cmd" >&2; exit 64 ;;
+    esac
+    words=()
+    while IFS= read -r -d '' word; do
+      word="\${word//\\$\\$/\\$}"
+      if [ "$scope" = system ]; then
+        # What root put under /opt or /var/lib is the fake root's; anything else
+        # there is the machine's own (node, say). A path may follow a flag's =.
         flag="\${word%%/*}"
         path="\${word#"$flag"}"
         case "$path" in
           /opt/* | /var/lib/*) [ -e "$FAKE_HOST_ROOT$path" ] && word="$flag$FAKE_HOST_ROOT$path" ;;
         esac
-        words+=("$word")
-      done
-      cmd="\${words[*]}"
-    fi
+      fi
+      words+=("$word")
+    done < <(printf '%s\\n' "$cmd" | xargs printf '%s\\0')
     # Its own process group, so stopping it stops everything it started. And
     # none of the caller's environment: a unit gets only its manager's and its
     # own Environment=, so whatever it needs must come from its own config.
@@ -223,7 +228,7 @@ start_unit() {
         unit_env+=("$assignment")
       done < "$env_file"
     done
-    ( cd "\${wd:-$HOME}" && exec env -i "\${unit_env[@]}" setsid $cmd ) >> "$S/logs/$u.log" 2>&1 < /dev/null &
+    ( cd "\${wd:-$HOME}" && exec env -i "\${unit_env[@]}" setsid "\${words[@]}" ) >> "$S/logs/$u.log" 2>&1 < /dev/null &
     echo "$!" > "$T/pids/$u"
   fi
   touch "$T/active/$u"

@@ -19,7 +19,21 @@ Wants=network-online.target
 [Service]
 User=__USER__
 WorkingDirectory=__INSTALL_DIR__
-ExecStart=__NODE__ dist/cli/main.js respond --assistant __ASSISTANT_DIR__ --time-zone __TIME_ZONE__
+# Node runs as the child of a shell, not in its place. The sandbox gives the
+# service a PID namespace of its own (PrivatePIDs, below), whose PID 1 the
+# kernel gives only the signals it has a handler for: node there would drop a
+# stop that came as it started, before its handler, and systemd would wait out
+# its stop timeout; and it would leave whatever Claude Code left running, once
+# ended, a zombie. The shell is PID 1 instead. systemd signals every process
+# of the unit, so a stop reaches node as it would any process; the shell waits
+# for node to finish (where it is not PID 1, as under systemd < 257, the trap
+# keeps the stop from ending it first), reaps what is left, and exits with
+# node's status: 143 for a stop that came before node could handle it. The
+# trailing exit keeps it from exec'ing node.
+ExecStart=/bin/sh -c 'trap : TERM; "$$@"; exit' responder __NODE__ dist/cli/main.js respond --assistant __ASSISTANT_DIR__ --time-zone __TIME_ZONE__
+SuccessExitStatus=143
+# Its journal is the responder's, not the shell's.
+SyslogIdentifier=claude-messenger-responder
 # Claude Code as the owner installed it, first on PATH. Its native install is
 # a link on PATH to the current version, and the bind below follows it as the
 # service starts, so an update reaches the service when it next restarts.
@@ -53,8 +67,7 @@ PrivateTmp=true
 # Its own PID namespace, as for the MCP service: it runs as the owner, and
 # would otherwise reach around the sandbox through the owner's other processes
 # under /proc. systemd 257+ only; deploy/responder.sh warns on an older one.
-# Node, as PID 1 there, reaps only its own children: a process Claude Code
-# started and left behind when stopped stays a zombie until the next restart.
+# The shell of ExecStart is PID 1 there.
 PrivatePIDs=true
 PrivateIPC=true
 # Node, and Claude Code while it writes; a backstop on a host shared with

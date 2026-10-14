@@ -34,7 +34,9 @@ import { StandInAnthropic } from './stand-in-anthropic.js';
  * this runs the real deploy/responder.sh with the real sudo and systemd, has
  * the service answer an @Claude between two mock Beepers (the owner's, and
  * the assistant's own) and a stand-in Anthropic API, and then probes the
- * sandbox from inside the running service, as its user.
+ * sandbox from inside the running service, as its user. Last, it stops the
+ * service as it runs and as it starts, which a PID namespace of its own makes
+ * a test of what runs as PID 1 there.
  *
  * Claude Code is installed as its native installer installs it: the binary
  * in the home under versions/, and a link to it first on PATH. Its settings,
@@ -252,6 +254,32 @@ describe.runIf(onRunner)('the responder sandbox (real systemd and sudo, real Cla
       { encoding: 'utf8' },
     );
   const outside = (script: string, ...args: string[]) => spawnSync('sh', ['-c', script, 'sh', ...args], { encoding: 'utf8' });
+  /** A process's state (R, S, Z for a zombie...) and parent, or nothing once it is gone. */
+  const stat = (id: number) => {
+    try {
+      const line = readFileSync(`/proc/${id}/stat`, 'utf8');
+      const [state, parent] = line.slice(line.lastIndexOf(')') + 2).split(' ');
+      return { state: state!, parent: Number(parent) };
+    } catch {
+      return undefined;
+    }
+  };
+  /** The processes `parent` started, or took on when theirs ended. */
+  const children = (parent: number) =>
+    readdirSync('/proc')
+      .filter((entry) => /^\d+$/.test(entry))
+      .map(Number)
+      .filter((id) => stat(id)?.parent === parent);
+  const exe = (id: number) => {
+    try {
+      return readlinkSync(`/proc/${id}/exe`);
+    } catch {
+      return undefined;
+    }
+  };
+  const nodeBinary = () => join(toolchain!, 'installs', 'node');
+  /** The responder: the node that the unit's main process, a shell, runs. */
+  const responder = (main = pid) => children(main).find((child) => exe(child) === nodeBinary());
   const touch = 'touch "$1" && rm -f "$1"';
   const exists = 'test -e "$1"';
   const expectReadOnlyInside = (probe: string) => {
@@ -274,8 +302,9 @@ describe.runIf(onRunner)('the responder sandbox (real systemd and sudo, real Cla
     expect(spawnSync('systemctl', ['is-enabled', UNIT], { encoding: 'utf8' }).stdout.trim()).toBe('enabled');
   });
 
-  it('runs the node binary in the home that the shim on PATH leads to', () => {
-    expect(readlinkSync(`/proc/${pid}/exe`)).toBe(join(toolchain!, 'installs', 'node'));
+  it('runs the node in the home that the shim on PATH leads to, as the child of a shell', () => {
+    expect(exe(pid)).toBe(realpathSync('/bin/sh'));
+    expect(responder(), `the shell's children: ${children(pid).map((child) => exe(child)).join(', ')}`).toBeDefined();
   });
 
   it('answers @Claude from inside the sandbox, through Claude Code signed in with the service’s own token', async () => {
@@ -413,7 +442,7 @@ describe.runIf(onRunner)('the responder sandbox (real systemd and sudo, real Cla
     const restarted = () => {
       const now = Number(show('MainPID'));
       try {
-        return now !== pid && readlinkSync(`/proc/${now}/exe`) === join(toolchain!, 'installs', 'node') ? now : 0;
+        return now !== pid && responder(now) ? now : 0;
       } catch {
         return 0;
       }
@@ -426,17 +455,62 @@ describe.runIf(onRunner)('the responder sandbox (real systemd and sudo, real Cla
     expect(running()).toBe(statSync(claudeVersion('1.0.1')).ino);
   }, 60_000);
 
-  // Keep last: it stops the service, so any test after it would find it down.
-  it('stops promptly on systemctl stop, honouring SIGTERM as PID 1', () => {
-    const started = Date.now();
-    // A PID 1 that ignored SIGTERM would hang here until TimeoutStopSec (90s)
-    // and then be SIGKILLed; the 30s cap turns that hang into a failure.
-    const stop = spawnSync('sudo', ['systemctl', 'stop', UNIT], { encoding: 'utf8', timeout: 30_000 });
+  it('reaps what is left running in it, as a Claude Code run that was stopped can leave a process', async () => {
+    // A process whose parent ends goes to PID 1 of its PID namespace, which
+    // must reap it when it ends too, or it stays a zombie until the service
+    // restarts. Without a namespace of its own (systemd < 257), the host takes it.
+    const left = spawnSync(
+      'sudo',
+      ['nsenter', '-t', String(pid), '-m', '-p', '-S', String(uid), '-G', String(gid), '--', 'sh', '-c', 'sleep 1 >/dev/null 2>&1 &'],
+      { encoding: 'utf8' },
+    );
+    expect(left.status, left.stderr).toBe(0);
+    const comm = (id: number) => readFileSync(`/proc/${id}/comm`, 'utf8').trim();
+    expect(children(pid).filter((child) => comm(child) === 'sleep')).toHaveLength(privatePidsApplies ? 1 : 0);
+
+    await sleep(2000);
+    expect(children(pid).filter((child) => stat(child)?.state === 'Z')).toEqual([]);
+  });
+
+  // Keep these last: they stop the service, so any test after them would find it down.
+  const stopped = (started: number, stop: { error?: Error; status: number | null; stderr: string }) => {
     expect(stop.error, `systemctl stop did not return: ${stop.error?.message}`).toBeUndefined();
     expect(stop.status, stop.stderr).toBe(0);
     expect(Date.now() - started).toBeLessThan(20_000);
-    // Clean stop leaves it inactive; a SIGKILL after an ignored SIGTERM would
-    // show failed. (Restart= does not fire for an intentional stop.)
+    // A clean stop leaves it inactive; a SIGKILL after a SIGTERM nothing
+    // handled would leave it failed. (Restart= does not fire for a stop.)
     expect(show('ActiveState')).toBe('inactive');
+  };
+
+  it('stops promptly on systemctl stop, letting the responder finish as it does on SIGTERM', () => {
+    const started = Date.now();
+    // One that ignored SIGTERM would hang here until TimeoutStopSec (90s) and
+    // then be SIGKILLed; the 30s cap turns that hang into a failure.
+    stopped(started, spawnSync('sudo', ['systemctl', 'stop', UNIT], { encoding: 'utf8', timeout: 30_000 }));
+    // It finished as it does on SIGTERM, not killed by it: it said so after
+    // systemd began the stop.
+    const lines = journal().split('\n');
+    const stopping = lines.reduce((last, line, i) => (line.includes(`Stopping ${UNIT}`) ? i : last), -1);
+    expect(stopping, lines.join('\n')).toBeGreaterThanOrEqual(0);
+    expect(lines.slice(stopping).filter((line) => /: Stopped\.$/.test(line)), lines.join('\n')).toHaveLength(1);
   });
+
+  it('stops at once when stopped as it starts, before it can handle a stop', async () => {
+    // The assistant's Beeper, the first it asks as it starts, never answers,
+    // so it waits there, before it handles a stop: the moment a stop came,
+    // in CI, just after a restart. Node in its place as PID 1 would drop it.
+    assistant.stalls = () => true;
+    try {
+      const asked = assistant.requests.length;
+      const start = spawnSync('sudo', ['systemctl', 'start', UNIT], { encoding: 'utf8' });
+      expect(start.status, start.stderr).toBe(0);
+      for (const end = Date.now() + 30_000; assistant.requests.length === asked; await sleep(100)) {
+        if (Date.now() > end) throw new Error(`the responder never asked its Beeper anything:\n${journal()}`);
+      }
+      const started = Date.now();
+      stopped(started, spawnSync('sudo', ['systemctl', 'stop', UNIT], { encoding: 'utf8', timeout: 30_000 }));
+    } finally {
+      assistant.stalls = undefined;
+    }
+  }, 60_000);
 });

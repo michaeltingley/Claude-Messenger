@@ -547,6 +547,14 @@ owner, each send approved in the Claude chat.
     then ask the owner's go for Claude's policy, the chat, the Claude Code
     sign-in and the service, all in item 3. After it starts, measure its
     memory (its unit caps it at 1 GB).
+12. **Give the MCP service the responder's PID 1 shell.** Under systemd
+    257+ its unit runs node as PID 1 of a PID namespace of its own, which
+    gets only the signals it has a handler for: a stop that comes as it
+    starts, before `serve` installs its handler, is dropped, and systemd
+    waits out its 90 s stop timeout. CI found this for the responder
+    (stopped just after a restart, 2026-10-14), whose unit now runs node
+    under `/bin/sh -c 'trap : TERM; "$$@"; exit'` (see its comment). Do the
+    same for the MCP unit, with the responder's two stop tests.
 
 ### Hosting history (kept short)
 

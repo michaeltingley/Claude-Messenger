@@ -64,7 +64,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- CI's `npm test` must be green before any merge. Currently 866 tests / 45 files.
+- CI's `npm test` must be green before any merge. Currently 868 tests / 45 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -75,7 +75,8 @@ built for hypothetical futures.
   any invocation they don't model, so a script can't drift to an untested
   CLI form, and nothing a script gets wrong can install software on the
   machine running the tests. Its `systemctl` really starts a unit's
-  `ExecStart`, with only the environment a unit gets and its own
+  `ExecStart`, split into words as systemd splits it, with only the
+  environment a unit gets and its own
   `Environment=` and `EnvironmentFile=`, so
   `test/install.integration.test.ts` proves the installed MCP service answers
   with the token `connect` saved, and `test/responder-deploy.integration.test.ts`
@@ -146,8 +147,11 @@ built for hypothetical futures.
   in with the service's own token, against two mock Beepers and the
   stand-in API; then it probes the sandbox from inside as the MCP test does,
   checks nothing asked or answered was written down, and that a Claude Code
-  update reaches the service at its next restart and not before. It runs on
-  both Ubuntus, as the MCP test does.
+  update reaches the service at its next restart and not before. Last, it
+  stops the service as it runs and as it starts, and checks what is left
+  running in it is reaped: what PID 1 of its PID namespace must do, which
+  node, run there itself, did not. It runs on both Ubuntus, as the MCP test
+  does.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene
