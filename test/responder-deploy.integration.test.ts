@@ -266,6 +266,7 @@ describe('deploy/responder.sh (subprocess, no terminal, fake host)', { timeout: 
       expect(finished.stderr).toContain(
         'Claude Code could not answer with the new token: Claude Code failed (exit 1): Failed to authenticate. API Error: 401 OAuth access token is invalid.',
       );
+      expect(finished.stderr).toContain(`The token is kept in ${tokenFile()}: once Claude Code answers, responder.sh starts the responder with it.`);
       expect(readFileSync(tokenFile(), 'utf8')).toBe(`CLAUDE_CODE_OAUTH_TOKEN=${TOKEN}\n`);
     });
 

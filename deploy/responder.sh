@@ -330,7 +330,8 @@ sign_in_finish() {
           console.log(err.message);
           process.exit(1);
         }' 2>&1)"; then
-    die "Claude Code could not answer with the new token: ${answer}"
+    die "Claude Code could not answer with the new token: ${answer}
+  The token is kept in ${TOKEN_FILE}: once Claude Code answers, ${SELF} starts the responder with it. Or sign in again: ${SELF} sign-in start"
   fi
   ok "Claude Code answers with it"
   echo "Next: ${SELF}, which starts the responder with it, or restarts it onto it."
