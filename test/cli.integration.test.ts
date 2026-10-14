@@ -43,6 +43,18 @@ describe('CLI (subprocess integration)', () => {
     }
   };
 
+  /** What the run left in its audit trail: the files' text, and each entry. */
+  const auditTrail = async () => {
+    const dir = join(stateDir, 'audit');
+    const files = (await readdir(dir)).filter((f) => f.startsWith('audit-'));
+    const raw = (await Promise.all(files.map((f) => readFile(join(dir, f), 'utf8')))).join('');
+    const entries = raw
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    return { raw, entries };
+  };
+
   beforeAll(async () => {
     mock = new MockBeeperServer();
     baseUrl = await mock.start();
@@ -274,23 +286,29 @@ describe('CLI (subprocess integration)', () => {
     expect(stderr).toContain('capabilities.send'); // the precise rule, not just any denial
     expect(mock.requests.filter((r) => r.method === 'POST')).toHaveLength(0);
 
-    const auditFiles = await readdir(join(stateDir, 'audit'));
-    const entries = (
-      await Promise.all(
-        auditFiles
-          .filter((f) => f.startsWith('audit-'))
-          .map((f) => readFile(join(stateDir, 'audit', f), 'utf8')),
-      )
-    )
-      .join('')
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const { entries } = await auditTrail();
     expect(
       entries.some(
         (e) => e.action === 'sendMessage' && e.decision === 'denied' && e.rule === 'capabilities.send',
       ),
     ).toBe(true);
+  }, 30_000);
+
+  it("prints Beeper's failure for the person, but keeps Beeper's text, which can quote a message, out of the audit file", async () => {
+    mock.forcedError = { status: 500, message: 'cannot render "meet me behind the mill at 8"' };
+    try {
+      const { stderr, code } = await cli(['messages', '!chat1:beeper.com']);
+      expect(code).toBe(1);
+      expect(stderr).toContain('[provider_error]');
+      expect(stderr).toContain('behind the mill');
+    } finally {
+      mock.forcedError = undefined;
+    }
+    const { raw, entries } = await auditTrail();
+    expect(entries).toContainEqual(
+      expect.objectContaining({ action: 'listMessages', decision: 'allowed', outcome: 'error', error: 'provider_error' }),
+    );
+    expect(raw).not.toContain('behind the mill');
   }, 30_000);
 
   it('serve --http refuses to start without an MCP auth token', async () => {

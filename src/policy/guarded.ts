@@ -14,7 +14,7 @@ import type {
   ServerInfo,
 } from '../core/types.js';
 import { PolicyDeniedError } from '../core/errors.js';
-import type { AuditLogger } from './audit.js';
+import { errorCode, type AuditLogger } from './audit.js';
 import type { Decision, PolicyEngine, PolicyRule } from './policy.js';
 
 /**
@@ -90,7 +90,7 @@ export class GuardedMessenger implements Messenger {
           action: name,
           decision: 'allowed',
           outcome: 'error',
-          error: err instanceof Error ? err.message : String(err),
+          error: errorCode(err),
           context,
         })
         .catch(() => undefined);
@@ -136,7 +136,7 @@ export class GuardedMessenger implements Messenger {
           stage: 'outcome',
           opId,
           outcome: 'error',
-          error: err instanceof Error ? err.message : String(err),
+          error: errorCode(err),
           context,
         })
         .catch(() => undefined);
@@ -292,7 +292,7 @@ export class GuardedMessenger implements Messenger {
           opId,
           ...(failure === undefined
             ? { outcome: 'ok' as const }
-            : { outcome: 'error' as const, error: failure instanceof Error ? failure.message : String(failure) }),
+            : { outcome: 'error' as const, error: errorCode(failure) }),
           context,
         })
         .catch(() => undefined);

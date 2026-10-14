@@ -314,11 +314,12 @@ owner, each send approved in the Claude chat.
      alone can't do that.
    - As PID 1 in a `PrivatePIDs` unit it gets only signals it handles;
      `mentions` handles SIGTERM and SIGINT (see #23's note on `serve`).
-4. **Follow-ups the listener's review found, all older than it:**
+   - Like the audit, its journal must hold nothing it read: log a failure
+     by its code (`errorCode` in `policy/audit.ts`), since a provider's
+     error text can quote a message.
+4. **Left from the listener's review, older than it:**
    - `search_messages` and the CLI's `search` leave out low-priority chats,
      Beeper's default, and their descriptions don't say so.
-   - The audit's `error` field keeps the provider's error text as it came,
-     with the token redacted.
 
 ## NEXT ACTION (for the picking-up session)
 
