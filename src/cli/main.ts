@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { loadConfig, loadEndpointConfig, saveAccessToken } from '../config.js';
+import { loadConfig, loadConfigIn, loadEndpointConfig, saveAccessToken } from '../config.js';
 import { createAccessRequester, createAccountSignup, createApp, createLanguageModel, DEFAULT_LANGUAGE_MODEL } from '../app.js';
 import { ActivityCollector } from '../assistant/digest/activity.js';
 import { dayBefore, DigestWriter, isDigestWindow, MAX_DIGEST_DAYS } from '../assistant/digest/digest.js';
+import { CheckpointError, FileCheckpointStore } from '../assistant/responder/checkpoint.js';
+import { findConversation } from '../assistant/responder/conversation.js';
+import { Responder } from '../assistant/responder/responder.js';
 import { hostTimeZone, isTimeZone } from '../assistant/text/time.js';
 import { watchMentions } from '../assistant/mentions.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
@@ -14,8 +18,10 @@ import type { AccountSignup } from '../core/signup.js';
 import type { Message } from '../core/types.js';
 import { createMcpServer } from '../mcp/server.js';
 import { startHttpMcpServer } from '../mcp/http.js';
+import { errorCode } from '../policy/audit.js';
 import { DEFAULT_POLICY } from '../policy/policy.js';
-import { AuthError, ConnectionError, MessengerError, PolicyDeniedError } from '../core/errors.js';
+import { RateWindowUnavailableError } from '../policy/rate.js';
+import { AuthError, BacklogTooLargeError, ConnectionError, MessengerError, PolicyDeniedError } from '../core/errors.js';
 import { packageVersion } from '../version.js';
 
 /** The env file every command reads, in the working directory, and where `connect` saves the token. */
@@ -336,6 +342,75 @@ program
       console.log(mentionLine(message));
     }
     console.error('Stopped.');
+  });
+
+/**
+ * How a long-running automation's failure reaches its journal: one whose
+ * text is this app's own, or the system's (a file it can't write), as it
+ * is; any other by its kind alone, since a provider's or the model's error
+ * text can quote a message that was read.
+ */
+function withOwnText(err: unknown): unknown {
+  const own =
+    err instanceof PolicyDeniedError ||
+    err instanceof AuthError ||
+    err instanceof ConnectionError ||
+    err instanceof BacklogTooLargeError ||
+    err instanceof RateWindowUnavailableError ||
+    err instanceof CheckpointError ||
+    (err instanceof Error && 'syscall' in err);
+  return own ? err : new MessengerError('Stopped answering.', errorCode(err), { cause: err });
+}
+
+/** How long a stop waits for an answer being written before the process ends anyway. */
+const STOP_GRACE_MS = 10_000;
+
+program
+  .command('respond')
+  .description(
+    "Answer the @Claude in messages you send, and what you write in Claude's chat with you, from Claude's own " +
+      'account, until stopped (needs Claude Code signed in here)',
+  )
+  .requiredOption('--assistant <dir>', "Claude's own directory, whose .env signs in to its account")
+  .option('--time-zone <zone>', "the IANA time zone to give times in (default: this host's)", parseTimeZone)
+  .option('--model <name>', 'the Claude model that answers', DEFAULT_LANGUAGE_MODEL)
+  .action(async (opts: { assistant: string; timeZone?: string; model: string }) => {
+    const owner = await app();
+    const assistantConfig = await loadConfigIn(opts.assistant);
+    // What Claude sends is written from the owner's messages, so its audit keeps the length, not the words.
+    const assistant = await createApp(assistantConfig, { recordSentText: false });
+    const conversation = await findConversation(owner.messenger, assistant.messenger);
+    const responder = new Responder(
+      owner.messenger,
+      assistant.messenger,
+      conversation,
+      createLanguageModel({ model: opts.model }),
+      new FileCheckpointStore(join(assistantConfig.stateDir, 'responder.json')),
+      {
+        timeZone: opts.timeZone ?? hostTimeZone(),
+        maxMessageChars: assistant.policy.send.maxCharsPerMessage,
+        journal: (line) => console.log(line),
+      },
+    );
+
+    // As PID 1 of a sandboxed unit it gets only the signals it handles (see
+    // `serve`). A stop lets an answer being sent finish, and leaves one being
+    // written for the next run; the backstop, unref'd so it never holds the
+    // process open, ends the process when the model takes longer.
+    const stop = new AbortController();
+    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+      process.once(signal, () => {
+        if (stop.signal.aborted) return;
+        stop.abort();
+        setTimeout(() => process.exit(0), STOP_GRACE_MS).unref();
+      });
+    }
+    try {
+      await responder.run(stop.signal);
+    } catch (err) {
+      throw withOwnText(err);
+    }
+    console.log('Stopped.');
   });
 
 program

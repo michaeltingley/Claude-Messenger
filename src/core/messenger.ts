@@ -37,6 +37,12 @@ export interface Messenger {
   listMessages(chatId: string, query?: MessageListQuery): Promise<Page<Message>>;
 
   /**
+   * One message as it stands now: edited, or deleted, since it was first
+   * seen. Rejects with `NotFoundError` when the chat has no such message.
+   */
+  getMessage(chatId: string, messageId: string): Promise<Message>;
+
+  /**
    * Word search across every chat, low-priority ones too, and muted ones
    * unless `includeMuted` is false. Newest first: older matches are on later
    * pages.

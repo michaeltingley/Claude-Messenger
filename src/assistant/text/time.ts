@@ -34,6 +34,21 @@ export function formatDateTime(date: Date, timeZone: string, { year = false } = 
   });
 }
 
+/** Within six days before now, a weekday names one day; further back, a time needs its date. */
+const WEEKDAY_SPAN_MS = 6 * 24 * 3_600_000;
+
+/**
+ * How times read to someone reading at `now`: within the six days before
+ * it, a weekday and a time ("Mon 8:15 PM"); further back, the date too, and
+ * the year when it isn't now's.
+ */
+export function clockAt(now: Date, timeZone: string): (date: Date) => string {
+  return (date) => {
+    if (now.getTime() - date.getTime() < WEEKDAY_SPAN_MS) return formatTime(date, timeZone);
+    return formatDateTime(date, timeZone, { year: yearOf(date, timeZone) !== yearOf(now, timeZone) });
+  };
+}
+
 /** The year a time falls in, in a time zone. */
 export function yearOf(date: Date, timeZone: string): string {
   return format(date, { timeZone, year: 'numeric' });

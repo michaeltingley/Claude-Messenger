@@ -46,7 +46,9 @@ break the design if violated:
   or malformed, deny — do not proceed unguarded.
 - **Audit content rule**: outbound text is recorded (the user must be able to
   review what was said as them); inbound message content is never written to the
-  audit log. Their history does not belong in log files.
+  audit log. Their history does not belong in log files. The assistant's own
+  account says nothing as them and writes from what it read, so its audit
+  records each message's length, not its words.
 - **Denials name the rule** they violated. `PolicyDeniedError` is actionable or
   it is not doing its job.
 - Policy protects against a confused or overreaching *agent*, not a malicious
@@ -62,7 +64,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- CI's `npm test` must be green before any merge. Currently 768 tests / 39 files.
+- CI's `npm test` must be green before any merge. Currently 818 tests / 43 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.

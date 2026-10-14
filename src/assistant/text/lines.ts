@@ -12,6 +12,18 @@ const MAX_LISTED = 5;
 export type Clock = (date: Date) => string;
 
 /**
+ * Who the lines name without quotes, each by words of the reader's own: the
+ * owner, and anyone else the reader knows by their user ID, such as the
+ * assistant. Everyone else is named in quotes, as they named themselves.
+ */
+export interface Speakers {
+  /** The owner: who sends the messages that are `isFromMe`, and the chat's `isSelf` participant. */
+  owner: string;
+  /** Anyone else named without quotes, by user ID. */
+  others?: ReadonlyMap<string, string>;
+}
+
+/**
  * One message's line, as a model reads it: its time, who sent it, what it
  * is and its reactions, then its text.
  *
@@ -20,33 +32,43 @@ export type Clock = (date: Date) => string;
  * itself off as a line of the layout's own, such as a chat's heading or
  * another message. Chats' and other people's names and every reaction are
  * always in quotes, which they can't hold, so none can pass for the owner,
- * whom the lines alone call You, however it is written. A message's text
- * comes last on its line, after everything the line says of it, from the
- * first colon outside quotes that follows its sender, since nothing the
- * line says of it holds one: so the text can't pass for any of that, such
- * as a reaction of the owner's, even where it starts.
+ * or anyone else the lines alone name without quotes (`Speakers`), however
+ * it is written. A message's text comes last on its line, after everything
+ * the line says of it, from the first colon outside quotes that follows its
+ * sender, since nothing the line says of it holds one: so the text can't
+ * pass for any of that, such as a reaction of the owner's, even where it
+ * starts.
  */
-export function renderMessage(message: Message, chat: Chat, clock: Clock): string {
+export function renderMessage(message: Message, chat: Chat, clock: Clock, speakers: Speakers): string {
   const labels = describe(message);
   const text = oneLine(message.text, MAX_TEXT_CHARS);
   return (
-    `- ${clock(new Date(message.timestamp))} ${sender(message, chat)}` +
+    `- ${clock(new Date(message.timestamp))} ${sender(message, chat, speakers)}` +
     (labels.length > 0 ? ` [${labels.join(', ')}]` : '') +
-    reactions(message, chat) +
+    reactions(message, chat, speakers) +
     (text ? `: ${text}` : '')
   );
 }
 
 /** Who sent a message, as its line names them. */
-export function sender(message: Message, chat: Chat): string {
-  if (message.isFromMe) return 'You';
+export function sender(message: Message, chat: Chat, speakers: Speakers): string {
+  if (message.isFromMe) return speakers.owner;
   return (
+    speakers.others?.get(message.senderId) ??
     quoted(message.senderName) ??
     quoted(nameOf(chat, message.senderId)) ??
     // In a direct chat, whoever isn't the owner is the chat.
     (chat.type === 'single' ? quoted(chat.title) : undefined) ??
     'Someone'
   );
+}
+
+/** Whether a message shows in its chat with something in it, and so has a line. */
+export function shows(message: Message): boolean {
+  if (message.isDeleted || message.isHidden) return false;
+  if (message.text.trim() || message.attachments.length > 0) return true;
+  // A reaction, a sticker or a location can carry no text and still show.
+  return message.kind !== undefined && message.kind !== 'text' && message.kind !== 'notice';
 }
 
 function nameOf(chat: Chat, participantId: string): string | undefined {
@@ -162,13 +184,14 @@ function attachment(a: AttachmentSummary): string {
   }
 }
 
-function reactions(message: Message, chat: Chat): string {
+function reactions(message: Message, chat: Chat, speakers: Speakers): string {
   if (message.reactions.length === 0) return '';
   // In a direct chat, whoever isn't the owner is the chat, once it is known who the owner is.
   const knowsOwner = chat.participants.some((p) => p.isSelf);
   const who = (id: string) => {
-    if (chat.participants.find((p) => p.id === id)?.isSelf) return 'You';
+    if (chat.participants.find((p) => p.id === id)?.isSelf) return speakers.owner;
     return (
+      speakers.others?.get(id) ??
       quoted(nameOf(chat, id)) ??
       (chat.type === 'single' && knowsOwner ? quoted(chat.title) : undefined) ??
       'someone'

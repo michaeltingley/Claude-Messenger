@@ -18,6 +18,19 @@ import { PolicyDeniedError } from '../core/errors.js';
 import { errorCode, type AuditLogger } from './audit.js';
 import type { Decision, PolicyEngine, PolicyRule } from './policy.js';
 
+export interface GuardedMessengerOptions {
+  /** The clock audit entries are stamped with. */
+  now?: () => Date;
+  /**
+   * Whether the audit records the text of each message sent, as it must of
+   * what is said as the owner (the default). An account of the assistant's
+   * own turns it off, and the audit records each message's length instead:
+   * what it sends is written from messages it read, which the audit never
+   * holds, and the owner, to whom it sends, has every word in that chat.
+   */
+  recordSentText?: boolean;
+}
+
 /**
  * The only Messenger the tool layer (MCP, CLI, automations) is ever handed.
  *
@@ -37,12 +50,18 @@ import type { Decision, PolicyEngine, PolicyRule } from './policy.js';
  *   before it is handed on: no message reaches the caller unaudited.
  */
 export class GuardedMessenger implements Messenger {
+  private readonly now: () => Date;
+  private readonly recordSentText: boolean;
+
   constructor(
     private readonly inner: Messenger,
     private readonly engine: PolicyEngine,
     private readonly audit: AuditLogger,
-    private readonly now: () => Date = () => new Date(),
-  ) {}
+    { now = () => new Date(), recordSentText = true }: GuardedMessengerOptions = {},
+  ) {
+    this.now = now;
+    this.recordSentText = recordSentText;
+  }
 
   private async recordDenied(
     action: string,
@@ -223,6 +242,22 @@ export class GuardedMessenger implements Messenger {
     return { ...page, items: visible };
   }
 
+  async getMessage(chatId: string, messageId: string): Promise<Message> {
+    const context = { chatId, messageId };
+    const message = await this.guardRead(
+      this.engine.check({ kind: 'read', chatId }),
+      'getMessage',
+      context,
+      () => this.inner.getMessage(chatId, messageId),
+    );
+    // As for getChat: the account is only known once the message is fetched.
+    const post = this.engine.checkVisible({ chatId: message.chatId, accountId: message.accountId });
+    if (!post.allowed) {
+      return this.recordDenied('getMessage', post.rule, context, post.reason);
+    }
+    return message;
+  }
+
   searchMessages(query: MessageSearchQuery): Promise<Page<Message>> {
     return this.guardRead(
       this.engine.check({ kind: 'read' }),
@@ -327,8 +362,13 @@ export class GuardedMessenger implements Messenger {
     return this.guardMutation(
       this.engine.reserveSend({ chatId: input.chatId, textLength: input.text.length }),
       'sendMessage',
-      // Outbound text is intentionally recorded — see audit.ts content policy.
-      { chatId: input.chatId, text: input.text, replyToMessageId: input.replyToMessageId },
+      // Outbound text is intentionally recorded, unless this account's
+      // options say otherwise — see audit.ts content policy.
+      {
+        chatId: input.chatId,
+        ...(this.recordSentText ? { text: input.text } : { textLength: input.text.length }),
+        replyToMessageId: input.replyToMessageId,
+      },
       () => this.inner.sendMessage(input),
       (result) => ({ pendingMessageId: result.pendingMessageId }),
     );

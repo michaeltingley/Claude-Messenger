@@ -1,6 +1,7 @@
 import { NotFoundError, PolicyDeniedError, ProviderError } from '../../core/errors.js';
 import type { Messenger } from '../../core/messenger.js';
 import type { Chat, Message } from '../../core/types.js';
+import { shows } from '../text/lines.js';
 
 /** The span of time a digest covers: after `since`, up to and including `until`. */
 export interface DigestWindow {
@@ -204,14 +205,6 @@ export class ActivityCollector {
     }
     return { chat, messages: inWindow.reverse(), earlier: truncated ? [] : earlier.reverse(), truncated };
   }
-}
-
-/** Whether a message shows in its chat with something in it. */
-function shows(message: Message): boolean {
-  if (message.isDeleted || message.isHidden) return false;
-  if (message.text.trim() || message.attachments.length > 0) return true;
-  // A reaction, a sticker or a location can carry no text and still show.
-  return message.kind !== undefined && message.kind !== 'text' && message.kind !== 'notice';
 }
 
 /**

@@ -1,5 +1,5 @@
-import { type Clock, MAX_NAME_CHARS, oneLine, quoted, renderMessage, sender } from '../text/lines.js';
-import { formatDateTime, formatTime, yearOf } from '../text/time.js';
+import { type Clock, MAX_NAME_CHARS, oneLine, quoted, renderMessage, sender, type Speakers } from '../text/lines.js';
+import { clockAt, formatDateTime } from '../text/time.js';
 import type { Activity, ChatActivity } from './activity.js';
 
 /** What the model reads, and how much of the activity it holds. */
@@ -21,8 +21,9 @@ export interface Briefing {
  * default limits, one chat's block always fits.
  */
 const MAX_BRIEFING_CHARS = 200_000;
-/** Within six days before now, a weekday names one day; further back, a time needs its date. */
-const WEEKDAY_SPAN_MS = 6 * 24 * 3_600_000;
+
+/** The digest is written to the owner, so the briefing calls them You. */
+const SPEAKERS: Speakers = { owner: 'You' };
 
 /**
  * The briefing a digest is written from: plain text, one line per message,
@@ -34,10 +35,7 @@ const WEEKDAY_SPAN_MS = 6 * 24 * 3_600_000;
  */
 export function renderBriefing(activity: Activity, timeZone: string): Briefing {
   const { since, until } = activity.window;
-  const clock: Clock = (date) => {
-    if (until.getTime() - date.getTime() < WEEKDAY_SPAN_MS) return formatTime(date, timeZone);
-    return formatDateTime(date, timeZone, { year: yearOf(date, timeZone) !== yearOf(until, timeZone) });
-  };
+  const clock = clockAt(until, timeZone);
   const lines = [
     `It is ${formatDateTime(until, timeZone, { year: true })} in ${timeZone}, the time zone of every time below.`,
     `These are the chats with messages since ${formatDateTime(since, timeZone)}.`,
@@ -66,11 +64,11 @@ function renderChat(activity: ChatActivity, clock: Clock): string {
   const { chat } = activity;
   const lines = [`## ${quoted(chat.title) ?? 'A chat with no name'}`, facts(activity).join(' · ')];
   if (activity.earlier.length > 0) {
-    lines.push('Before then:', ...activity.earlier.map((m) => renderMessage(m, chat, clock)));
+    lines.push('Before then:', ...activity.earlier.map((m) => renderMessage(m, chat, clock, SPEAKERS)));
     lines.push('Since then:');
   }
   if (activity.truncated) lines.push('(Older messages from this window are left out.)');
-  lines.push(...activity.messages.map((m) => renderMessage(m, chat, clock)));
+  lines.push(...activity.messages.map((m) => renderMessage(m, chat, clock, SPEAKERS)));
   return lines.join('\n');
 }
 
@@ -82,7 +80,7 @@ function facts({ chat, messages }: ChatActivity): string[] {
   const mentions = chat.unreadMentionsCount ?? 0;
   if (mentions > 0) facts.push(`${mentions} unread mentioning you`);
   if (chat.isMuted) facts.push('muted');
-  facts.push(`last message from ${sender(messages.at(-1)!, chat)}`);
+  facts.push(`last message from ${sender(messages.at(-1)!, chat, SPEAKERS)}`);
   return facts;
 }
 

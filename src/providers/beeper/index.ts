@@ -101,6 +101,10 @@ export class BeeperMessenger implements Messenger {
     });
   }
 
+  getMessage(chatId: string, messageId: string): Promise<Message> {
+    return this.wrap(async () => toMessage(await this.client.messages.retrieve(messageId, { chatID: chatId })));
+  }
+
   searchMessages(query: MessageSearchQuery): Promise<Page<Message>> {
     return this.wrap(async () => {
       const { items, hasMore, oldestCursor } = await this.client.messages.search({

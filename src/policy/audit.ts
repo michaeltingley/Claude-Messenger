@@ -6,10 +6,12 @@ import { MessengerError } from '../core/errors.js';
  * Append-only audit trail of every action Claude attempts.
  *
  * Content policy: outbound message text IS recorded (the user must be able
- * to review exactly what was said on their behalf); message content that was
- * merely read is NOT recorded — only which chats/queries were accessed, and
- * which messages a watch handed on, by ID. A failure is recorded by its code,
- * never its message (see `errorCode`).
+ * to review exactly what was said on their behalf), but for an account of
+ * the assistant's own, which writes from what it read and sends only to the
+ * owner: of its messages, only the length is (`GuardedMessengerOptions`).
+ * Message content that was merely read is NOT recorded — only which
+ * chats/queries were accessed, and which messages a watch handed on, by ID.
+ * A failure is recorded by its code, never its message (see `errorCode`).
  */
 export interface AuditEntry {
   ts: string;
@@ -30,7 +32,7 @@ export interface AuditEntry {
   outcome?: 'ok' | 'error';
   /** What kind of failure an error outcome was, from `errorCode`. */
   error?: string;
-  /** Redacted parameters: chat/account IDs, queries, sent text. */
+  /** Redacted parameters: chat/account IDs, queries, sent text or its length. */
   context?: Record<string, unknown>;
 }
 

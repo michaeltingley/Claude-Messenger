@@ -56,6 +56,7 @@ describe('GuardedMessenger', () => {
     expect((await guarded.searchMessages({ query: 'hello' })).items.map((m) => m.id)).toEqual(['m1']);
     expect((await guarded.listAccounts()).map((a) => a.id)).toEqual(['signal-1']);
     await expect(guarded.getChat('chat-none')).rejects.toMatchObject({ rule: 'read.accountAllowlist' });
+    await expect(guarded.getMessage('chat-none', 'm-none')).rejects.toMatchObject({ rule: 'read.accountAllowlist' });
     await expect(guarded.listMessages('chat-none')).rejects.toMatchObject({ rule: 'read.accountAllowlist' });
     expect(audit.entries.at(-1)).toMatchObject({ action: 'listMessages', decision: 'denied', rule: 'read.accountAllowlist' });
 
@@ -63,18 +64,22 @@ describe('GuardedMessenger', () => {
     const open = new GuardedMessenger(fake, new PolicyEngine(parsePolicy({ version: 1 })), new MemoryAuditLogger());
     expect((await open.searchMessages({ query: 'hello' })).items.map((m) => m.id)).toEqual(['m1', 'm-none']);
     expect((await open.getChat('chat-none')).id).toBe('chat-none');
+    expect((await open.getMessage('chat-none', 'm-none')).id).toBe('m-none');
   });
 
   it('refuses direct access to a denylisted chat', async () => {
     const { guarded } = setup();
     await expect(guarded.getChat('chat-secret')).rejects.toThrow(PolicyDeniedError);
     await expect(guarded.listMessages('chat-secret')).rejects.toThrow(PolicyDeniedError);
+    await expect(guarded.getMessage('chat-secret', 'm2')).rejects.toThrow(PolicyDeniedError);
   });
 
   it('applies the account allowlist to chats and accounts', async () => {
     const { guarded } = setup({ read: { accountAllowlist: ['signal-1'], chatDenylist: [] } });
     expect((await guarded.searchChats()).items.map((c) => c.id)).toEqual(['chat-signal']);
     expect((await guarded.listAccounts()).map((a) => a.id)).toEqual(['signal-1']);
+    // A message's account is known only once it is fetched, and then it is kept back.
+    await expect(guarded.getMessage('chat-1', 'm1')).rejects.toMatchObject({ rule: 'read.accountAllowlist' });
   });
 
   it('blocks sends under the default read-only policy and never reaches the provider', async () => {
@@ -138,6 +143,7 @@ describe('GuardedMessenger', () => {
       searchChats: fail,
       getChat: fail,
       listMessages: fail,
+      getMessage: fail,
       searchMessages: fail,
       sendMessage: fail,
       markChatRead: fail,
@@ -149,6 +155,7 @@ describe('GuardedMessenger', () => {
       ['searchChats', () => guarded.searchChats()],
       ['getChat', () => guarded.getChat('chat-1')],
       ['listMessages', () => guarded.listMessages('chat-1')],
+      ['getMessage', () => guarded.getMessage('chat-1', 'm1')],
       ['searchMessages', () => guarded.searchMessages({ query: 'hello' })],
       ['sendMessage', () => guarded.sendMessage({ chatId: 'chat-1', text: 'on my way' })],
       ['markChatRead', () => guarded.markChatRead('chat-1')],

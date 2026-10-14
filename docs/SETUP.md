@@ -133,3 +133,25 @@ It prints each message you send that mentions `@Claude` as one JSON line (`id`, 
 - **What it misses.** It sees a message once, as it first arrives, so a later edit or deletion isn't seen. Mentions sent while it isn't running are missed unless the next run starts with a `--since` before them.
 - **Failures.** If Beeper fails or stops accepting the token, it exits 1 with the error. It doesn't retry.
 - **Audit.** Each message of yours it reads is in the audit log by chat and message ID, never its text.
+
+## 5. Have Claude answer, from its own account
+
+Claude answers from a Beeper account of its own, in a private chat with you, so nothing it writes is ever sent as you. That account runs on Beeper Server beside your Beeper and has a directory of its own, `~/.config/claude-messenger/assistant` on the VPS, whose `.env` signs in to it ("The assistant's own account" in [ARCHITECTURE.md](ARCHITECTURE.md) covers installing and signing it up). Then, once:
+
+1. In that directory's `policy.json`, let it open a chat with you: `"capabilities": { "startChat": true }` and `"startChat": { "userAllowlist": ["<your Beeper user ID>"] }`. Your user ID is the `user.id` of your Beeper account in `claude-messenger accounts`.
+2. From that directory, run `claude-messenger start-chat --with '<your Beeper user ID>'`. It prints the chat's ID, and you accept its invite in Beeper.
+3. Let it send there, and only there: `"capabilities": { "send": true }` and `"send": { "chatAllowlist": ["<that chat ID>"], "maxMessagesPerHour": 30 }`. It sends one message per request.
+
+Then, from this install, whose `.env` and policy are yours and read-only:
+
+```sh
+npx claude-messenger respond --assistant ~/.config/claude-messenger/assistant
+```
+
+It answers each `@Claude` in a message you send, in any chat, and anything you write in its chat, there and only there, until Ctrl-C or SIGTERM. It writes with Claude Code signed in here, on your subscription, as `digest` does (`--model`, default `sonnet`; `--time-zone`, default this machine's).
+
+- **What it reads.** Through your configuration, for each request: the message again (an edited one is answered as it stands; a deleted one, or one that no longer asks anything, is skipped), its chat, and up to 30 of that chat's latest messages before it. The model has no tools: it can't read your other chats, email or links, or send anything.
+- **What it sends.** One message per request, in its chat with you: the answer, made safe to show as the digest is (links, codes and long numbers replaced), with where and when you asked first when you asked in another chat; or, when it couldn't answer, a line saying so, with the time you asked.
+- **Restarts.** It answers each request once at most. It keeps where it got to in `state/responder.json` in Claude's directory, and when it starts again answers what you asked while it was stopped, up to six hours back; its first run starts from now. A request it was stopped while answering is answered by the next run.
+- **Failures.** A failure about one request is told to you, when it can send at all, and it goes on. Any other (Beeper unreachable, a token rejected, a file it can't read or write) ends it with exit 1. Its output says what it did by IDs and kinds of failure, never what anyone wrote.
+- **Audit.** Your audit log records what it read, by IDs; Claude's records what it sent, by length, not its words.
