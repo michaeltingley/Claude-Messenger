@@ -1,0 +1,65 @@
+# systemd SYSTEM unit for the responder: `claude-messenger respond`, which
+# answers the owner's @Claude from the assistant's own Beeper account (see
+# "The assistant's own account" in docs/ARCHITECTURE.md), run as the user who
+# owns the install. deploy/responder.sh installs it into /etc/systemd/system,
+# with the placeholders substituted.
+#
+# The MCP service's sandbox (see claude-messenger-mcp.service, whose header
+# says why it is a system unit), widened by what answering needs and nothing
+# more: the assistant's configuration to read, its audit trail and state to
+# write, and Claude Code, which writes each answer.
+[Unit]
+Description=Claude Messenger responder (answers @Claude from the assistant's own Beeper account)
+# The assistant's Beeper runtime, when this host has one. The owner's Beeper
+# Desktop runs under their user manager, which a system unit can't wait for:
+# a start before either answers fails, and is tried again (Restart=).
+After=network-online.target assistant-beeper.service
+Wants=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=__NODE__ dist/cli/main.js respond --assistant __ASSISTANT_DIR__ --time-zone __TIME_ZONE__
+# Claude Code as the owner installed it, first on PATH. Its native install is
+# a link on PATH to the current version, and the bind below follows it as the
+# service starts, so an update reaches the service when it next restarts.
+Environment=PATH=__CLAUDE_DIR__:/usr/local/bin:/usr/bin:/bin
+# A Claude Code configuration of the service's own, never the owner's
+# ~/.claude: the hooks, MCP servers and sign-in there are theirs.
+Environment=CLAUDE_CONFIG_DIR=__ASSISTANT_DIR__/state/claude-code
+# CLAUDE_CODE_OAUTH_TOKEN, from `claude setup-token` through
+# `deploy/responder.sh sign-in`: it may only write answers (no connectors,
+# such as the owner's Gmail, and no sessions), on the owner's subscription.
+# systemd reads it as the service starts; without it, the service won't start.
+EnvironmentFile=__ASSISTANT_DIR__/claude-code.env
+# A Beeper that isn't answering yet, as after a reboot, ends a run; it is
+# tried again until one starts. What was asked meanwhile is answered then.
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+# The sandbox: the MCP service's (see its unit for each line), plus the
+# assistant's directory, read-only, and Claude Code. So through the
+# filesystem it can't read the owner's SSH keys, their Claude Code sign-in and
+# hooks in ~/.claude, Beeper's own data, or anything else in their home. It
+# can change only the two audit trails and the two state directories (the
+# rate windows, its checkpoint, and Claude Code's configuration), apart from
+# a /tmp of its own. deploy/responder.sh refuses a .env that keeps a policy,
+# audit trail or rate window anywhere else.
+ProtectSystem=strict
+TemporaryFileSystem=/home:ro /root:ro /run/user:ro /run/lock:ro /dev/shm:ro /dev/mqueue:ro
+BindReadOnlyPaths=__INSTALL_DIR__ __NODE__ __ASSISTANT_DIR__ __CLAUDE__
+BindPaths=__INSTALL_DIR__/audit __INSTALL_DIR__/state __ASSISTANT_DIR__/audit __ASSISTANT_DIR__/state
+PrivateTmp=true
+# Its own PID namespace, as for the MCP service: it runs as the owner, and
+# would otherwise reach around the sandbox through the owner's other processes
+# under /proc. systemd 257+ only; deploy/responder.sh warns on an older one.
+# Node, as PID 1 there, reaps only its own children: a process Claude Code
+# started and left behind when stopped stays a zombie until the next restart.
+PrivatePIDs=true
+PrivateIPC=true
+# Node, and Claude Code while it writes; a backstop on a host shared with
+# both Beepers.
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

@@ -4,6 +4,8 @@ import type { AddressInfo } from 'node:net';
 export interface RecordedRequest {
   method: string;
   url: string;
+  /** How it signed in: a subscription token comes as `Bearer <token>`. */
+  authorization: string | undefined;
   body: string;
 }
 
@@ -40,7 +42,7 @@ export class StandInAnthropic {
       req.on('data', (chunk: string) => (body += chunk));
       req.on('end', () => {
         const url = req.url ?? '';
-        this.requests.push({ method: req.method ?? '', url, body });
+        this.requests.push({ method: req.method ?? '', url, authorization: req.headers.authorization, body });
         if (req.method === 'POST' && url.includes('count_tokens')) {
           res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: 10 }));
         } else if (req.method === 'POST' && url.startsWith('/v1/messages') && this.refusal) {

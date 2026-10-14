@@ -21,8 +21,10 @@ import { join } from 'node:path';
  * /etc/systemd/system for the system manager. Like systemd, it checks that
  * the paths the unit's sandbox names exist (ReadWritePaths, BindPaths,
  * BindReadOnlyPaths), then starts its ExecStart in WorkingDirectory, with
- * only the environment that manager gives its units and the unit's own
- * Environment= (unquoted, without specifiers). As for any Type=simple
+ * only the environment that manager gives its units, the unit's own
+ * Environment= (unquoted, without specifiers), and its EnvironmentFile=s,
+ * read as the unit starts: like systemd, it fails the start when one can't
+ * be read, unless a leading - makes it optional. As for any Type=simple
  * unit, a start that fails after the fork (226/NAMESPACE, 217/USER; the
  * `sandbox-fails` flag forces one) still reports success: the unit is just
  * not active, and the reason is in its log. A system unit must name the
@@ -205,6 +207,22 @@ start_unit() {
       fi
       unit_env+=("$assignment")
     done
+    # Its EnvironmentFile=s, which systemd reads as root as the unit starts,
+    # and which win over its Environment=. One that can't be read fails the
+    # start, unless a leading - makes it optional.
+    for env_file in $(sed -n 's/^EnvironmentFile=//p' "$f"); do
+      case "$env_file" in -*) env_file="\${env_file#-}"; [ -r "$env_file" ] || continue ;; esac
+      if [ ! -r "$env_file" ]; then
+        echo "Job for $u failed because of unavailable resources or another system error." >&2; return 1
+      fi
+      while IFS= read -r assignment || [ -n "$assignment" ]; do
+        case "$assignment" in
+          "" | "#"*) continue ;;
+          *[\\"\\']*) echo "fake systemctl: unmodeled EnvironmentFile= line in $u" >&2; exit 64 ;;
+        esac
+        unit_env+=("$assignment")
+      done < "$env_file"
+    done
     ( cd "\${wd:-$HOME}" && exec env -i "\${unit_env[@]}" setsid $cmd ) >> "$S/logs/$u.log" 2>&1 < /dev/null &
     echo "$!" > "$T/pids/$u"
   fi
@@ -377,10 +395,16 @@ case "$*" in
 esac
 `;
 
-// Like the real CLI, \`mcp add\` echoes what it stored.
-const CLAUDE_SHIM = `#!/usr/bin/env bash
-S="$FAKE_HOST_STATE"
-echo "claude $1 $2" >> "$S/calls.log"
+// Like the real CLI, \`mcp add\` echoes what it stored. \`setup-token\` shows
+// its sign-in screen (see claude-sign-in-screen.mjs). A run as the model
+// starts one (\`--print\`) records how it was signed in, then answers with the
+// \`claude-answer\` flag's text, or "ready"; with \`claude-refuses\`, it fails
+// as Claude Code does on a token the API refuses. Run under a unit, or with
+// only what Claude Code needs passed on, it has no FAKE_HOST_STATE, and finds
+// the state beside itself.
+const claudeShim = (signInScreen: string) => `#!/usr/bin/env bash
+S="\${FAKE_HOST_STATE:-$(cd "$(dirname "$0")/.." && pwd)/state}"
+echo "claude \${1:-} \${2:-}" >> "$S/calls.log"
 case "\${1:-} \${2:-}" in
   "mcp remove")
     if [ -e "$S/claude-mcp" ]; then rm -f "$S/claude-mcp"; echo "Removed MCP server $3"; exit 0; fi
@@ -389,6 +413,15 @@ case "\${1:-} \${2:-}" in
     shift 2
     printf '%s\\n' "$@" > "$S/claude-mcp"
     echo "Added MCP server with: $*" ;;
+  "setup-token ")
+    exec node '${signInScreen}' "$S" ;;
+  "--print --output-format")
+    printf 'token=%s config=%s\\n' "\${CLAUDE_CODE_OAUTH_TOKEN:-}" "\${CLAUDE_CONFIG_DIR:-}" >> "$S/claude-runs.log"
+    cat > /dev/null
+    if [ -e "$S/claude-refuses" ]; then
+      echo "Failed to authenticate. API Error: 401 OAuth access token is invalid." >&2; exit 1
+    fi
+    cat "$S/claude-answer" 2>/dev/null || echo ready ;;
   *) echo "fake claude: unmodeled invocation: $*" >&2; exit 64 ;;
 esac
 `;
@@ -463,7 +496,7 @@ export class FakeHost {
       ['apt-get', APT_GET_SHIM],
       ['git', GIT_SHIM],
       ['npm', NPM_SHIM],
-      ['claude', CLAUDE_SHIM],
+      ['claude', claudeShim(join(import.meta.dirname, 'claude-sign-in-screen.mjs'))],
       ['id', ID_SHIM],
       ['curl', curlShim(spawnSync('sh', ['-c', 'command -v curl'], { encoding: 'utf8' }).stdout.trim())],
     ] as const) {
@@ -609,6 +642,15 @@ export class FakeHost {
       }
     }
     this.stopUnits();
+    // And whatever a script left running from this host's files in a session
+    // of its own, as a Claude Code sign-in waits.
+    for (const pid of readdirSync('/proc').filter((entry) => /^\d+$/.test(entry))) {
+      try {
+        if (readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes(this.root)) process.kill(Number(pid), 'SIGKILL');
+      } catch {
+        // gone, or not this user's
+      }
+    }
     rmSync(this.root, { recursive: true, force: true });
   }
 }

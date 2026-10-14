@@ -100,8 +100,9 @@ and `docs/HOSTING-OPTIONS.md`._
     partly in bold reads as one word in both.
 - **@Claude responder**: `claude-messenger respond` answers the owner
   from Claude's own account, in a private chat, whenever they write
-  `@Claude` or write in that chat. Merged, not running yet: item 3 of
-  "@Claude assistant" below.
+  `@Claude` or write in that chat; `deploy/responder.sh` runs it as a
+  sandboxed service. Merged, not running yet: item 3 of "@Claude
+  assistant" below.
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -392,20 +393,29 @@ owner, each send approved in the Claude chat.
    what anyone wrote; Claude's audit keeps each answer's length, not its
    words. Design: "Answering" in `docs/ARCHITECTURE.md`; how to run it:
    `docs/SETUP.md` section 5.
-   - **Next, its service (not built):** a system unit,
-     `claude-messenger-assistant.service`, running `respond` as the owner,
-     since it needs Claude Code's sign-in in `~/.claude`, the owner's
-     install dir and Claude's dir; sandboxed like the MCP service, with a
-     test that proves it. As PID 1 of a `PrivatePIDs` unit it gets only the
-     signals it handles, and it handles SIGTERM and SIGINT, with a 10 s
-     backstop when an answer is being written.
+   - **Its service (built, not installed anywhere yet):**
+     `deploy/responder.sh` installs the system unit
+     `claude-messenger-responder.service`, running `respond` as the owner
+     in the MCP service's sandbox plus Claude's dir (read-only), both
+     `audit/` and `state/` dirs, and Claude Code ("The responder as a
+     service" in `docs/ARCHITECTURE.md`; steps in `docs/SETUP.md` section
+     5). Its Claude Code is not the owner's sign-in: `deploy/responder.sh
+     sign-in start` / `finish` makes a token of its own with `claude
+     setup-token`, `user:inference` only (no connectors, no sessions), good
+     for a year from when it is made, into Claude's dir as
+     `claude-code.env`, never shown. The owner opens the link and passes
+     back the code from one session that stays open in between, since the
+     sign-in waits on the host for it. Proven on the fake host and, under
+     the real systemd with the real Claude Code answering inside, in CI on
+     24.04 and 26.04.
    - **Then the owner's go, since it reaches them:** in Claude's
      `policy.json`, `capabilities.startChat` with the owner's Beeper user ID
      in `startChat.userAllowlist`; `claude-messenger start-chat --with <that
      ID>` from Claude's dir, whose invite the owner accepts in Beeper; then
      `capabilities.send` with the printed chat ID alone in
      `send.chatAllowlist`, and a `send.maxMessagesPerHour` (one message per
-     request); then start the service. Nothing of this has run yet.
+     request); then the Claude Code sign-in and `deploy/responder.sh`.
+     Nothing of this has run yet.
 
 ## NEXT ACTION (for the picking-up session)
 
@@ -531,10 +541,12 @@ owner, each send approved in the Claude chat.
     `.env`, never shown. `finish` stopped at `needs-secrets`, and `signup
     encrypt` finished the setup ("What the real sign-up showed", above).
     Next: item 11.
-11. **Run the responder on the VPS — next.** The command is merged (item 3
-    of "@Claude assistant" above). Build its service, deploy it through the
-    install thread, then ask the owner's go for Claude's policy, the chat
-    and the service, all in item 3.
+11. **Run the responder on the VPS — next.** The command and its service
+    are merged (item 3 of "@Claude assistant" above). Deploy the checkout
+    through the install thread (a pull and a build; nothing installed),
+    then ask the owner's go for Claude's policy, the chat, the Claude Code
+    sign-in and the service, all in item 3. After it starts, measure its
+    memory (its unit caps it at 1 GB).
 
 ### Hosting history (kept short)
 
