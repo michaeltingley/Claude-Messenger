@@ -85,6 +85,34 @@ describe('PolicyEngine', () => {
     expect(engine.chatVisible({ id: 'secret', accountId: 'whatsapp-1' })).toBe(false);
   });
 
+  it('admits nothing that comes with no account ID past an account allowlist that names accounts', () => {
+    const engine = new PolicyEngine(
+      parsePolicy({ version: 1, read: { accountAllowlist: ['signal-1'], chatDenylist: ['secret'] } }),
+    );
+    // A request may name only the chat: the guard checks the account once the chat is fetched.
+    expect(engine.check({ kind: 'read', chatId: 'c' }).allowed).toBe(true);
+    for (const accountId of [undefined, '']) {
+      expect(engine.chatVisible({ id: 'c', accountId })).toBe(false);
+      expect(engine.accountVisible(accountId)).toBe(false);
+      expect(engine.checkVisible({ chatId: 'c', accountId })).toMatchObject({
+        allowed: false,
+        rule: 'read.accountAllowlist',
+        reason: expect.stringContaining('Chat c came with no account ID'),
+      });
+    }
+    // The rules a read of any chat answers to come first.
+    expect(engine.checkVisible({ chatId: 'secret', accountId: undefined })).toMatchObject({ rule: 'read.chatDenylist' });
+    const off = new PolicyEngine(parsePolicy({ version: 1, capabilities: { read: false }, read: { accountAllowlist: ['signal-1'] } }));
+    expect(off.checkVisible({ chatId: 'c', accountId: undefined })).toMatchObject({ rule: 'capabilities.read' });
+  });
+
+  it("an account allowlist of '*' admits what comes with no account ID, as it admits every account", () => {
+    const engine = new PolicyEngine(parsePolicy({ version: 1, read: { accountAllowlist: '*', chatDenylist: ['secret'] } }));
+    expect(engine.chatVisible({ id: 'c', accountId: undefined })).toBe(true);
+    expect(engine.accountVisible(undefined)).toBe(true);
+    expect(engine.chatVisible({ id: 'secret', accountId: undefined })).toBe(false);
+  });
+
   it('account allowlist restricts read visibility', () => {
     const engine = new PolicyEngine(
       parsePolicy({ version: 1, read: { accountAllowlist: ['signal-1'], chatDenylist: [] } }),

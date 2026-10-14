@@ -191,7 +191,7 @@ export class GuardedMessenger implements Messenger {
     );
     // Account-level visibility is only knowable after the fetch; record the
     // denial with its true rule rather than leaking the chat.
-    const post = this.engine.check({ kind: 'read', chatId: chat.id, accountId: chat.accountId });
+    const post = this.engine.checkVisible({ chatId: chat.id, accountId: chat.accountId });
     if (!post.allowed) {
       return this.recordDenied('getChat', post.rule, context, post.reason);
     }
@@ -214,7 +214,7 @@ export class GuardedMessenger implements Messenger {
     // returning a silent empty page.
     if (visible.length === 0 && page.items.length > 0) {
       const sample = page.items[0]!;
-      const post = this.engine.check({ kind: 'read', chatId: sample.chatId, accountId: sample.accountId });
+      const post = this.engine.checkVisible({ chatId: sample.chatId, accountId: sample.accountId });
       if (!post.allowed) {
         return this.recordDenied('listMessages', post.rule, context, post.reason);
       }

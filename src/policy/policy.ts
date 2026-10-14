@@ -189,16 +189,29 @@ export class PolicyEngine {
   }
 
   /**
-   * Canonical visibility predicate — defined as "would a read of this
-   * chat/account be allowed", so pre-call checks and post-fetch filtering
-   * can never disagree.
+   * Whether what a provider returned may reach Claude: a read of its chat in
+   * its account, so pre-call checks and post-fetch filtering can never
+   * disagree. A request may leave the account out, to be checked once the
+   * chat is fetched; what is fetched may not. One that comes with no account
+   * ID, whatever the provider's types promise, can't be shown to be on the
+   * account allowlist, so only '*' admits it.
    */
-  chatVisible(chat: { id: string; accountId: string }): boolean {
-    return this.check({ kind: 'read', chatId: chat.id, accountId: chat.accountId }).allowed;
+  checkVisible(item: { chatId?: string; accountId: string | undefined }): Decision {
+    if (item.accountId || this.policy.read.accountAllowlist === '*') return this.checkRead(item);
+    // The capability and the denylist come first, as for any read.
+    const decision = this.checkRead({ chatId: item.chatId });
+    if (!decision.allowed) return decision;
+    const what = item.chatId === undefined ? 'An account came with no ID' : `Chat ${item.chatId} came with no account ID`;
+    return deny('read.accountAllowlist', `${what}, which only an account allowlist of '*' admits.`);
   }
 
-  /** True when the account may be shown to Claude at all. */
-  accountVisible(accountId: string): boolean {
-    return this.check({ kind: 'read', accountId }).allowed;
+  /** Canonical visibility predicate for a chat, or anything in one: see checkVisible. */
+  chatVisible(chat: { id: string; accountId: string | undefined }): boolean {
+    return this.checkVisible({ chatId: chat.id, accountId: chat.accountId }).allowed;
+  }
+
+  /** True when the account may be shown to Claude at all: see checkVisible. */
+  accountVisible(accountId: string | undefined): boolean {
+    return this.checkVisible({ accountId }).allowed;
   }
 }

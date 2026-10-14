@@ -39,6 +39,32 @@ describe('GuardedMessenger', () => {
     expect(page.items.map((m) => m.id)).toEqual(['m1']);
   });
 
+  it('keeps out chats, messages and accounts that come with no account ID while the allowlist names accounts', async () => {
+    // A provider's types promise an account ID; its wire may still leave one out.
+    const none = undefined as unknown as string;
+    const fake = new FakeMessenger();
+    fake.chats = [makeChat({ id: 'chat-1', accountId: 'signal-1' }), makeChat({ id: 'chat-none', accountId: none })];
+    fake.messages = [
+      makeMessage({ id: 'm1', chatId: 'chat-1', accountId: 'signal-1' }),
+      makeMessage({ id: 'm-none', chatId: 'chat-none', accountId: none }),
+    ];
+    const audit = new MemoryAuditLogger();
+    const policy = parsePolicy({ version: 1, read: { accountAllowlist: ['signal-1'] } });
+    const guarded = new GuardedMessenger(fake, new PolicyEngine(policy), audit);
+
+    expect((await guarded.searchChats()).items.map((c) => c.id)).toEqual(['chat-1']);
+    expect((await guarded.searchMessages({ query: 'hello' })).items.map((m) => m.id)).toEqual(['m1']);
+    expect((await guarded.listAccounts()).map((a) => a.id)).toEqual(['signal-1']);
+    await expect(guarded.getChat('chat-none')).rejects.toMatchObject({ rule: 'read.accountAllowlist' });
+    await expect(guarded.listMessages('chat-none')).rejects.toMatchObject({ rule: 'read.accountAllowlist' });
+    expect(audit.entries.at(-1)).toMatchObject({ action: 'listMessages', decision: 'denied', rule: 'read.accountAllowlist' });
+
+    // Allowing every account allows these too.
+    const open = new GuardedMessenger(fake, new PolicyEngine(parsePolicy({ version: 1 })), new MemoryAuditLogger());
+    expect((await open.searchMessages({ query: 'hello' })).items.map((m) => m.id)).toEqual(['m1', 'm-none']);
+    expect((await open.getChat('chat-none')).id).toBe('chat-none');
+  });
+
   it('refuses direct access to a denylisted chat', async () => {
     const { guarded } = setup();
     await expect(guarded.getChat('chat-secret')).rejects.toThrow(PolicyDeniedError);
