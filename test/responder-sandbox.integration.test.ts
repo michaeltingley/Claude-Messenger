@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MockBeeperServer, wireChat, wireMessage } from './mock-beeper.js';
+import { childrenOf, executableOf, processStat } from './processes.js';
 import { StandInAnthropic } from './stand-in-anthropic.js';
 
 /**
@@ -254,32 +255,9 @@ describe.runIf(onRunner)('the responder sandbox (real systemd and sudo, real Cla
       { encoding: 'utf8' },
     );
   const outside = (script: string, ...args: string[]) => spawnSync('sh', ['-c', script, 'sh', ...args], { encoding: 'utf8' });
-  /** A process's state (R, S, Z for a zombie...) and parent, or nothing once it is gone. */
-  const stat = (id: number) => {
-    try {
-      const line = readFileSync(`/proc/${id}/stat`, 'utf8');
-      const [state, parent] = line.slice(line.lastIndexOf(')') + 2).split(' ');
-      return { state: state!, parent: Number(parent) };
-    } catch {
-      return undefined;
-    }
-  };
-  /** The processes `parent` started, or took on when theirs ended. */
-  const children = (parent: number) =>
-    readdirSync('/proc')
-      .filter((entry) => /^\d+$/.test(entry))
-      .map(Number)
-      .filter((id) => stat(id)?.parent === parent);
-  const exe = (id: number) => {
-    try {
-      return readlinkSync(`/proc/${id}/exe`);
-    } catch {
-      return undefined;
-    }
-  };
   const nodeBinary = () => join(toolchain!, 'installs', 'node');
   /** The responder: the node that the unit's main process, a shell, runs. */
-  const responder = (main = pid) => children(main).find((child) => exe(child) === nodeBinary());
+  const responder = (main = pid) => childrenOf(main).find((child) => executableOf(child) === nodeBinary());
   const touch = 'touch "$1" && rm -f "$1"';
   const exists = 'test -e "$1"';
   const expectReadOnlyInside = (probe: string) => {
@@ -303,8 +281,8 @@ describe.runIf(onRunner)('the responder sandbox (real systemd and sudo, real Cla
   });
 
   it('runs the node in the home that the shim on PATH leads to, as the child of a shell', () => {
-    expect(exe(pid)).toBe(realpathSync('/bin/sh'));
-    expect(responder(), `the shell's children: ${children(pid).map((child) => exe(child)).join(', ')}`).toBeDefined();
+    expect(executableOf(pid)).toBe(realpathSync('/bin/sh'));
+    expect(responder(), `the shell's children: ${childrenOf(pid).map(executableOf).join(', ')}`).toBeDefined();
   });
 
   it('answers @Claude from inside the sandbox, through Claude Code signed in with the service’s own token', async () => {
@@ -466,10 +444,10 @@ describe.runIf(onRunner)('the responder sandbox (real systemd and sudo, real Cla
     );
     expect(left.status, left.stderr).toBe(0);
     const comm = (id: number) => readFileSync(`/proc/${id}/comm`, 'utf8').trim();
-    expect(children(pid).filter((child) => comm(child) === 'sleep')).toHaveLength(privatePidsApplies ? 1 : 0);
+    expect(childrenOf(pid).filter((child) => comm(child) === 'sleep')).toHaveLength(privatePidsApplies ? 1 : 0);
 
     await sleep(2000);
-    expect(children(pid).filter((child) => stat(child)?.state === 'Z')).toEqual([]);
+    expect(childrenOf(pid).filter((child) => processStat(child)?.state === 'Z')).toEqual([]);
   });
 
   // Keep these last: they stop the service, so any test after them would find it down.

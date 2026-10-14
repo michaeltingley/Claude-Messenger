@@ -64,7 +64,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- CI's `npm test` must be green before any merge. Currently 868 tests / 45 files.
+- CI's `npm test` must be green before any merge. Currently 869 tests / 45 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -109,7 +109,9 @@ built for hypothetical futures.
   real sudo and systemd, then tries reads and writes from inside the
   running MCP service as its user, and checks its PID and IPC namespaces are
   its own — including that another of the owner's processes cannot be
-  reached through `/proc`, the escape `PrivatePIDs` closes. It replaces the
+  reached through `/proc`, the escape `PrivatePIDs` closes. Last, it stops
+  the service as it runs and as it starts: node, run as PID 1 of its PID
+  namespace itself, dropped a stop that came as it started. It replaces the
   host's MCP service, so it runs only on GitHub's runners, never on a real
   host, with Ubuntu 24.04+'s user namespace restriction switched on as on a
   real host, and node in the home behind a shim, as nvm and asdf install it.
