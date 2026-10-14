@@ -38,6 +38,10 @@ Environment=XDG_CACHE_HOME=/opt/beeper-server/payload
 ExecStart=/opt/beeper-server/beeper-server --host=127.0.0.1 --port=__PORT__ --data-dir=/var/lib/assistant-beeper
 Restart=always
 RestartSec=5
+# Its normal stop: on SIGTERM, Beeper Server's exit hook ends it with 128 +
+# 15. Counted a failure, every stop would leave the unit failed, and
+# `systemctl clean` (deploy/assistant-beeper.sh --reset) refuses a failed unit.
+SuccessExitStatus=143
 # DynamicUser= already gives ProtectSystem=strict, ProtectHome=read-only,
 # PrivateTmp=, RemoveIPC=, NoNewPrivileges= and RestrictSUIDSGID=. The home
 # directories go further here: not even readable.

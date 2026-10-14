@@ -276,7 +276,9 @@ function u64(n: number): Buffer {
  * 401 (no token) once signed in, which here means a file `signed-in` in its
  * data dir. Each start is appended to `starts.log` there, with its command
  * line and the file it ran from, so a test can tell a restart from no
- * restart, and see what systemd started.
+ * restart, and see what systemd started. Told to stop (SIGTERM), it exits
+ * 143, as Beeper Server does; systemd counts that a failure unless the unit
+ * says otherwise.
  *
  * Under /test/ it also answers what it can do from where it runs, which is
  * how the sandbox test probes the unit's sandbox from inside: whether it can
@@ -335,6 +337,7 @@ createServer((req, res) => {
   }
   send(res, 404, { message: 'Not found', code: 'not_found' });
 }).listen(port, host);
-process.on('SIGTERM', () => process.exit(0));
+// Beeper Server's own way to stop, from its exit hook.
+process.once('SIGTERM', () => process.exit(128 + 15));
 `;
 }
