@@ -186,6 +186,15 @@ and `docs/HOSTING-OPTIONS.md`._
     127.0.0.1:23374 (zero `tar` errors, ~178 MB, NRestarts=0). `--reset` still
     failed, on a separate stop/clean bug #45 fixed (NEXT ACTION 9); the owner's Beeper
     (23373) and the MCP stayed untouched.
+  - **Updated to `main` 70ef610 on 2026-10-14 (deploy 5)** for #45's
+    `SuccessExitStatus=143` — a unit-only change, so no `npm ci`, rebuild or
+    MCP restart. `deploy/assistant-beeper.sh` (no args) reinstalled the unit
+    and restarted the (by then signed-in) runtime; the restart was clean
+    (journal "Deactivated successfully", zero "Failed with result
+    'exit-code'", NRestarts=0 — the fix working) and Claude's account stayed
+    signed in across it (`/v1/app/setup` = 401 before and after; ~192 MB,
+    active). The owner's Beeper (23373, still 401) and the MCP (read-only, 11
+    accounts) untouched; host after: 2180 MB available, swap 1204 MB, disk 31%.
 - **2026-10-13 23:05Z, the VPS — first digest.** Run by the thread's
   Remote Control session from the install at 9ceacaa: exit 0, posted in the
   thread. It covered 12 chats and 40 messages since the morning before and
@@ -208,7 +217,7 @@ and `docs/HOSTING-OPTIONS.md`._
 
 ## Daily digest (project thread "Daily message digest")
 
-- **On the VPS at `main` (48dffbc) since 2026-10-13** (see VERIFIED
+- **On the VPS at `main` (70ef610) since 2026-10-13** (see VERIFIED
   LIVE). With Claude Code signed in to the owner's Max plan, each morning's
   run is:
   `cd ~/claude-messenger && node dist/cli/main.js digest --since "$(TZ=America/Los_Angeles date -d 'yesterday 07:46' -Iseconds)" --time-zone America/Los_Angeles`.
