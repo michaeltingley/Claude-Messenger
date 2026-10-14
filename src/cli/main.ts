@@ -393,10 +393,12 @@ program
       },
     );
 
-    // As PID 1 of a sandboxed unit it gets only the signals it handles (see
-    // `serve`). A stop lets an answer being sent finish, and leaves one being
-    // written for the next run; the backstop, unref'd so it never holds the
-    // process open, ends the process when the model takes longer.
+    // A stop lets an answer being sent finish, and leaves one being written
+    // for the next run; the backstop, unref'd so it never holds the process
+    // open, ends the process when the model takes longer. One that comes
+    // before this ends the process as SIGTERM does any: its unit runs it under
+    // a shell, so that it is never PID 1 of the sandbox's PID namespace, which
+    // would drop it (see deploy/systemd/claude-messenger-responder.service).
     const stop = new AbortController();
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.once(signal, () => {

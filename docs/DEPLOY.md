@@ -161,6 +161,11 @@ cd ~/claude-messenger && git pull && npm ci && npm run build \
   && sudo systemctl restart claude-messenger-mcp     # upgrade
 ```
 
+Where the @Claude responder runs (`deploy/responder.sh`, section 5 of
+[SETUP.md](SETUP.md)), run that script again after an upgrade: it restarts
+the responder onto the new build. `sudo journalctl -u
+claude-messenger-responder` is its log.
+
 Re-running `deploy/bootstrap.sh` is the full upgrade: it also refreshes the
 systemd units from `deploy/systemd/`. It does not restart a display that is
 already running. A host provisioned before 2026-10-09 picks up the display's

@@ -297,12 +297,14 @@ export class MockBeeperServer {
     return this.baseUrl;
   }
 
+  /** Stops it; stopping it again does nothing. */
   async stop(): Promise<void> {
+    const server = this.server;
+    this.server = undefined;
+    if (!server) return;
     // An approval nobody answered holds its connection open; don't wait on it.
-    this.server?.closeAllConnections();
-    await new Promise<void>((resolve, reject) =>
-      this.server ? this.server.close((err) => (err ? reject(err) : resolve())) : resolve(),
-    );
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
   }
 
   /** True if this token may call the API: the fixed test token, or an OAuth token not revoked. */

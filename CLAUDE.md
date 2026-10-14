@@ -64,7 +64,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- CI's `npm test` must be green before any merge. Currently 818 tests / 43 files.
+- CI's `npm test` must be green before any merge. Currently 868 tests / 45 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -75,10 +75,16 @@ built for hypothetical futures.
   any invocation they don't model, so a script can't drift to an untested
   CLI form, and nothing a script gets wrong can install software on the
   machine running the tests. Its `systemctl` really starts a unit's
-  `ExecStart`, with only the environment a unit gets and its own
-  `Environment=`, so
+  `ExecStart`, split into words as systemd splits it, with only the
+  environment a unit gets and its own
+  `Environment=` and `EnvironmentFile=`, so
   `test/install.integration.test.ts` proves the installed MCP service answers
-  with the token `connect` saved. As real systemd does for a Type=simple
+  with the token `connect` saved, and `test/responder-deploy.integration.test.ts`
+  that the responder answers with the token its sign-in saved. Its `claude`
+  signs in on a screen drawn as Claude Code draws its own
+  (`test/claude-sign-in-screen.mjs`: words placed by moving the cursor, the
+  link an OSC 8 hyperlink, a redraw in any order), so a script must read
+  what a terminal would show, not the bytes. As real systemd does for a Type=simple
   unit, it reports a start that fails after the fork as a success. Its
   `sudo` resets the environment, as real sudo does, runs only the commands
   the scripts use, and asks for a password on `-v`, as a cloud image's sudo
@@ -135,13 +141,24 @@ built for hypothetical futures.
   prove is the one for the subscription's claude.ai connectors: Claude Code
   fetches them from claude.ai, where no stand-in can answer, so that they
   stay out rests on Claude Code's code and what its debug log says.
+  `test/responder-sandbox.integration.test.ts` runs the real
+  `deploy/responder.sh` with real sudo and systemd, and has the responder
+  answer an @Claude through the real Claude Code inside its sandbox, signed
+  in with the service's own token, against two mock Beepers and the
+  stand-in API; then it probes the sandbox from inside as the MCP test does,
+  checks nothing asked or answered was written down, and that a Claude Code
+  update reaches the service at its next restart and not before. Last, it
+  stops the service as it runs and as it starts, and checks what is left
+  running in it is reaped: what PID 1 of its PID namespace must do, which
+  node, run there itself, did not. It runs on both Ubuntus, as the MCP test
+  does.
 - Behavior gets asserted, not implementation details.
 
 ### CI and hygiene
 
 CI runs `npm ci` → `typecheck` → `test` → `build` → CLI smoke test once per
 push to a pull request, on Ubuntu 26.04, the VPS's. On 24.04 it runs only the
-two sandbox tests, whose assertions differ on that older systemd. Nothing
+three sandbox tests, whose assertions differ on that older systemd. Nothing
 reruns on main after a merge. CI is the one full run: before pushing, run
 `npm run typecheck` and the test files that cover what changed
 (`npx vitest run <files>`), not the whole suite again. `typecheck` covers

@@ -155,3 +155,19 @@ It answers each `@Claude` in a message you send, in any chat, and anything you w
 - **Restarts.** It answers each request once at most. It keeps where it got to in `state/responder.json` in Claude's directory, and when it starts again answers what you asked while it was stopped, up to six hours back; its first run starts from now. A request it was stopped while answering is answered by the next run.
 - **Failures.** A failure about one request is told to you, when it can send at all, and it goes on. Any other (Beeper unreachable, a token rejected, a file it can't read or write) ends it with exit 1. Its output says what it did by IDs and kinds of failure, never what anyone wrote.
 - **Audit.** Your audit log records what it read, by IDs; Claude's records what it sent, by length, not its words.
+
+### As a service, on the VPS
+
+`deploy/responder.sh` runs it as the system unit `claude-messenger-responder.service`, which starts at boot and, when it fails (a Beeper not answering yet after a reboot, say), is started again 30 seconds later. It is walled off as the MCP service is: it reads this install and Claude's directory, writes only their `audit/` and `state/`, and sees nothing else of your home, such as your SSH keys, your own Claude Code sign-in or Beeper's data. Its Claude Code has a configuration of its own, in Claude's `state/claude-code`, and a token of its own, from `claude setup-token`: one that can only write with your subscription (`user:inference`), with no connectors, such as your Gmail, and no sessions, for a year.
+
+1. Sign Claude Code in for it, from one session that stays open between the two steps:
+
+   ```sh
+   deploy/responder.sh sign-in start
+   printf '%s\n' '<the code>' | deploy/responder.sh sign-in finish
+   ```
+
+   `start` prints a link: open it where you're signed in to claude.ai and approve, and the page shows the code. `finish` hands it to the sign-in waiting on the host, which then shows the token; it goes into `claude-code.env` in Claude's directory, readable only by you, and is never displayed. `finish` then checks Claude Code answers with it. A sign-in waits 30 minutes for its code.
+2. Install and start it: `deploy/responder.sh`. It gives times in this machine's zone unless `RESPONDER_TIME_ZONE` names one (`RESPONDER_TIME_ZONE=America/Los_Angeles deploy/responder.sh`), and keeps the zone it has when run again.
+
+It refuses to install until your Beeper and Claude's are connected here and Claude Code is signed in for it, and fails when it doesn't start answering within a minute (`sudo journalctl -u claude-messenger-responder.service` says why). Run it again after updating this install, to restart onto the new code; an update of Claude Code reaches it when it next restarts. When the token expires, a year on, it answers that it couldn't: sign in again and run `deploy/responder.sh`. On a systemd older than 257, such as Ubuntu 24.04's, it can't get a process namespace of its own, so it could still reach your other processes' files through `/proc`; the script says so as it installs.
