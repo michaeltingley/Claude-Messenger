@@ -319,8 +319,6 @@ owner, each send approved in the Claude chat.
      Beeper's default, and their descriptions don't say so.
    - The audit's `error` field keeps the provider's error text as it came,
      with the token redacted.
-   - Read visibility skips the account allowlist for a chat or message
-     whose provider gives no account ID: it fails open there.
 
 ## NEXT ACTION (for the picking-up session)
 

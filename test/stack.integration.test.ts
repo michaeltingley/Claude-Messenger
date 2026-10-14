@@ -117,6 +117,31 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     expect(rest.hasMore).toBe(false);
   });
 
+  it('keeps a chat or message whose wire leaves out its account away from Claude while the allowlist names accounts', async () => {
+    mock.chats = [wireChat(), wireChat({ id: '!no-account:beeper.com', accountID: undefined, title: 'No account' })];
+    mock.messages = [
+      wireMessage(),
+      wireMessage({ id: 'msg-no-account', chatID: '!no-account:beeper.com', accountID: undefined, text: 'hello from nowhere' }),
+    ];
+    const narrowed = await connect(
+      parsePolicy({ version: 1, read: { accountAllowlist: ['whatsapp-1'], chatDenylist: [] } }),
+    );
+    const call = async (name: string, args: Record<string, unknown>) => narrowed.callTool({ name, arguments: args });
+
+    const found = JSON.parse(text(await call('search_messages', { query: 'hello' })));
+    expect(found.items.map((m: { id: string }) => m.id)).toEqual(['msg-1']);
+    const chats = JSON.parse(text(await call('search_chats', {})));
+    expect(chats.items.map((c: { id: string }) => c.id)).toEqual(['!chat1:beeper.com']);
+    for (const denied of [
+      await call('get_chat', { chatId: '!no-account:beeper.com' }),
+      await call('list_messages', { chatId: '!no-account:beeper.com' }),
+    ]) {
+      expect(denied.isError).toBe(true);
+      expect(text(denied)).toContain('read.accountAllowlist');
+      expect(text(denied)).not.toContain('hello from nowhere');
+    }
+  });
+
   it('allowlisted send reaches the wire and is audited with its text', async () => {
     const result = await client.callTool({
       name: 'send_message',

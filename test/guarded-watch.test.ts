@@ -85,6 +85,20 @@ describe('GuardedMessenger.watchMessages', () => {
     expect(fake.openWatches).toBe(0);
   });
 
+  it('delivers nothing that comes with no account ID while the account allowlist names accounts', async () => {
+    const { fake, guarded } = setup();
+    const watch = follow(guarded);
+    await settle();
+    // A provider's types promise an account ID; its wire may still leave one out.
+    fake.arrive(mine('no-account', 'chat-1', undefined as unknown as string, 5));
+    fake.arrive(mine('m3', 'chat-1', 'whatsapp-1', 6));
+    await settle();
+    expect(watch.got).toEqual(['m1', 'm2', 'm3']);
+    watch.stop.abort();
+    await watch.finished;
+    expect(watch.state.error).toBeUndefined();
+  });
+
   it('audits the watch under one opId: intent, then each delivered message by ID only, then the outcome', async () => {
     const { audit, guarded } = setup();
     const watch = follow(guarded);
