@@ -117,7 +117,10 @@ built for hypothetical futures.
   code with `tar` on its first start unless the install already did; on
   26.04 that `tar` fails under the sandbox as the real one did on the VPS,
   so the test also proves the server runs from the code the install
-  unpacked. That the real server runs under the sandbox, only a host shows.
+  unpacked. It stops as Beeper Server does too, exiting 143 on SIGTERM,
+  which real systemd counts a failure unless the unit says otherwise, so
+  `--reset` is proven against that. That the real server runs under the
+  sandbox, only a host shows.
   `test/claude-code-binary.integration.test.ts` runs the installed Claude
   Code, as the digest's model runs it, against a stand-in Anthropic API,
   and proves a message's @-mention can't make it read a file, the host's
