@@ -113,6 +113,54 @@ describe('PolicyEngine', () => {
     expect(engine.chatVisible({ id: 'secret', accountId: undefined })).toBe(false);
   });
 
+  describe('starting a direct chat', () => {
+    const startChatPolicy = (overrides: Record<string, unknown> = {}) =>
+      parsePolicy({
+        version: 1,
+        capabilities: { read: true, startChat: true },
+        read: { accountAllowlist: ['matrix'], chatDenylist: [] },
+        startChat: { userAllowlist: ['@owner:beeper.com'] },
+        ...overrides,
+      });
+
+    it('is denied by default, naming the capability, whoever it is with', () => {
+      expect(new PolicyEngine(DEFAULT_POLICY).check({ kind: 'startChat', accountId: 'matrix', userId: '@owner:beeper.com' })).toMatchObject({
+        allowed: false,
+        rule: 'capabilities.startChat',
+      });
+      // Allowlisting someone grants nothing while the capability is off.
+      const off = new PolicyEngine(startChatPolicy({ capabilities: { read: true, startChat: false } }));
+      expect(off.check({ kind: 'startChat', accountId: 'matrix', userId: '@owner:beeper.com' })).toMatchObject({
+        rule: 'capabilities.startChat',
+      });
+    });
+
+    it('is allowed only with someone the allowlist names', () => {
+      const engine = new PolicyEngine(startChatPolicy());
+      expect(engine.check({ kind: 'startChat', accountId: 'matrix', userId: '@owner:beeper.com' }).allowed).toBe(true);
+      expect(engine.check({ kind: 'startChat', accountId: 'matrix', userId: '@stranger:beeper.com' })).toMatchObject({
+        allowed: false,
+        rule: 'startChat.userAllowlist',
+        reason: expect.stringContaining('@stranger:beeper.com'),
+      });
+    });
+
+    it('is denied on an account Claude may not read, since the chat comes back to it', () => {
+      const engine = new PolicyEngine(startChatPolicy());
+      expect(engine.check({ kind: 'startChat', accountId: 'whatsapp-1', userId: '@owner:beeper.com' })).toMatchObject({
+        rule: 'read.accountAllowlist',
+      });
+      const blind = new PolicyEngine(startChatPolicy({ capabilities: { read: false, startChat: true } }));
+      expect(blind.check({ kind: 'startChat', accountId: 'matrix', userId: '@owner:beeper.com' })).toMatchObject({
+        rule: 'capabilities.read',
+      });
+    });
+
+    it("can't be opened to everyone: the allowlist names each person", () => {
+      expect(() => startChatPolicy({ startChat: { userAllowlist: '*' } })).toThrow();
+    });
+  });
+
   it('account allowlist restricts read visibility', () => {
     const engine = new PolicyEngine(
       parsePolicy({ version: 1, read: { accountAllowlist: ['signal-1'], chatDenylist: [] } }),

@@ -12,6 +12,7 @@ import type {
   SendMessageInput,
   SendMessageResult,
   ServerInfo,
+  StartDirectChatInput,
 } from '../../core/types.js';
 import { AuthError, ConnectionError, NotFoundError, ProviderError } from '../../core/errors.js';
 import { watchByPolling } from '../watch-by-polling.js';
@@ -158,6 +159,20 @@ export class BeeperMessenger implements Messenger {
           ),
       },
       signal,
+    );
+  }
+
+  startDirectChat(input: StartDirectChatInput): Promise<Chat> {
+    return this.wrap(async () =>
+      toChat(
+        await this.client.chats.start({
+          accountID: input.accountId,
+          user: { id: input.userId },
+          // Beeper reuses the direct chat there is. A new one on its own
+          // network is an invite, which it makes only when allowed to.
+          allowInvite: true,
+        }),
+      ),
     );
   }
 

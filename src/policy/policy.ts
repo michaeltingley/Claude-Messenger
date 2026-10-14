@@ -9,9 +9,9 @@ import { MemoryRateWindow, type RateWindow } from './rate.js';
  * The policy layer narrows that down to what the user has actually granted
  * Claude, enforced in-process before any provider call is made.
  *
- * Defaults are deliberately conservative about actions: no sends, no state
- * changes. Reads default to everything (accountAllowlist '*') — narrowing
- * reads is opt-in via the allowlist/denylist.
+ * Defaults are deliberately conservative about actions: no sends, no new
+ * chats, no state changes. Reads default to everything (accountAllowlist
+ * '*') — narrowing reads is opt-in via the allowlist/denylist.
  */
 
 const starOrList = z.union([z.literal('*'), z.array(z.string())]);
@@ -26,6 +26,8 @@ export const PolicySchema = z.object({
       send: z.boolean().default(false),
       /** Mark chats read (visible to other people via read receipts). */
       markRead: z.boolean().default(false),
+      /** Start a direct chat with someone, who is invited to it. */
+      startChat: z.boolean().default(false),
     })
     .default({}),
   read: z
@@ -47,6 +49,15 @@ export const PolicySchema = z.object({
       maxCharsPerMessage: z.number().int().positive().default(2000),
     })
     .default({}),
+  startChat: z
+    .object({
+      /**
+       * People Claude may start a direct chat with, by user ID. Never '*':
+       * each is someone the owner named.
+       */
+      userAllowlist: z.array(z.string()).default([]),
+    })
+    .default({}),
 });
 
 export type Policy = z.infer<typeof PolicySchema>;
@@ -66,11 +77,13 @@ export type PolicyRule =
   | 'capabilities.read'
   | 'capabilities.send'
   | 'capabilities.markRead'
+  | 'capabilities.startChat'
   | 'read.accountAllowlist'
   | 'read.chatDenylist'
   | 'send.chatAllowlist'
   | 'send.maxCharsPerMessage'
-  | 'send.maxMessagesPerHour';
+  | 'send.maxMessagesPerHour'
+  | 'startChat.userAllowlist';
 
 /**
  * Send is deliberately absent: a send decision is only obtainable via
@@ -82,7 +95,8 @@ export type PolicyAction =
   | { kind: 'checkConnection' }
   | { kind: 'listAccounts' }
   | { kind: 'read'; chatId?: string; accountId?: string }
-  | { kind: 'markRead'; chatId: string };
+  | { kind: 'markRead'; chatId: string }
+  | { kind: 'startChat'; accountId: string; userId: string };
 
 export type Decision = { allowed: true } | { allowed: false; rule: PolicyRule; reason: string };
 
@@ -116,6 +130,8 @@ export class PolicyEngine {
         return this.checkRead(action);
       case 'markRead':
         return this.checkMarkRead(action);
+      case 'startChat':
+        return this.checkStartChat(action);
     }
   }
 
@@ -184,6 +200,22 @@ export class PolicyEngine {
     }
     if (this.policy.read.chatDenylist.includes(action.chatId)) {
       return deny('read.chatDenylist', `Chat ${action.chatId} is denylisted.`);
+    }
+    return ALLOW;
+  }
+
+  private checkStartChat(action: { accountId: string; userId: string }): Decision {
+    if (!this.policy.capabilities.startChat) {
+      return deny(
+        'capabilities.startChat',
+        'Starting chats is disabled by policy. Enable capabilities.startChat and allowlist the person to permit it.',
+      );
+    }
+    // The chat comes back to the caller, so it must be one the caller may see.
+    const visible = this.checkRead({ accountId: action.accountId });
+    if (!visible.allowed) return visible;
+    if (!this.policy.startChat.userAllowlist.includes(action.userId)) {
+      return deny('startChat.userAllowlist', `User ${action.userId} is not allowlisted for starting a chat with.`);
     }
     return ALLOW;
   }

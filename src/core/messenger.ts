@@ -10,6 +10,7 @@ import type {
   SendMessageInput,
   SendMessageResult,
   ServerInfo,
+  StartDirectChatInput,
 } from './types.js';
 
 /**
@@ -54,6 +55,13 @@ export interface Messenger {
    * backend fails: no retries, so the caller decides how to resume.
    */
   watchMessages(query: MessageWatchQuery, signal: AbortSignal): AsyncIterable<Message>;
+
+  /**
+   * The user's direct chat with someone: the one they have, or else a new
+   * one, which the other person is invited to. Implementations must treat
+   * this as real: a new chat reaches the other person.
+   */
+  startDirectChat(input: StartDirectChatInput): Promise<Chat>;
 
   /** Send a message as the user. Implementations must treat this as real. */
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;

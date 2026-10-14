@@ -12,6 +12,7 @@ import type {
   SendMessageInput,
   SendMessageResult,
   ServerInfo,
+  StartDirectChatInput,
 } from '../core/types.js';
 import { PolicyDeniedError } from '../core/errors.js';
 import { errorCode, type AuditLogger } from './audit.js';
@@ -297,6 +298,27 @@ export class GuardedMessenger implements Messenger {
         })
         .catch(() => undefined);
     }
+  }
+
+  /**
+   * Audited as a mutation, since a new chat reaches the other person. As
+   * with getChat, a chat the read policy hides never reaches the caller,
+   * though it now exists: the denial is recorded with its true rule.
+   */
+  async startDirectChat(input: StartDirectChatInput): Promise<Chat> {
+    const context = { accountId: input.accountId, userId: input.userId };
+    const chat = await this.guardMutation(
+      this.engine.check({ kind: 'startChat', ...context }),
+      'startDirectChat',
+      context,
+      () => this.inner.startDirectChat(input),
+      (result) => ({ chatId: result.id }),
+    );
+    const post = this.engine.checkVisible({ chatId: chat.id, accountId: chat.accountId });
+    if (!post.allowed) {
+      return this.recordDenied('startDirectChat', post.rule, context, post.reason);
+    }
+    return chat;
   }
 
   sendMessage(input: SendMessageInput): Promise<SendMessageResult> {

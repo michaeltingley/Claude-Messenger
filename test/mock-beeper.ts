@@ -192,6 +192,13 @@ export class MockBeeperServer {
   readonly token = 'test-token-123';
   chats: WireChat[] = [];
   messages: WireMessage[] = [];
+  /**
+   * The accounts signed in here. Left unset, there is one for each account
+   * the chats are on; set, an account can have no chats yet, as a new one has.
+   */
+  accounts: Array<{ accountID: string; network: string }> | undefined;
+  /** Who is signed in: the user of every account here. */
+  self: { id: string; fullName?: string } = { id: 'me', fullName: 'Test User' };
   /** The most messages one page of a chat holds; a longer chat pages, older messages on later pages. */
   messagePageSize = Infinity;
   requests: RecordedRequest[] = [];
@@ -398,13 +405,15 @@ export class MockBeeperServer {
       });
     }
     if (req.method === 'GET' && path === '/v1/accounts') {
-      const accounts = [...new Map(this.chats.map((c) => [c.accountID, c])).values()].map((c) => ({
-        accountID: c.accountID,
-        network: c.network,
-        bridge: { id: c.accountID, provider: 'cloud', type: c.network },
-        user: { id: 'me', fullName: 'Test User', isSelf: true },
+      const accounts = this.accountList().map((a) => ({
+        ...a,
+        bridge: { id: a.accountID, provider: 'cloud', type: a.network },
+        user: { ...this.self, isSelf: true },
       }));
       return send(200, accounts);
+    }
+    if (req.method === 'POST' && path === '/v1/chats/start') {
+      return this.startChat(body, send, error);
     }
     if (req.method === 'GET' && path === '/v1/chats/search') {
       this.onChatSearch?.();
@@ -430,6 +439,61 @@ export class MockBeeperServer {
       return chat ? send(200, chat) : error(404, 'not_found', 'chat not found');
     }
     return error(404, 'not_found', `no route: ${req.method} ${path}`);
+  }
+
+  private accountList(): Array<{ accountID: string; network: string }> {
+    return (
+      this.accounts ??
+      [...new Map(this.chats.map((c) => [c.accountID, c])).values()].map((c) => ({
+        accountID: c.accountID,
+        network: c.network,
+      }))
+    );
+  }
+
+  /**
+   * Starting a direct chat as the SDK's reference describes it: the account's
+   * direct chat with that user if there is one, or else a new one, made only
+   * when invites are allowed (`allowInvite`), the other person invited to it.
+   * What Beeper answers for a user it can't find is unverified, so it isn't
+   * modelled.
+   */
+  private startChat(
+    body: unknown,
+    send: (status: number, payload: unknown) => void,
+    error: (status: number, code: string, message: string) => void,
+  ): void {
+    const { accountID, user, allowInvite } = (body ?? {}) as {
+      accountID?: string;
+      user?: { id?: string };
+      allowInvite?: boolean;
+    };
+    const account = this.accountList().find((a) => a.accountID === accountID);
+    if (account === undefined) return error(404, 'not_found', `no account ${accountID}`);
+    if (typeof user?.id !== 'string') return error(400, 'invalid_request', 'user.id is required here');
+    const userId = user.id;
+    const existing = this.chats.find(
+      (c) => c.accountID === accountID && c.type === 'single' && c.participants.items.some((p) => p.id === userId),
+    );
+    if (existing) return send(200, { ...existing, chatID: existing.id, status: 'existing' });
+    if (allowInvite !== true) {
+      return error(400, 'invite_required', `a direct chat with ${userId} needs an invite, which was not allowed`);
+    }
+    const chat = wireChat({
+      id: `!dm-${this.chats.length + 1}:beeper.local`,
+      accountID: account.accountID,
+      network: account.network,
+      title: userId,
+      unreadCount: 0,
+      participants: {
+        items: [{ ...this.self, isSelf: true }, { id: userId }],
+        hasMore: false,
+        total: 2,
+      },
+      lastActivity: new Date().toISOString(),
+    });
+    this.chats.push(chat);
+    return send(200, { ...chat, chatID: chat.id, status: 'created' });
   }
 
   /**

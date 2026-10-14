@@ -185,6 +185,14 @@ export interface MessageWatchQuery {
   since: string;
 }
 
+/** Who a direct chat is with, and on which of the user's accounts. */
+export interface StartDirectChatInput {
+  /** The account it is on, which sets the network. */
+  accountId: string;
+  /** The other person: their user ID on that account's network, as `Participant.id` gives it. */
+  userId: string;
+}
+
 export interface SendMessageInput {
   chatId: string;
   text: string;

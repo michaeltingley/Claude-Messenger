@@ -9,6 +9,7 @@ import { dayBefore, DigestWriter, isDigestWindow, MAX_DIGEST_DAYS } from '../ass
 import { hostTimeZone, isTimeZone } from '../assistant/text/time.js';
 import { watchMentions } from '../assistant/mentions.js';
 import type { AccessProgress, AccessRequest } from '../core/access.js';
+import type { Messenger } from '../core/messenger.js';
 import type { AccountSignup } from '../core/signup.js';
 import type { Message } from '../core/types.js';
 import { createMcpServer } from '../mcp/server.js';
@@ -164,11 +165,13 @@ program
     }
 
     console.log(`✓ Policy: ${policySource === 'file' ? config.policyPath : 'built-in default (read-only)'}`);
-    console.log(`    read: ${policy.capabilities.read}   send: ${policy.capabilities.send}   markRead: ${policy.capabilities.markRead}`);
-    if (policy.capabilities.send) {
+    const { read, send, markRead, startChat } = policy.capabilities;
+    console.log(`    read: ${read}   send: ${send}   markRead: ${markRead}   startChat: ${startChat}`);
+    if (send) {
       const list = policy.send.chatAllowlist;
       console.log(`    send allowlist: ${list === '*' ? '* (ALL CHATS — consider narrowing)' : `${list.length} chat(s)`}`);
     }
+    if (startChat) console.log(`    start-chat allowlist: ${policy.startChat.userAllowlist.length} person(s)`);
     console.log('\nAll checks passed. Try: claude-messenger chats');
   });
 
@@ -284,6 +287,32 @@ program
     const { messenger } = await app();
     const result = await messenger.sendMessage({ chatId, text });
     console.log(`✓ Sent (pending ID ${result.pendingMessageId}) — recorded in audit log`);
+  });
+
+/** The one account the policy shows here, for a command that acts on an account unless told which. */
+async function onlyAccount(messenger: Messenger): Promise<string> {
+  const accounts = await messenger.listAccounts();
+  if (accounts.length === 1) return accounts[0]!.id;
+  throw new Error(
+    accounts.length === 0
+      ? 'No account here is visible under the current policy.'
+      : `There are ${accounts.length} accounts here: name one with --account (see: claude-messenger accounts).`,
+  );
+}
+
+program
+  .command('start-chat')
+  .description(
+    'Open a direct chat with someone, the one there is or a new one they are invited to, and print its ID ' +
+      '(policy-gated: requires startChat enabled + the person allowlisted)',
+  )
+  .requiredOption('--with <userId>', "the person's user ID on the account's network")
+  .option('--account <id>', 'the account to open it on (default: the only one here)')
+  .action(async (opts: { with: string; account?: string }) => {
+    const { messenger } = await app();
+    const accountId = opts.account ?? (await onlyAccount(messenger));
+    const chat = await messenger.startDirectChat({ accountId, userId: opts.with });
+    console.log(`✓ Direct chat with ${opts.with}: ${chat.id} — recorded in audit log`);
   });
 
 /** What `mentions` prints for each one: where it is, when, and what it says. */
