@@ -14,8 +14,8 @@ import { join } from 'node:path';
  * build: its version, its download URL and the archive's SHA-512 in base64,
  * as api.beeper.com/desktop/update-feed.json does (read 2026-10-14). A build
  * is a .tar.gz holding `beeper-server-<version>-linux-<arch>/beeper-server`.
- * Here that file is `standInServer`: node, answering the two routes the
- * script reads as Beeper Server 4.3.176 answers them.
+ * Here that file is `standInServer`: packaged as Beeper Server 4.3.176's is,
+ * and answering the routes the script reads as it does.
  */
 export class BeeperFeed {
   /** What the feed announces, per stable Server build asked for. Undefined: it answers 404. */
@@ -105,7 +105,7 @@ export class BeeperFeed {
     mkdirSync(join(stage, folder));
     switch (build.holds ?? 'the server') {
       case 'the server':
-        writeFileSync(server, standInServer(build));
+        writeFileSync(server, standInServer(build, arch, mkdtempSync(join(this.dir, 'payload-'))));
         chmodSync(server, 0o755);
         break;
       case 'a symlink':
@@ -139,32 +139,162 @@ export interface StandInBuild {
   crashes?: boolean;
   /** What the archive holds where the server belongs. The server, unless a test says otherwise. */
   holds?: 'the server' | 'a symlink' | 'no server';
+  /**
+   * How the server is packaged: as Beeper Server 4.3.176's is, unless a test
+   * says otherwise, for a build the script must refuse before installing it.
+   */
+  packaged?: Packaging;
+}
+
+export type Packaging =
+  | 'as 4.3.176'
+  | 'without its payload'
+  | 'with two payloads'
+  | 'with a payload tar cannot unpack'
+  | 'to unpack elsewhere'
+  | 'without a cache key'
+  | 'with a cache key that is a path';
+
+/** Where Beeper Server 4.3.176's launcher unpacks its payload, in its own words. */
+const UNPACKS_TO = "path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), cacheAppName, cacheKey)";
+
+/**
+ * A stand-in for the `beeper-server` executable, packaged as Beeper Server
+ * 4.3.176's is: a launcher, then its payload, `payload.tar.gz`, stored as a
+ * Node single executable application stores an asset (the name's length in
+ * 8 bytes little-endian, the name, then the data's length and the data).
+ * Started, the launcher looks for the payload unpacked in
+ * `$XDG_CACHE_HOME/BeeperServer/<cache key>` (`~/.cache` by default). Marked
+ * `.complete`, it is used as it is; otherwise the launcher unpacks it there
+ * with `tar`, as Beeper's does, and says so on stderr. Then it runs the
+ * payload's `app/build/main/server.mjs` (`standInMain`), handing it the
+ * command line as Beeper's does: the executable, then its arguments.
+ *
+ * Beeper's executable is a Node single executable application; this one is a
+ * shell script that hands node the launcher, which lets it hold the payload
+ * after it. `stage` is an empty directory to pack the payload in.
+ */
+export function standInServer(build: StandInBuild, arch: string, stage: string): Buffer {
+  const packaged = build.packaged ?? 'as 4.3.176';
+  mkdirSync(join(stage, 'app', 'build', 'main'), { recursive: true });
+  writeFileSync(join(stage, 'app', 'build', 'main', 'server.mjs'), standInMain(build));
+  execFileSync('tar', ['-czf', join(stage, 'payload.tar.gz'), '-C', stage, 'app']);
+  const payload = readFileSync(join(stage, 'payload.tar.gz'));
+  // As Beeper's: the build, then a hash, so each build unpacks to a directory of its own.
+  const key = `${build.version}-Production-linux-${arch}-${createHash('sha256').update(payload).digest('hex').slice(0, 12)}`;
+  const cacheKey = packaged === 'with a cache key that is a path' ? `../${key}` : key;
+  const unpacksTo = packaged === 'to unpack elsewhere' ? 'path.join(os.tmpdir(), cacheAppName, cacheKey)' : UNPACKS_TO;
+  const launcher = `const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const childProcess = require('node:child_process')
+const { pathToFileURL } = require('node:url')
+
+const cacheAppName = "BeeperServer"
+${packaged === 'without a cache key' ? '' : `const cacheKey = ${JSON.stringify(cacheKey)}`}
+
+function cacheDir() {
+  return ${unpacksTo}
+}
+
+// node:sea's getAsset(), for an executable that is not one but holds its assets as one does.
+function getAsset(name) {
+  const self = fs.readFileSync(process.argv[1])
+  const header = Buffer.alloc(8 + name.length)
+  header.writeBigUInt64LE(BigInt(name.length))
+  header.write(name, 8)
+  const at = self.lastIndexOf(header)
+  if (at === -1) throw new Error('no asset named ' + name)
+  const start = at + header.length + 8
+  return self.subarray(start, start + Number(self.readBigUInt64LE(at + header.length)))
+}
+
+function ensureExtracted(targetDir) {
+  fs.mkdirSync(path.dirname(targetDir), { recursive: true })
+  const completePath = path.join(targetDir, '.complete')
+  if (fs.existsSync(completePath)) return
+  console.error('beeper-server: unpacking its payload into ' + targetDir)
+  const tmpDir = fs.mkdtempSync(targetDir + '.tmp.')
+  const payloadPath = path.join(tmpDir, 'payload.tar.gz')
+  fs.writeFileSync(payloadPath, getAsset('payload.tar.gz'))
+  const tar = childProcess.spawnSync('tar', ['-xzf', payloadPath, '-C', tmpDir], { stdio: 'inherit' })
+  if (tar.error) throw tar.error
+  if (tar.status !== 0) process.exit(tar.status || 1)
+  fs.rmSync(payloadPath)
+  fs.writeFileSync(path.join(tmpDir, '.complete'), '')
+  fs.renameSync(tmpDir, targetDir)
+}
+
+const targetDir = cacheDir()
+ensureExtracted(targetDir)
+const mainPath = path.join(targetDir, 'app', 'build', 'main', 'server.mjs')
+process.argv = [process.execPath, mainPath, ...process.argv.slice(1)]
+import(pathToFileURL(mainPath).href).catch((err) => {
+  console.error(err)
+  process.exit(1)
+})`;
+  const script = `#!/bin/sh
+# A stand-in for Beeper Server (test/beeper-feed.ts): its launcher, which node
+# runs, then its payload.
+launcher=$(cat <<'LAUNCHER'
+${launcher}
+LAUNCHER
+)
+exec "${process.execPath}" -e "$launcher" "$0" "$@"
+`;
+  return Buffer.concat([Buffer.from(script), ...assets(packaged, payload)]);
+}
+
+/** The payload as the executable holds it, once or not at all, as `packaged` says. */
+function assets(packaged: Packaging, payload: Buffer): Buffer[] {
+  const name = Buffer.from('payload.tar.gz');
+  const asset = (data: Buffer) => Buffer.concat([u64(name.length), name, u64(data.length), data]);
+  switch (packaged) {
+    case 'without its payload':
+      return [];
+    case 'with two payloads':
+      return [asset(payload), asset(payload)];
+    case 'with a payload tar cannot unpack':
+      // A gzip's first bytes, and none of the rest.
+      return [asset(Buffer.concat([payload.subarray(0, 2), Buffer.from('cut short')]))];
+    default:
+      return [asset(payload)];
+  }
+}
+
+/** `n` in 8 bytes, little-endian, as a Node single executable application stores an asset's lengths. */
+function u64(n: number): Buffer {
+  const bytes = Buffer.alloc(8);
+  bytes.writeBigUInt64LE(BigInt(n));
+  return bytes;
 }
 
 /**
- * A stand-in for the `beeper-server` executable. Like Beeper Server 4.3.176:
+ * The server a stand-in runs from its payload. Like Beeper Server 4.3.176:
  * started with --host, --port and --data-dir, it answers GET /v1/info with
  * its version and port, and GET /v1/app/setup with 200 while signed out and
  * 401 (no token) once signed in, which here means a file `signed-in` in its
- * data dir. Each start is appended to `starts.log` there, so a test can tell
- * a restart from no restart, and see the arguments systemd gave it.
+ * data dir. Each start is appended to `starts.log` there, with its command
+ * line and the file it ran from, so a test can tell a restart from no
+ * restart, and see what systemd started.
  *
  * Under /test/ it also answers what it can do from where it runs, which is
  * how the sandbox test probes the unit's sandbox from inside: whether it can
  * stat a path, create a file there, or listen on a port, and which user it
  * runs as. Each answers 200 with `{ ok: true }` or `{ error: <errno code> }`.
  */
-export function standInServer(build: StandInBuild): string {
-  return `#!${process.execPath}
-const { createServer } = require('node:http');
-const { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } = require('node:fs');
+function standInMain(build: StandInBuild): string {
+  return `import { createServer } from 'node:http';
+import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 const VERSION = ${JSON.stringify(build.version)};
 const arg = (name) => process.argv.find((a) => a.startsWith('--' + name + '='))?.slice(name.length + 3);
 const host = arg('host');
 const port = Number(arg('port'));
 const dataDir = arg('data-dir');
 mkdirSync(dataDir, { recursive: true });
-appendFileSync(dataDir + '/starts.log', JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), version: VERSION }) + '\\n');
+const start = { pid: process.pid, argv: process.argv.slice(2), main: fileURLToPath(import.meta.url), version: VERSION };
+appendFileSync(dataDir + '/starts.log', JSON.stringify(start) + '\\n');
 ${build.crashes ? "console.error('beeper-server: cannot start'); process.exit(1);" : ''}
 const send = (res, status, body) => {
   res.writeHead(status, { 'content-type': 'application/json' });

@@ -62,7 +62,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- CI's `npm test` must be green before any merge. Currently 745 tests / 38 files.
+- CI's `npm test` must be green before any merge. Currently 755 tests / 38 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -73,7 +73,8 @@ built for hypothetical futures.
   any invocation they don't model, so a script can't drift to an untested
   CLI form, and nothing a script gets wrong can install software on the
   machine running the tests. Its `systemctl` really starts a unit's
-  `ExecStart`, with only the environment a unit gets, so
+  `ExecStart`, with only the environment a unit gets and its own
+  `Environment=`, so
   `test/install.integration.test.ts` proves the installed MCP service answers
   with the token `connect` saved. As real systemd does for a Type=simple
   unit, it reports a start that fails after the fork as a success. Its
@@ -112,7 +113,11 @@ built for hypothetical futures.
   bind, and who can read its data. The unit holds the server to its own port
   only where systemd was built with BPF, as 26.04's was and 24.04's wasn't;
   on 24.04 the test asserts the port open and the install's warning given.
-  That the real server runs under the sandbox, only a host shows.
+  The stand-in is packaged as Beeper Server is, a launcher that unpacks its
+  code with `tar` on its first start unless the install already did; on
+  26.04 that `tar` fails under the sandbox as the real one did on the VPS,
+  so the test also proves the server runs from the code the install
+  unpacked. That the real server runs under the sandbox, only a host shows.
   `test/claude-code-binary.integration.test.ts` runs the installed Claude
   Code, as the digest's model runs it, against a stand-in Anthropic API,
   and proves a message's @-mention can't make it read a file, the host's
