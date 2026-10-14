@@ -124,7 +124,8 @@ export function createMcpServer(messenger: Messenger, version: string): McpServe
     {
       title: 'Search messages',
       description:
-        'Word search across chats (literal words, any order — not semantic), newest first. Filter by chat, account, date range, or media type. ' +
+        'Word search across every chat, low-priority and muted ones too (literal words, any order — not semantic), newest first. ' +
+        'Filter by chat, account, date range, or media type. ' +
         'A page can hold fewer than limit while hasMore is true: paginate with cursor.',
       inputSchema: {
         query: z.string().optional(),

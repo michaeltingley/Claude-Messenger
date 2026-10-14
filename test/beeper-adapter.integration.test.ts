@@ -131,6 +131,21 @@ describe('BeeperMessenger (HTTP integration)', () => {
     expect(page.items[0]!.isFromMe).toBe(true);
   });
 
+  it('searchMessages finds matches in low-priority and muted chats too, which Beeper leaves out unless asked', async () => {
+    mock.chats = [
+      wireChat(),
+      wireChat({ id: '!lowprio:beeper.com', title: 'Low priority', isLowPriority: true }),
+      wireChat({ id: '!muted:beeper.com', title: 'Muted', isMuted: true }),
+    ];
+    mock.messages = [
+      wireMessage({ id: 'in-inbox', text: 'lunch tomorrow', timestamp: '2026-10-01T00:03:00.000Z' }),
+      wireMessage({ id: 'in-lowprio', chatID: '!lowprio:beeper.com', text: 'lunch at noon', timestamp: '2026-10-01T00:02:00.000Z' }),
+      wireMessage({ id: 'in-muted', chatID: '!muted:beeper.com', text: 'lunch is on me', timestamp: '2026-10-01T00:01:00.000Z' }),
+    ];
+    const page = await messenger.searchMessages({ query: 'lunch' });
+    expect(page.items.map((m) => m.id)).toEqual(['in-inbox', 'in-lowprio', 'in-muted']);
+  });
+
   it('searchMessages asks Beeper for no more than the 20 a page holds, newest first, and hands back a cursor to the older rest', async () => {
     mock.messages = Array.from({ length: 30 }, (_, i) =>
       wireMessage({ id: `m${i}`, text: 'needle in the haystack', timestamp: new Date(Date.UTC(2026, 9, 1, 0, i)).toISOString() }),

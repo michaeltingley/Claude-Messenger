@@ -156,6 +156,31 @@ describe('CLI (subprocess integration)', () => {
     }
   }, 30_000);
 
+  it('search finds matches in low-priority and muted chats too', async () => {
+    mock.chats = [
+      wireChat(),
+      wireChat({ id: '!lowprio:beeper.com', title: 'Low priority', isLowPriority: true }),
+      wireChat({ id: '!muted:beeper.com', title: 'Muted', isMuted: true }),
+    ];
+    mock.messages = [
+      wireMessage({ id: 'in-inbox', text: 'lunch tomorrow', timestamp: '2026-10-01T00:03:00.000Z' }),
+      wireMessage({ id: 'in-lowprio', chatID: '!lowprio:beeper.com', text: 'lunch at noon', timestamp: '2026-10-01T00:02:00.000Z' }),
+      wireMessage({ id: 'in-muted', chatID: '!muted:beeper.com', text: 'lunch is on me', timestamp: '2026-10-01T00:01:00.000Z' }),
+    ];
+    try {
+      const { stdout, code } = await cli(['search', 'lunch']);
+      expect(code).toBe(0);
+      expect(stdout.trimEnd().split('\n')).toEqual([
+        '[2026-10-01T00:03:00.000Z] (!chat1:beeper.com) Alice: lunch tomorrow',
+        '[2026-10-01T00:02:00.000Z] (!lowprio:beeper.com) Alice: lunch at noon',
+        '[2026-10-01T00:01:00.000Z] (!muted:beeper.com) Alice: lunch is on me',
+      ]);
+    } finally {
+      mock.chats = [wireChat()];
+      mock.messages = [wireMessage()];
+    }
+  }, 30_000);
+
   /**
    * What a listing printed: its lines, and the cursor its last line says to
    * run again with, as a shell would pass it on.
