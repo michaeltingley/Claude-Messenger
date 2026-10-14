@@ -175,9 +175,10 @@ start_unit() {
     wd="$(sed -n 's/^WorkingDirectory=//p' "$f" | tail -n 1)"
     cmd="$(sed -n 's/^ExecStart=//p' "$f" | tail -n 1)"
     # Its words as systemd splits them: at blanks, but not within quotes, and
-    # with $$ for a literal $. Escapes are not modeled.
-    case "$cmd" in
-      *\\\\*) echo "fake systemctl: unmodeled ExecStart= in $u: $cmd" >&2; exit 64 ;;
+    # with $$ for a literal $. Escapes, specifiers (%t) and variables are not
+    # modeled.
+    case "\${cmd//\\$\\$/}" in
+      *[\\\\%\\$]*) echo "fake systemctl: unmodeled ExecStart= in $u: $cmd" >&2; exit 64 ;;
     esac
     words=()
     while IFS= read -r -d '' word; do
