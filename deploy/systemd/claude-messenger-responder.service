@@ -19,17 +19,10 @@ Wants=network-online.target
 [Service]
 User=__USER__
 WorkingDirectory=__INSTALL_DIR__
-# Node runs as the child of a shell, not in its place. The sandbox gives the
-# service a PID namespace of its own (PrivatePIDs, below), whose PID 1 the
-# kernel gives only the signals it has a handler for: node there would drop a
-# stop that came as it started, before its handler, and systemd would wait out
-# its stop timeout; and it would leave whatever Claude Code left running, once
-# ended, a zombie. The shell is PID 1 instead. systemd signals every process
-# of the unit, so a stop reaches node as it would any process; the shell waits
-# for node to finish (where it is not PID 1, as under systemd < 257, the trap
-# keeps the stop from ending it first), reaps what is left, and exits with
-# node's status: 143 for a stop that came before node could handle it. The
-# trailing exit keeps it from exec'ing node.
+# Node runs as the child of a shell, as in the MCP service (see its unit for
+# how): as PID 1 of the sandbox's PID namespace, node would drop a stop that
+# came as it started, and would leave whatever Claude Code left running, once
+# ended, a zombie. The shell, PID 1 instead, reaps it.
 ExecStart=/bin/sh -c 'trap : TERM; "$$@"; exit' responder __NODE__ dist/cli/main.js respond --assistant __ASSISTANT_DIR__ --time-zone __TIME_ZONE__
 SuccessExitStatus=143
 # Its journal is the responder's, not the shell's.

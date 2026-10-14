@@ -605,14 +605,13 @@ program
     });
     console.log(`claude-messenger MCP server listening on http://${running.host}:${running.port}/mcp`);
 
-    // A hosted service must stop cleanly on `systemctl stop`/restart. Under
-    // the unit's PrivatePIDs sandbox this is PID 1 in its own namespace, where
-    // the kernel delivers only signals the process has installed a handler
-    // for — so without this, SIGTERM is dropped and systemd waits out its stop
-    // timeout before resorting to SIGKILL. Stop accepting, let in-flight work
-    // settle, then exit; an unref'd backstop bounds a close that an idle
-    // keep-alive connection would otherwise stall, and never holds the process
-    // open on its own.
+    // A hosted service must stop cleanly on `systemctl stop`/restart: stop
+    // accepting, let in-flight work settle, then exit; an unref'd backstop
+    // bounds a close that an idle keep-alive connection would otherwise stall,
+    // and never holds the process open on its own. A stop that comes before
+    // this ends the process as SIGTERM does any: its unit runs it under a
+    // shell, so that it is never PID 1 of the sandbox's PID namespace, which
+    // would drop it (see deploy/systemd/claude-messenger-mcp.service).
     let stopping = false;
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       process.once(signal, () => {

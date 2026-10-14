@@ -556,20 +556,25 @@ owner, each send approved in the Claude chat.
     `.env`, never shown. `finish` stopped at `needs-secrets`, and `signup
     encrypt` finished the setup ("What the real sign-up showed", above).
     Next: item 11.
-11. **Run the responder on the VPS — next.** The command and its service
-    are merged (item 3 of "@Claude assistant" above). Deploy the checkout
-    through the install thread (a pull and a build; nothing installed),
-    then ask the owner's go for Claude's policy, the chat, the Claude Code
-    sign-in and the service, all in item 3. After it starts, measure its
-    memory (its unit caps it at 1 GB).
-12. **Give the MCP service the responder's PID 1 shell.** Under systemd
-    257+ its unit runs node as PID 1 of a PID namespace of its own, which
-    gets only the signals it has a handler for: a stop that comes as it
-    starts, before `serve` installs its handler, is dropped, and systemd
-    waits out its 90 s stop timeout. CI found this for the responder
-    (stopped just after a restart, 2026-10-14), whose unit now runs node
-    under `/bin/sh -c 'trap : TERM; "$$@"; exit'` (see its comment). Do the
-    same for the MCP unit, with the responder's two stop tests.
+11. **Run the responder on the VPS — next, on the owner's go.** The command
+    and its service are merged (item 3 of "@Claude assistant" above) and on
+    the VPS as code only (deploy 6, 864ec20; nothing installed). The
+    owner's go was asked for on 2026-10-14, on a card in the thread: for
+    Claude's policy, the chat, the Claude Code sign-in and the service, all
+    in item 3. After it starts, measure its memory (its unit caps it at
+    1 GB).
+12. **Give the MCP service the responder's PID 1 shell — merged; on the
+    VPS at the next `configure.sh`.** Under systemd 257+ its unit ran node
+    as PID 1 of a PID namespace of its own, which gets only the signals it
+    has a handler for: a stop that came as it started, before `serve`
+    installed its handler, was dropped, and systemd waited out its 90 s
+    stop timeout. CI found this for the responder (stopped just after a
+    restart, 2026-10-14). Both units now run node under
+    `/bin/sh -c 'trap : TERM; "$$@"; exit'` (see the MCP unit's comment), and
+    both sandbox tests stop their service as it runs and as it starts. The
+    VPS's MCP unit changes when `deploy/configure.sh` next runs there, which
+    rewrites it and restarts the service: ask the install thread with the
+    next deploy.
 
 ### Hosting history (kept short)
 
@@ -650,16 +655,21 @@ owner, each send approved in the Claude chat.
     stays open — `configure.sh` warns at install time, and the sandbox test
     asserts it closed on 259 and open on 255. `PrivateIPC=yes` (systemd 248+)
     gives it private SysV IPC and POSIX message queues.
-  - `PrivatePIDs` makes the service **PID 1** in its namespace, and the
-    kernel delivers PID 1 only the signals it has installed a handler for.
-    `node` installs none for SIGTERM (verified: unhandled → ignored as PID 1;
-    a handler → clean exit), so `serve --http` now installs one and shuts the
-    listener down on SIGTERM/SIGINT. Without it, `systemctl stop`/restart
-    would hang to `TimeoutStopSec` (90s) and SIGKILL every time. Don't remove
-    that handler while the unit keeps `PrivatePIDs`. Proven two ways:
-    `serve --http` exits 0 on SIGTERM (`install.integration`), and
-    `systemctl stop` returns promptly with the unit inactive under real
-    systemd (`mcp-sandbox.integration`).
+  - Under `PrivatePIDs` the unit's main process is **PID 1** of its
+    namespace, and the kernel delivers PID 1 only the signals it has
+    installed a handler for. `node` installs none for SIGTERM of its own
+    (verified: unhandled → ignored as PID 1; a handler → clean exit), and
+    `serve --http` installs its own only once it is listening, so node as
+    PID 1 dropped a stop that came as it started, and systemd waited out
+    `TimeoutStopSec` (90s) and SIGKILLed it. So node runs as the child of
+    `/bin/sh -c 'trap : TERM; "$$@"; exit'`, which is PID 1 instead: a stop
+    reaches node as it would any process, and the shell exits with node's
+    status, 143 (which the unit counts a success) when the stop came first.
+    `serve --http`'s handler is what makes a stop graceful: it closes the
+    listener and exits 0. Proven: `serve --http` exits 0 on SIGTERM
+    (`install.integration`), and under real systemd `systemctl stop` returns
+    promptly with the unit inactive, as it runs (exit 0) and as it starts
+    (143) (`mcp-sandbox.integration`).
   - **Residual risks, by design, even with the full sandbox:**
     - It shares the host **network** namespace, so it can reach any service
       on loopback; a local port with no auth of its own is reachable from a

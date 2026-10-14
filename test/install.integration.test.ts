@@ -675,12 +675,11 @@ createServer((_, res) => res.end('ok')).listen(${mcpPort}, '127.0.0.1', () => wr
 });
 
 /**
- * The hosted MCP service's own shutdown, run the way its unit runs it: the
- * built CLI under `node` directly (not a wrapper), so a signal reaches node
- * as the unit's PrivatePIDs sandbox delivers it to PID 1. A daemon that does
- * not handle SIGTERM would, as PID 1, have the kernel drop it — and `node`
- * installs no SIGTERM handler of its own, proven in deploy notes — so systemd
- * would wait out its stop timeout and SIGKILL on every `stop`/restart.
+ * The hosted MCP service's own shutdown, on the SIGTERM that `systemctl stop`
+ * sends: it stops accepting, lets what is in flight finish, and exits 0,
+ * which its unit's shell then exits with. Without its handler, node would end
+ * at once on the signal, whatever it was in the middle of. Its unit's stop
+ * under the real systemd is test/mcp-sandbox.integration.test.ts's.
  */
 describe('the hosted MCP service shutdown', () => {
   let mock: MockBeeperServer;
@@ -743,10 +742,9 @@ describe('the hosted MCP service shutdown', () => {
       throw new Error(`did not exit on SIGTERM within 10s:\n${out}`);
     }
     // Clean, not terminated by the signal: it ran its handler and exited 0.
-    // That installed handler is exactly what lets PID 1 receive SIGTERM.
     expect(outcome.signal, `killed rather than exited:\n${out}`).toBeNull();
     expect(outcome.code, `non-zero exit:\n${out}`).toBe(0);
-    // And a hung PID 1 would have waited out systemd's stop timeout.
+    // And promptly: the backstop bounds a close that a connection holds up.
     expect(Date.now() - started, out).toBeLessThan(6000);
 
     // The port is free: a fresh listener can bind it.

@@ -14,7 +14,20 @@ Description=Claude Messenger MCP server (HTTP)
 [Service]
 User=__USER__
 WorkingDirectory=__INSTALL_DIR__
-ExecStart=__NODE__ dist/cli/main.js serve --http --port __PORT__ --host 127.0.0.1
+# Node runs as the child of a shell, not in its place. The sandbox gives the
+# service a PID namespace of its own (PrivatePIDs, below), whose PID 1 the
+# kernel gives only the signals it has a handler for: node there would drop a
+# stop that came as it started, before its handler, and systemd would wait out
+# its stop timeout. The shell is PID 1 instead. systemd signals every process
+# of the unit, so a stop reaches node as it would any process; the shell waits
+# for node to finish (where it is not PID 1, as under systemd < 257, the trap
+# keeps the stop from ending it first), reaps what is left, and exits with
+# node's status: 143 for a stop that came before node could handle it. The
+# trailing exit keeps it from exec'ing node.
+ExecStart=/bin/sh -c 'trap : TERM; "$$@"; exit' mcp __NODE__ dist/cli/main.js serve --http --port __PORT__ --host 127.0.0.1
+SuccessExitStatus=143
+# Its journal is the server's, not the shell's.
+SyslogIdentifier=claude-messenger-mcp
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -45,7 +58,8 @@ PrivateTmp=true
 # gate. Its own PID namespace leaves it seeing only itself. systemd 257+ only
 # (the VPS has 259); 255 and 256 lack it and ignore the key with a warning, so
 # on Ubuntu 24.04 the owner's other processes stay reachable this way —
-# configure.sh says so at install time, and docs/STATUS.md records it.
+# configure.sh says so at install time, and docs/STATUS.md records it. The
+# shell of ExecStart is PID 1 there.
 PrivatePIDs=true
 # Its own SysV IPC and POSIX message queues, so it can neither reach nor be
 # reached through the host's. (POSIX shared memory is file-based, so the
