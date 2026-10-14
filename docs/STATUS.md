@@ -144,7 +144,7 @@ and `docs/HOSTING-OPTIONS.md`._
   hidden; the same-uid `/proc` escape **closed** (own PID namespace);
   `systemctl restart` clean in 0.045s, `/healthz` back in ~1.5s. Nothing is
   exposed beyond the tailnet.
-- **2026-10-13 22:52Z, the VPS — redeployed to `main` (9ceacaa).** For the
+- **2026-10-13 22:52Z, the VPS — redeployed to `main` (9ceacaa; later 5427123).** For the
   daily digest, the install thread fast-forwarded `~/claude-messenger` from
   062ba74 to `main` (the digest #25 and read-only mention listener #24, plus
   #28/#29), ran `npm ci` (no new packages — same 148) and `npm run build`, and
@@ -156,6 +156,13 @@ and `docs/HOSTING-OPTIONS.md`._
   `send:false` / `markRead:false`; `digest --help` and `mentions --help` work.
   Neither the digest nor the mention listener runs yet — their threads
   schedule them.
+  - **Updated to `main` 5427123 on 2026-10-14 00:47Z** (the #24 review
+    follow-ups #33–#37): clean fast-forward from 9ceacaa, `npm ci` (no new
+    packages, lockfile untouched), rebuild, `claude-messenger-mcp` restarted.
+    Read-only verified first — `package.json` changed only the typecheck
+    script, `.env` untouched, `policy.ts` (#35) tightens read visibility, and
+    audit (#36) records failures by code not text; nothing sends. `doctor`
+    green, `send:false`.
 - **2026-10-13 23:05Z, the VPS — first digest.** Run by the thread's
   Remote Control session from the install at 9ceacaa: exit 0, posted in the
   thread. It covered 12 chats and 40 messages since the morning before and
@@ -178,7 +185,7 @@ and `docs/HOSTING-OPTIONS.md`._
 
 ## Daily digest (project thread "Daily message digest")
 
-- **On the VPS at `main` (9ceacaa) since 2026-10-13 22:52Z** (see VERIFIED
+- **On the VPS at `main` (5427123) since 2026-10-13** (see VERIFIED
   LIVE). With Claude Code signed in to the owner's Max plan, each morning's
   run is:
   `cd ~/claude-messenger && node dist/cli/main.js digest --since "$(TZ=America/Los_Angeles date -d 'yesterday 07:46' -Iseconds)" --time-zone America/Los_Angeles`.
@@ -406,7 +413,7 @@ owner, each send approved in the Claude chat.
    reinstall the old unit and a failed `git show` can't empty the live one.
    It's a production change, so it waits for the owner's go.
 8. **Schedule the digest on the VPS — DONE 2026-10-13** (thread "Daily
-   message digest"). The checkout is on `main` and built (9ceacaa, 22:52Z);
+   message digest"). The checkout is on `main` and built (5427123);
    the first digest ran there at 23:05Z and was posted in the thread; the
    routine `trig_01QEMFG4JEuAjwpTVFnuz78e` runs it each morning at 7:46 AM
    Pacific. See "Daily digest" above.
