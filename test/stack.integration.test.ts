@@ -117,6 +117,23 @@ describe('full stack: MCP → policy → adapter → HTTP', () => {
     expect(rest.hasMore).toBe(false);
   });
 
+  it('search_messages finds matches in low-priority and muted chats too, but never in a chat the policy denies', async () => {
+    mock.chats = [
+      wireChat(),
+      wireChat({ id: '!secret:beeper.com', title: 'Secret Chat', isLowPriority: true }),
+      wireChat({ id: '!lowprio:beeper.com', title: 'Low priority', isLowPriority: true }),
+      wireChat({ id: '!muted:beeper.com', title: 'Muted', isMuted: true }),
+    ];
+    mock.messages = [
+      wireMessage({ id: 'in-inbox', text: 'lunch tomorrow', timestamp: '2026-10-01T00:04:00.000Z' }),
+      wireMessage({ id: 'in-secret', chatID: '!secret:beeper.com', text: 'lunch secretly', timestamp: '2026-10-01T00:03:00.000Z' }),
+      wireMessage({ id: 'in-lowprio', chatID: '!lowprio:beeper.com', text: 'lunch at noon', timestamp: '2026-10-01T00:02:00.000Z' }),
+      wireMessage({ id: 'in-muted', chatID: '!muted:beeper.com', text: 'lunch is on me', timestamp: '2026-10-01T00:01:00.000Z' }),
+    ];
+    const found = JSON.parse(text(await client.callTool({ name: 'search_messages', arguments: { query: 'lunch' } })));
+    expect(found.items.map((m: { id: string }) => m.id)).toEqual(['in-inbox', 'in-lowprio', 'in-muted']);
+  });
+
   it('keeps a chat or message whose wire leaves out its account away from Claude while the allowlist names accounts', async () => {
     mock.chats = [wireChat(), wireChat({ id: '!no-account:beeper.com', accountID: undefined, title: 'No account' })];
     mock.messages = [

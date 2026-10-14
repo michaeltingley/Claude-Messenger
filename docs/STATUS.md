@@ -317,9 +317,6 @@ owner, each send approved in the Claude chat.
    - Like the audit, its journal must hold nothing it read: log a failure
      by its code (`errorCode` in `policy/audit.ts`), since a provider's
      error text can quote a message.
-4. **Left from the listener's review, older than it:**
-   - `search_messages` and the CLI's `search` leave out low-priority chats,
-     Beeper's default, and their descriptions don't say so.
 
 ## NEXT ACTION (for the picking-up session)
 

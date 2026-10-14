@@ -110,6 +110,9 @@ export class BeeperMessenger implements Messenger {
         dateAfter: query.dateAfter,
         dateBefore: query.dateBefore,
         mediaTypes: query.mediaTypes,
+        // Beeper leaves out low-priority chats unless asked not to. Search
+        // covers every chat, as the port says and a watch does.
+        excludeLowPriority: false,
         includeMuted: query.includeMuted,
         // A larger limit gets fewer, with a cursor to the rest, as paging allows.
         limit: Math.min(query.limit ?? SEARCH_PAGE_LIMIT, SEARCH_PAGE_LIMIT),
