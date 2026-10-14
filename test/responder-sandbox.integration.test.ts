@@ -482,18 +482,31 @@ describe.runIf(onRunner)('the responder sandbox (real systemd and sudo, real Cla
     expect(show('ActiveState')).toBe('inactive');
   };
 
-  it('stops promptly on systemctl stop, letting the responder finish as it does on SIGTERM', () => {
+  it('stops promptly on systemctl stop, letting the responder finish as it does on SIGTERM', async () => {
+    // The journal's last line before the stop: what comes after it is the stop's.
+    const before = spawnSync('sudo', ['journalctl', '-u', UNIT, '--no-pager', '-n', '1', '--show-cursor'], {
+      encoding: 'utf8',
+    }).stdout;
+    const cursor = /^-- cursor: (.+)$/m.exec(before)?.[1];
+    expect(cursor, before).toBeDefined();
     const started = Date.now();
     // One that ignored SIGTERM would hang here until TimeoutStopSec (90s) and
     // then be SIGKILLed; the 30s cap turns that hang into a failure.
     stopped(started, spawnSync('sudo', ['systemctl', 'stop', UNIT], { encoding: 'utf8', timeout: 30_000 }));
-    // It finished as it does on SIGTERM, not killed by it: it said so after
-    // systemd began the stop.
-    const lines = journal().split('\n');
-    const stopping = lines.reduce((last, line, i) => (line.includes(`Stopping ${UNIT}`) ? i : last), -1);
-    expect(stopping, lines.join('\n')).toBeGreaterThanOrEqual(0);
-    expect(lines.slice(stopping).filter((line) => /: Stopped\.$/.test(line)), lines.join('\n')).toHaveLength(1);
-  });
+    // It finished as it does on SIGTERM, not killed by it: it exited 0, where
+    // one the stop ended would have exited 143,
+    expect(show('ExecMainStatus')).toBe('0');
+    // and said so. journald files what systemd and the responder write in the
+    // order it reads them, so its "Stopped." can come before systemd's
+    // "Stopping" line, and after the stop has returned.
+    const since = () =>
+      spawnSync('sudo', ['journalctl', '-u', UNIT, '--no-pager', `--after-cursor=${cursor}`], { encoding: 'utf8' }).stdout;
+    const said = () => since().split('\n').filter((line) => /: Stopped\.$/.test(line));
+    for (const end = Date.now() + 10_000; said().length === 0; await sleep(100)) {
+      if (Date.now() > end) throw new Error(`the responder never said it stopped:\n${since()}`);
+    }
+    expect(said(), since()).toHaveLength(1);
+  }, 60_000);
 
   it('stops at once when stopped as it starts, before it can handle a stop', async () => {
     // The assistant's Beeper, the first it asks as it starts, never answers,
@@ -509,6 +522,9 @@ describe.runIf(onRunner)('the responder sandbox (real systemd and sudo, real Cla
       }
       const started = Date.now();
       stopped(started, spawnSync('sudo', ['systemctl', 'stop', UNIT], { encoding: 'utf8', timeout: 30_000 }));
+      // The stop ended it, before it could handle one: 143, which its unit
+      // counts a clean stop.
+      expect(show('ExecMainStatus')).toBe('143');
     } finally {
       assistant.stalls = undefined;
     }
