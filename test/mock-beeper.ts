@@ -253,8 +253,15 @@ export class MockBeeperServer {
   takenUsernames = new Set<string>();
   /** What Beeper suggests for a new account's username. */
   usernameSuggestions: string[] = ['claude-1a2b'];
-  /** Where a new account stands once created; a new account has no encryption until one is set up. */
-  newAccountState = 'needs-cross-signing-setup';
+  /**
+   * Where a new account stands once created. Beeper Server 4.3.176 set the
+   * assistant's new account's encryption up by itself, reporting
+   * 'needs-secrets' meanwhile; its spec also has 'needs-cross-signing-setup',
+   * an account with no encryption, which the client sets up afresh.
+   */
+  newAccountState = 'needs-secrets';
+  /** How many times a client asks how setup is going while Beeper sets the account's encryption up itself. */
+  secretsPolls = 1;
   /** How many times a client asks how setup is going while Beeper syncs the account for the first time. */
   firstSyncPolls = 0;
   /** Every code Beeper emailed, in order: the inbox the test reads, as a person reads their mail. */
@@ -330,6 +337,9 @@ export class MockBeeperServer {
       if (!this.authorized(req.headers.authorization)) {
         return send(401, { message: 'Unauthorized: Invalid or missing token', code: 'unauthorized' });
       }
+      // Beeper moves on by itself: from setting the account's encryption up,
+      // to its first sync, to ready.
+      if (this.setupState === 'needs-secrets' && this.secretsPolls-- <= 0) this.setupState = 'needs-first-sync';
       if (this.setupState === 'needs-first-sync' && this.firstSyncPolls-- <= 0) this.setupState = 'ready';
       return send(200, { state: this.setupState });
     }
@@ -662,10 +672,12 @@ export class MockBeeperServer {
   /**
    * Beeper Server 4.3.176's setup API, from its OpenAPI spec: email sign-up
    * and sign-in with a code, account creation, and encryption set up afresh
-   * by a recovery-key reset. The sign-in steps answer without a token; the
-   * encryption steps need the new account's. Errors carry Beeper's
-   * `{ message, code }` body. Also the homeserver's Matrix logout, at this
-   * same address, which every session token here names as its homeserver.
+   * by a recovery-key reset, for an account Beeper leaves without any (what
+   * it really did for a new one is in `newAccountState`). The sign-in steps
+   * answer without a token; the encryption steps need the new account's.
+   * Errors carry Beeper's `{ message, code }` body. Also the homeserver's
+   * Matrix logout, at this same address, which every session token here
+   * names as its homeserver.
    */
   private handleSetup(
     req: IncomingMessage,

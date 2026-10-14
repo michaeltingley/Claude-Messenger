@@ -35,11 +35,12 @@ export interface AccountSignup {
   createAccount(request: SignupRequest, code: string, terms: AccountTerms): Promise<NewAccount>;
 
   /**
-   * Sets up the new account's end-to-end encryption, then waits, until
-   * `timeoutMs` runs out, for the endpoint to be ready to read and send.
-   * Safe to run again: it picks up where it stopped, and does nothing once
-   * the account is ready. It refuses an account whose encryption was set up
-   * before. The provider's recovery key, if it makes one, is never returned
+   * Sees the new account's end-to-end encryption set up, then waits, until
+   * `timeoutMs` runs out, for the endpoint to be ready to read and send. The
+   * provider may set it up by itself; an account it leaves without any, this
+   * sets up afresh. Safe to run again: it picks up where it stopped, and
+   * does nothing once the account is ready. It refuses an account whose
+   * encryption was set up before. A recovery key it makes is never returned
    * or kept: the account has nothing a reset could lose.
    */
   setUpEncryption(token: string, options: { timeoutMs: number; onProgress?: (step: string) => void }): Promise<void>;

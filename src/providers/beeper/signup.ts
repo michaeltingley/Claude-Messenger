@@ -23,10 +23,14 @@ import { parseJson, parseOrUndefined } from './json.js';
  *   none, it answers `registrationRequired` with a lead token and username
  *   suggestions, and POST /v1/app/setup/register creates the account, signs
  *   the endpoint in and answers with its token.
+ * - Beeper sets a new account's encryption up by itself. At the assistant's
+ *   sign-up (2026-10-14) it reported `initializing`, then `needs-secrets`,
+ *   `needs-first-sync` and `ready`, with nothing asked of the client.
  * - POST /v1/app/setup/verification/recovery-key/reset makes a recovery key,
- *   and /reset/confirm puts it in use, setting encryption up afresh. On an
- *   account with chat networks connected, that can disconnect them (Beeper's
- *   maintainer, on beeper/cli#21).
+ *   and /reset/confirm puts it in use, setting encryption up afresh: how an
+ *   account Beeper reports as having none (`needs-cross-signing-setup`) gets
+ *   some. On an account with chat networks connected, that can disconnect
+ *   them (Beeper's maintainer, on beeper/cli#21).
  * - The token is the account's Matrix access token: POST
  *   `<homeserver>/_matrix/client/v3/logout` signs it out.
  */
@@ -84,10 +88,14 @@ const NO_ENCRYPTION = 'needs-cross-signing-setup';
  * must be let in to it, with the recovery key or from a device already in.
  * Setting it up afresh would cut the account off from what it protects.
  */
-const EXISTING_ENCRYPTION = new Set(['needs-verification', 'needs-secrets']);
+const EXISTING_ENCRYPTION = 'needs-verification';
 
-/** States Beeper moves on from by itself. */
-const IN_PROGRESS = new Set(['initializing', 'needs-first-sync']);
+/**
+ * States Beeper moves on from by itself. `needs-secrets` is one: a new
+ * account passes through it while Beeper sets its encryption up. Waiting on
+ * it changes nothing, whichever account it is.
+ */
+const IN_PROGRESS = new Set(['initializing', 'needs-secrets', 'needs-first-sync']);
 
 export interface BeeperAccountSignupOptions {
   /** The Beeper endpoint the account will run on, as in `BeeperMessengerOptions.baseUrl`. */
@@ -172,14 +180,14 @@ export class BeeperAccountSignup implements AccountSignup {
 
       // Once is enough: still needing encryption after a reset Beeper
       // accepted is something to report, not a reason to reset again.
-      if (reset && (state === NO_ENCRYPTION || EXISTING_ENCRYPTION.has(state))) {
+      if (reset && (state === NO_ENCRYPTION || state === EXISTING_ENCRYPTION)) {
         throw new ProviderError(`Beeper still reports "${state}" after its encryption was set up.`);
       }
       if (state === NO_ENCRYPTION) {
         await this.requireNoChatNetworks(token);
         await this.resetEncryption(token);
         reset = true;
-      } else if (EXISTING_ENCRYPTION.has(state)) {
+      } else if (state === EXISTING_ENCRYPTION) {
         throw new ProviderError(
           `This account set up its encryption before, elsewhere (Beeper reports "${state}"), so it is not set ` +
             'up afresh here: that would cut the account off from what it protects. Let this device in to it in ' +
@@ -316,6 +324,8 @@ function describeState(state: string): string {
   switch (state) {
     case 'initializing':
       return 'Beeper is starting the account...';
+    case 'needs-secrets':
+      return "Beeper is setting up the account's encryption...";
     case 'needs-first-sync':
       return 'Beeper is syncing the account for the first time...';
     default:

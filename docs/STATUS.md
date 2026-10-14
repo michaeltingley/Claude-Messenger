@@ -184,7 +184,7 @@ and `docs/HOSTING-OPTIONS.md`._
     accounts, `send:false`. This time `deploy/assistant-beeper.sh` WORKED:
     Beeper Server 4.3.176 starts under the sandbox and is up, signed out, on
     127.0.0.1:23374 (zero `tar` errors, ~178 MB, NRestarts=0). `--reset` still
-    fails, on a separate stop/clean bug (NEXT ACTION 9); the owner's Beeper
+    failed, on a separate stop/clean bug #45 fixed (NEXT ACTION 9); the owner's Beeper
     (23373) and the MCP stayed untouched.
 - **2026-10-13 23:05Z, the VPS — first digest.** Run by the thread's
   Remote Control session from the install at 9ceacaa: exit 0, posted in the
@@ -308,11 +308,20 @@ owner's messages, Gmail and Calendar. Phase 3 "Acts for you" sends as the
 owner, each send approved in the Claude chat.
 
 1. **Done:** the read-only listener (#24, above).
-2. **Now: Claude's own Beeper account**, so answers come from Claude, not
-   from the owner, whose own token stays read-only. The owner chose to
-   create it (2026-10-14), with a plus address of their Gmail, Beeper's
-   emailed code read from that inbox; signing up accepts Beeper's Terms of
-   Use for that account.
+   - **Push or poll:** at the owner's ask, a read-only trial on the VPS
+     compares Beeper's push feed (`/v1/ws`, marked experimental, delivered
+     at most once with no replay) with the listener's 5-second polling,
+     timing when each sees the owner's own messages and what each misses.
+     It is a throwaway outside the repo (transient user unit `feed-trial`,
+     logging metadata only), from 2026-10-14 05:34Z for 24 hours; a reboot
+     ends it early. If push holds up, moving the listener to it is a repo
+     change like any other.
+2. **Done 2026-10-14: Claude's own Beeper account**, so answers come from
+   Claude, not from the owner, whose own token stays read-only. The owner
+   chose to create it, with a plus address of their Gmail, Beeper's
+   emailed code read from that inbox; signing up accepted Beeper's Terms of
+   Use for that account. It is signed in on the VPS runtime below, its
+   encryption ready (NEXT ACTION 10).
    - **Its runtime:** Beeper Server, signed in as Claude, beside the
      owner's Desktop. `deploy/assistant-beeper.sh` installs it as the
      system unit `assistant-beeper.service` on 127.0.0.1:23374, under a
@@ -326,23 +335,37 @@ owner, each send approved in the Claude chat.
      cross-signing or verifies its device: here encryption stays in
      Beeper's runtime, and `providers/beeper` reaches it unchanged. It
      holds about 0.35 GB signed out (Server 4.3.176, measured in a cloud
-     container).
+     container); on the VPS, systemd counted about 0.2 GB signed in.
    - **Its sign-up:** `claude-messenger signup start --email <address>`
      has Beeper email a code; `signup finish --request <id> --code <code>
      --accept-terms` creates the account (Beeper's first suggested
      username unless `--username`), saves its token straight to `.env`,
-     and sets up its encryption with a recovery key it neither shows nor
-     keeps; `signup encrypt` picks that up if it stopped. It refuses an
-     endpoint already signed in, signs straight back out of an account the
-     address already had (a plus address is untried), and sets encryption
-     up afresh only on an account that never had any and has no chat
-     networks ("Signing it up" in `docs/ARCHITECTURE.md`). After a refused
-     or failed sign-up, `deploy/assistant-beeper.sh --reset` starts the
-     runtime signed out again.
+     and waits while Beeper sets up its encryption; `signup encrypt` picks
+     that up if it stopped. It refuses an endpoint already signed in, signs
+     straight back out of an account the address already had, and sets
+     encryption up afresh, with a recovery key it neither shows nor keeps,
+     only where Beeper leaves an account without any, and only on one that
+     never had any and has no chat networks ("Signing it up" in
+     `docs/ARCHITECTURE.md`). After a refused or failed sign-up,
+     `deploy/assistant-beeper.sh --reset` starts the runtime signed out
+     again.
+   - **What the real sign-up showed:** Beeper took the plus address as an
+     address of its own, with no account yet. Beeper Server 4.3.176 set
+     the new account's encryption up by itself. Its setup state went
+     `initializing`, `needs-secrets`, `needs-first-sync`, `ready`, with
+     nothing asked of the client. `finish` read the brief `needs-secrets`
+     as encryption set up elsewhere and stopped (nothing was reset);
+     `signup encrypt`, run 24 s later, saw it through. `finish` now waits
+     through `needs-secrets`, and the mock models a new account this way.
+   - **So no recovery key for Claude's account was ever seen.** Beeper
+     made the account's keys itself and never showed them here, so the
+     runtime's data is the only copy within reach: `--reset` would end the
+     account's use there, and `signup` only creates accounts, so after one
+     Claude would need a new account with another address.
    - Resetting a recovery key disconnects every cloud network on that
-     account (Beeper's maintainer on beeper/cli#21). Claude's account sets
-     up its encryption that way, harmless while it has no networks; never
-     the owner's.
+     account (Beeper's maintainer on beeper/cli#21), so the CLI does it
+     only on an account with none, never the owner's. Claude's account
+     never needed it.
 3. **Then the runtime, as a service on the VPS.** For each mention, read
    the message again (it may have been edited or deleted since), answer
    with `claude -p` on the owner's Max login, and post the answer in
@@ -449,37 +472,38 @@ owner, each send approved in the Claude chat.
    the first digest ran there at 23:05Z and was posted in the thread; the
    routine `trig_01QEMFG4JEuAjwpTVFnuz78e` runs it each morning at 7:46 AM
    Pacific. See "Daily digest" above.
-9. **Claude's Beeper runtime on the VPS — deploy 4 (2026-10-14): the #43 fix
-   WORKS; the runtime is up, signed out, on 127.0.0.1:23374, ready for
-   sign-up (item 10).** Deploy 3 had hit a sandbox bug — Beeper Server unpacks
-   its own code on first start with GNU `tar` 1.35, whose `openat2(…,
-   RESOLVE_BENEATH)` returns ENOSYS under the `RestrictSUIDSGID` that
-   `DynamicUser=yes` implies, and tar does not fall back. #43 fixes it
-   (option c): `deploy/assistant-beeper.sh` unpacks the code at install time
-   into `/opt/beeper-server/payload` (read-only to the runtime) and the unit
-   sets `XDG_CACHE_HOME` there. Deploy 4 brought the checkout to `main`
-   48dffbc and ran the script: Beeper Server 4.3.176 now starts under the
-   sandbox (zero `tar` errors; `/v1/info` = 4.3.176 / 23374; `/v1/app/setup` =
-   200, signed out; ~178 MB; NRestarts=0) and the service is **active**.
-   **Known bug, repo fix pending: `deploy/assistant-beeper.sh --reset`
-   fails.** Its `systemctl stop` makes the server exit 143 (SIGTERM), so the
-   unit lands in "failed", and `systemctl clean --what=state` refuses a
-   non-"dead" unit, aborting the script before it clears the ~145 MB the old
-   failed starts left in the state dir. Fix: `sudo systemctl reset-failed`
-   between the stop and the clean in the `--reset` path (preferred, surgical),
-   or `SuccessExitStatus=143` in the unit (simpler, but then no stop/restart
-   ever marks the unit failed). The ~145 MB leftovers remain for now
-   (harmless — headroom below); when the fix lands, redeploy and run `--reset`
-   to reclaim them. The owner's Beeper Desktop (23373) and the MCP (read-only,
-   11 accounts) were untouched; after deploy 4: 2476 MB free, swap 1239 MB,
-   disk 31%.
-10. **Sign Claude up**, once 9 is done, on the VPS:
-    `cd ~/.config/claude-messenger/assistant && node ~/claude-messenger/dist/cli/main.js signup start --email <address>`,
-    with the plus address of the owner's Gmail the owner chose; read
-    Beeper's code from that inbox; then `signup finish --request <id> --code
-    <code> --accept-terms` the same way. The owner agreed to Beeper's terms
-    for this account ("Create it", 2026-10-14). If Beeper says the address
-    already has an account, ask the owner for another.
+9. **Claude's Beeper runtime on the VPS — DONE 2026-10-14: running, signed
+   in as Claude's account (item 10).** Deploy 3 had hit a sandbox bug —
+   Beeper Server unpacks its own code on first start with GNU `tar` 1.35,
+   whose `openat2(…, RESOLVE_BENEATH)` returns ENOSYS under the
+   `RestrictSUIDSGID` that `DynamicUser=yes` implies, and tar does not fall
+   back. #43 fixes it: `deploy/assistant-beeper.sh` unpacks the code at
+   install time into `/opt/beeper-server/payload` (read-only to the
+   runtime) and the unit sets `XDG_CACHE_HOME` there. Deploy 4 (`main`
+   48dffbc) brought it up under the sandbox (zero `tar` errors;
+   `/v1/app/setup` = 200, signed out; ~178 MB; NRestarts=0). Its `--reset`
+   then failed: Beeper Server exits 143 on SIGTERM (its exit hook), so every
+   stop left the unit failed, and `systemctl clean --what=state` refuses a
+   failed unit. #45 puts `SuccessExitStatus=143` in the unit rather than a
+   `reset-failed` in the script, so that the server's normal stop is clean
+   wherever it comes from, while any other exit still marks the unit
+   failed; the sandbox test's stand-in now stops as the server does. Before
+   the sign-up, a Remote Control session cleared the ~145 MB the failed
+   starts had left by hand (stop, reset-failed, clean; 3.0 MB after).
+   Deploy 5 (`main` 70ef610, a plain run of the script) puts #45 on the
+   box. **Don't run `--reset` there now:** it deletes Claude's account's
+   keys, which nothing else here holds (item 2 of "@Claude assistant"
+   above).
+   The owner's Beeper Desktop (23373) and the MCP (read-only, 11 accounts)
+   were untouched throughout.
+10. **Sign Claude up — DONE 2026-10-14**, on the VPS from
+    `~/.config/claude-messenger/assistant`, with the plus address of the
+    owner's Gmail they chose and Beeper's code read from that inbox; the
+    owner agreed to Beeper's terms for this account ("Create it"). Claude's
+    account is signed in on the runtime, its token in that directory's
+    `.env`, never shown. `finish` stopped at `needs-secrets`, and `signup
+    encrypt` finished the setup ("What the real sign-up showed", above).
+    Next: the responder (item 3 of "@Claude assistant" above).
 
 ### Hosting history (kept short)
 
