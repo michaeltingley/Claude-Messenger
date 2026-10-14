@@ -101,7 +101,7 @@ describe('signup (subprocess integration)', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('creates the account from the emailed code, saves its token owner-only unprinted, and sets up its encryption', async () => {
+  it('creates the account from the emailed code, saves its token owner-only unprinted, and waits while Beeper sets up its encryption', async () => {
     const { started, request, code } = await start();
     expect(started.stdout).toContain(`✓ Beeper emailed a sign-up code to ${EMAIL}.`);
 
@@ -113,12 +113,33 @@ describe('signup (subprocess integration)', () => {
     expect(account).toMatchObject({ email: EMAIL, username: 'claude', userID: '@claude:beeper.local' });
     expect(posted('/v1/app/setup/register')[0]?.body).toMatchObject({ username: 'claude', acceptTerms: true });
     expect(stdout).toContain('✓ Created the Beeper account @claude:beeper.local.');
-    expect(stdout).toMatch(/Setting up encryption\.\.\.\n[\s\S]*✓ The account is ready, its encryption set up\./);
+    expect(stdout).toMatch(
+      /Beeper is setting up the account's encryption\.\.\.\n✓ The account is ready, its encryption set up\./,
+    );
 
     // The token went straight to the file, owner-only, and nowhere else.
     expect(await readFile(envFile, 'utf8')).toBe(`BEEPER_BASE_URL=${baseUrl}\nBEEPER_ACCESS_TOKEN=${account!.accessToken}\n`);
     expect((await stat(envFile)).mode & 0o777).toBe(0o600);
     expect(stdout + stderr).not.toContain(account!.accessToken);
+
+    // Beeper's own setup needed nothing more: no key was made here.
+    expect(posted(RESET)).toEqual([]);
+
+    // The saved token is the working credential: setup is done, so a re-run does nothing.
+    const again = await cli(['signup', 'encrypt']);
+    expect(again.code, again.stderr).toBe(0);
+    expect(again.stdout).toContain('✓ The account is ready');
+    expect(posted(RESET)).toEqual([]);
+  }, 60_000);
+
+  it('sets up afresh the encryption of a new account Beeper leaves without any, with a key it neither shows nor keeps', async () => {
+    mock.newAccountState = 'needs-cross-signing-setup';
+    const { request, code } = await start();
+
+    const { stdout, stderr, code: exit } = await finish(request, code, ['--accept-terms']);
+
+    expect(exit, stderr).toBe(0);
+    expect(stdout).toMatch(/Setting up encryption\.\.\.\n✓ The account is ready, its encryption set up\./);
 
     // Encryption was set up afresh once, with Beeper's own network no bar to
     // it, and its recovery key was used without being shown or kept.
@@ -128,7 +149,7 @@ describe('signup (subprocess integration)', () => {
     expect(stdout + stderr).not.toContain(key);
     expect(await everythingWritten()).not.toContain(key);
 
-    // The saved token is the working credential: setup is done, so a re-run does nothing.
+    // Done is done: a re-run makes no second key.
     const again = await cli(['signup', 'encrypt']);
     expect(again.code, again.stderr).toBe(0);
     expect(again.stdout).toContain('✓ The account is ready');
@@ -251,6 +272,8 @@ describe('signup (subprocess integration)', () => {
     await rm(envFile);
     await symlink(join(dir, 'missing', '.env'), envFile);
     const env = { BEEPER_BASE_URL: baseUrl };
+    // One that encryption setup would reset, if it ran.
+    mock.newAccountState = 'needs-cross-signing-setup';
     const { request, code } = await start(env);
 
     const { stdout, stderr, code: exit } = await finish(request, code, ['--accept-terms'], env);
@@ -268,6 +291,7 @@ describe('signup (subprocess integration)', () => {
   }, 60_000);
 
   it('picks encryption setup up where it stopped, with a key of its own each time', async () => {
+    mock.newAccountState = 'needs-cross-signing-setup';
     mock.failSetup = (path) => (path === CONFIRM ? { status: 500, message: 'Beeper is busy' } : undefined);
     const { request, code } = await start();
 
@@ -307,27 +331,37 @@ describe('signup (subprocess integration)', () => {
 
   // An account other than a new one (the owner's, if the token in the .env
   // were theirs) is guarded twice; each guard is proven alone here, the other
-  // out of the way, beside the first test, where neither stops a new account.
+  // out of the way, beside the test above where neither stops a new account
+  // Beeper left without encryption.
   describe('never sets up afresh the encryption of an account with something to lose', () => {
     beforeEach(async () => {
       mock.signedIn = true;
       await writeFile(envFile, `BEEPER_BASE_URL=${baseUrl}\nBEEPER_ACCESS_TOKEN=${mock.token}\n`);
     });
 
-    it.each(['needs-verification', 'needs-secrets'])(
-      'refuses one that set up its encryption before, elsewhere (%s), with no chat networks either',
-      async (state) => {
-        mock.setupState = state;
+    it('refuses one that set up its encryption before, elsewhere, with no chat networks either', async () => {
+      mock.setupState = 'needs-verification';
 
-        const { stderr, code } = await cli(['signup', 'encrypt']);
+      const { stderr, code } = await cli(['signup', 'encrypt']);
 
-        expect(code).toBe(1);
-        expect(stderr).toContain(`This account set up its encryption before, elsewhere (Beeper reports "${state}")`);
-        expect(stderr).toContain("with the account's recovery key");
-        expect(posted(RESET)).toEqual([]);
-      },
-      60_000,
-    );
+      expect(code).toBe(1);
+      expect(stderr).toContain('This account set up its encryption before, elsewhere (Beeper reports "needs-verification")');
+      expect(stderr).toContain("with the account's recovery key");
+      expect(posted(RESET)).toEqual([]);
+    }, 60_000);
+
+    // A new account passes through it on its own, so it is no refusal, but
+    // whatever account sits there, nothing is reset while it does.
+    it('waits out needs-secrets without resetting, until --timeout runs out', async () => {
+      mock.setupState = 'needs-secrets';
+      mock.secretsPolls = 1000;
+
+      const { stderr, code } = await cli(['signup', 'encrypt', '--timeout', '0.03']);
+
+      expect(code).toBe(1);
+      expect(stderr).toContain('within 2 s (it reports "needs-secrets"). What is done stays done.');
+      expect(posted(RESET)).toEqual([]);
+    }, 60_000);
 
     it('refuses one that never had encryption but has a chat network connected', async () => {
       mock.setupState = 'needs-cross-signing-setup';
