@@ -88,3 +88,13 @@ export class PolicyDeniedError extends MessengerError {
     super(message, 'policy_denied');
   }
 }
+
+/**
+ * A sign-up's address already has an account. Signing up never keeps an
+ * endpoint signed in to one; the message says whether it was signed out.
+ */
+export class AccountExistsError extends MessengerError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'account_exists', options);
+  }
+}
