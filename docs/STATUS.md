@@ -98,6 +98,10 @@ and `docs/HOSTING-OPTIONS.md`._
     `elements.ts` says what each element a message's HTML may hold shows as
     in the chat, for `own-text.ts` and `plain-text.ts` alike, so a word
     partly in bold reads as one word in both.
+- **@Claude responder**: `claude-messenger respond` answers the owner
+  from Claude's own account, in a private chat, whenever they write
+  `@Claude` or write in that chat. Merged, not running yet: item 3 of
+  "@Claude assistant" below.
 - **Working agreement (#6)**: `CLAUDE.md`, which carries the user's standing
   directives verbatim.
 - **Session channel plan (#10, #11)**: `docs/SESSION-CHANNEL.md`.
@@ -375,27 +379,33 @@ owner, each send approved in the Claude chat.
      account (Beeper's maintainer on beeper/cli#21), so the CLI does it
      only on an account with none, never the owner's. Claude's account
      never needed it.
-3. **Then the runtime, as a service on the VPS.** For each mention, read
-   the message again (it may have been edited or deleted since), answer
-   with `claude -p` on the owner's Max login, and post the answer in
-   Claude's chat.
-   - It needs a durable checkpoint: resume from where the watch had
-     reached and skip the message IDs it already answered, so a restart
-     neither misses a mention nor answers one twice. `mentions --since`
-     alone can't do that.
-   - As PID 1 in a `PrivatePIDs` unit it gets only signals it handles;
-     `mentions` handles SIGTERM and SIGINT (see #23's note on `serve`).
-   - Like the audit, its journal must hold nothing it read: log a failure
-     by its code (`errorCode` in `policy/audit.ts`), since a provider's
-     error text can quote a message.
-   - **Claude's chat with the owner:** `claude-messenger start-chat --with
-     <owner's Beeper user ID>`, run from Claude's config dir, opens it (the
-     one there is, or a new one the owner is invited to) and prints its ID.
-     Claude's policy must allow it first: `capabilities.startChat` and the
-     owner in `startChat.userAllowlist`; answering there then needs
-     `capabilities.send` and that chat in `send.chatAllowlist`. Not run yet:
-     it reaches the owner, and turning on sends from Claude's account waits
-     for the owner's go, with the responder.
+3. **The responder: built and tested, not running yet.** `claude-messenger
+   respond --assistant ~/.config/claude-messenger/assistant`, run from the
+   owner's install dir, answers each `@Claude` the owner writes in any chat,
+   and anything they write in Claude's chat, in that chat alone, with
+   `claude -p` on the owner's Max login. It reads each request again first
+   (an edit or a deletion counts), answers from up to 30 earlier messages of
+   its chat, says so in fixed words when it can't answer, and handles each
+   request at most once across restarts (checkpoint
+   `state/responder.json` in Claude's dir; it catches up at most six hours
+   back). Its journal and both audits hold IDs and kinds of failure, never
+   what anyone wrote; Claude's audit keeps each answer's length, not its
+   words. Design: "Answering" in `docs/ARCHITECTURE.md`; how to run it:
+   `docs/SETUP.md` section 5.
+   - **Next, its service (not built):** a system unit,
+     `claude-messenger-assistant.service`, running `respond` as the owner,
+     since it needs Claude Code's sign-in in `~/.claude`, the owner's
+     install dir and Claude's dir; sandboxed like the MCP service, with a
+     test that proves it. As PID 1 of a `PrivatePIDs` unit it gets only the
+     signals it handles, and it handles SIGTERM and SIGINT, with a 10 s
+     backstop when an answer is being written.
+   - **Then the owner's go, since it reaches them:** in Claude's
+     `policy.json`, `capabilities.startChat` with the owner's Beeper user ID
+     in `startChat.userAllowlist`; `claude-messenger start-chat --with <that
+     ID>` from Claude's dir, whose invite the owner accepts in Beeper; then
+     `capabilities.send` with the printed chat ID alone in
+     `send.chatAllowlist`, and a `send.maxMessagesPerHour` (one message per
+     request); then start the service. Nothing of this has run yet.
 
 ## NEXT ACTION (for the picking-up session)
 
@@ -520,7 +530,11 @@ owner, each send approved in the Claude chat.
     account is signed in on the runtime, its token in that directory's
     `.env`, never shown. `finish` stopped at `needs-secrets`, and `signup
     encrypt` finished the setup ("What the real sign-up showed", above).
-    Next: the responder (item 3 of "@Claude assistant" above).
+    Next: item 11.
+11. **Run the responder on the VPS — next.** The command is merged (item 3
+    of "@Claude assistant" above). Build its service, deploy it through the
+    install thread, then ask the owner's go for Claude's policy, the chat
+    and the service, all in item 3.
 
 ### Hosting history (kept short)
 

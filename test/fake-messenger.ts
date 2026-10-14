@@ -60,6 +60,8 @@ export class FakeMessenger implements Messenger {
   started: StartDirectChatInput[] = [];
   /** Every watch opened, in order. */
   watchQueries: MessageWatchQuery[] = [];
+  /** The accounts listAccounts gives; when unset, one for each account a chat is on, its user 'me'. */
+  accounts: Account[] | undefined;
   private readonly watchers = new Set<(event: WatchEvent) => void>();
 
   /** Watches still open: neither aborted, ended by the caller, nor failed. */
@@ -83,6 +85,7 @@ export class FakeMessenger implements Messenger {
   }
 
   async listAccounts(): Promise<Account[]> {
+    if (this.accounts !== undefined) return this.accounts;
     const ids = new Map<string, Account>();
     for (const c of this.chats) {
       ids.set(c.accountId, { id: c.accountId, network: c.network, user: { id: 'me', isSelf: true } });
@@ -129,6 +132,12 @@ export class FakeMessenger implements Messenger {
       .filter((m) => m.chatId === chatId)
       .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
     return this.page(items, query?.cursor);
+  }
+
+  async getMessage(chatId: string, messageId: string): Promise<Message> {
+    const message = this.messages.find((m) => m.chatId === chatId && m.id === messageId);
+    if (!message) throw new NotFoundError(`no message ${messageId} in ${chatId}`);
+    return message;
   }
 
   /** Newest first, as the port promises; past `limit` or `pageSize`, older matches are on later pages. */

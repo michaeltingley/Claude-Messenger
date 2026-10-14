@@ -79,6 +79,12 @@ describe('BeeperMessenger (HTTP integration)', () => {
     expect(chat.type).toBe('group');
   });
 
+  it('getMessage fetches one message as it stands, by its chat and its ID, both needing URL encoding', async () => {
+    mock.messages.push(wireMessage({ id: '$ev3:beeper.com', chatID: '!chat2:beeper.com', text: 'edited since', isSender: true, senderID: 'me' }));
+    const message = await messenger.getMessage('!chat2:beeper.com', '$ev3:beeper.com');
+    expect(message).toMatchObject({ id: '$ev3:beeper.com', chatId: '!chat2:beeper.com', isFromMe: true, text: 'edited since', ownText: 'edited since' });
+  });
+
   it('listMessages maps messages including reply/attachment fields', async () => {
     mock.messages = [
       wireMessage({
@@ -194,6 +200,7 @@ describe('BeeperMessenger (HTTP integration)', () => {
 
     it('404 → NotFoundError', async () => {
       await expect(messenger.getChat('!nope:beeper.com')).rejects.toThrow(NotFoundError);
+      await expect(messenger.getMessage('!chat1:beeper.com', 'deleted-for-good')).rejects.toThrow(NotFoundError);
     });
 
     it('5xx → ProviderError carrying status', async () => {

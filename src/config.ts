@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { lstat, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { z } from 'zod';
 
@@ -88,6 +89,29 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...(data.CLAUDE_MESSENGER_MCP_TOKEN !== undefined && {
       mcpToken: data.CLAUDE_MESSENGER_MCP_TOKEN,
     }),
+  };
+}
+
+/**
+ * The configuration of the app as run from `dir`, such as the assistant's
+ * own directory: that directory's `.env` alone, never this process's
+ * environment, so nothing set here, such as another account's token, can
+ * stand in for what the file leaves out. Relative paths in it are taken
+ * from `dir`, as a command run there takes them.
+ */
+export async function loadConfigIn(dir: string): Promise<Config> {
+  const file = join(dir, '.env');
+  let config: Config;
+  try {
+    config = loadConfig(parseEnv(await readFile(file, 'utf8')));
+  } catch (err) {
+    throw new Error(`${file}: ${(err as Error).message}`, { cause: err });
+  }
+  return {
+    ...config,
+    policyPath: resolve(dir, config.policyPath),
+    auditDir: resolve(dir, config.auditDir),
+    stateDir: resolve(dir, config.stateDir),
   };
 }
 

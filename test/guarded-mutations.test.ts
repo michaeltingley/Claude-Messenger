@@ -46,6 +46,20 @@ describe('GuardedMessenger mutations', () => {
     expect(fake.sent).toHaveLength(1);
   });
 
+  it("records a message's length, not its words, for an account that writes from what it read", async () => {
+    const audit = new MemoryAuditLogger();
+    const fake = new FakeMessenger();
+    const guarded = new GuardedMessenger(fake, new PolicyEngine(sendAllPolicy()), audit, { recordSentText: false });
+    await guarded.sendMessage({ chatId: 'chat-1', text: 'Alice said dinner is at 8.' });
+
+    expect(audit.entries.map((e) => e.context)).toEqual([
+      { chatId: 'chat-1', textLength: 26, replyToMessageId: undefined },
+      { chatId: 'chat-1', textLength: 26, replyToMessageId: undefined, pendingMessageId: 'pending-1' },
+    ]);
+    expect(JSON.stringify(audit.entries)).not.toContain('dinner');
+    expect(fake.sent).toEqual([{ chatId: 'chat-1', text: 'Alice said dinner is at 8.' }]);
+  });
+
   it('does NOT dispatch when the intent audit write fails — no unaudited sends', async () => {
     const failingAudit: AuditLogger = {
       record: async () => {

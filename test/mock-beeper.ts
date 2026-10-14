@@ -374,6 +374,7 @@ export class MockBeeperServer {
     }
 
     const messagesMatch = /^\/v1\/chats\/([^/]+)\/messages$/.exec(path);
+    const messageMatch = /^\/v1\/chats\/([^/]+)\/messages\/([^/]+)$/.exec(path);
     const readMatch = /^\/v1\/chats\/([^/]+)\/read$/.exec(path);
     const chatMatch = /^\/v1\/chats\/([^/]+)$/.exec(path);
 
@@ -426,6 +427,10 @@ export class MockBeeperServer {
     if (req.method === 'GET' && messagesMatch) {
       const page = this.listMessages(messagesMatch[1]!, url.searchParams);
       return page ? send(200, page) : error(400, 'unmodeled', `mock: unmodeled message list ${url.search}`);
+    }
+    if (req.method === 'GET' && messageMatch) {
+      const message = this.messages.find((m) => m.chatID === messageMatch[1] && m.id === messageMatch[2]);
+      return message ? send(200, message) : error(404, 'not_found', 'message not found');
     }
     if (req.method === 'POST' && messagesMatch) {
       return send(200, { chatID: messagesMatch[1], pendingMessageID: `pending-${this.requests.length}` });

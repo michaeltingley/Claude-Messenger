@@ -76,7 +76,16 @@ export async function loadPolicyFile(path: string): Promise<Policy | undefined> 
   }
 }
 
-export async function createApp(config: Config): Promise<App> {
+export interface AppOptions {
+  /**
+   * Whether the audit records the text of each message sent: yes for the
+   * owner's account (the default), only its length for the assistant's own
+   * (`GuardedMessengerOptions.recordSentText`).
+   */
+  recordSentText?: boolean;
+}
+
+export async function createApp(config: Config, { recordSentText = true }: AppOptions = {}): Promise<App> {
   const filePolicy = await loadPolicyFile(config.policyPath);
   const policy = filePolicy ?? DEFAULT_POLICY;
   const provider = new BeeperMessenger({
@@ -89,7 +98,7 @@ export async function createApp(config: Config): Promise<App> {
   // auditDir — pruning audit logs must never reset the rate limit.
   const engine = new PolicyEngine(policy, Date.now, new FileRateWindow(join(config.stateDir, 'send-window.jsonl')));
   return {
-    messenger: new GuardedMessenger(provider, engine, new JsonlAuditLogger(config.auditDir)),
+    messenger: new GuardedMessenger(provider, engine, new JsonlAuditLogger(config.auditDir), { recordSentText }),
     probe: { checkConnection: () => provider.checkConnection() },
     policy,
     policySource: filePolicy ? 'file' : 'default',
