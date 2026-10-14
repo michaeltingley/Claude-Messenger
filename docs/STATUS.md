@@ -215,6 +215,26 @@ and `docs/HOSTING-OPTIONS.md`._
     The owner's Beeper (23373, 401), the signed-in assistant runtime (23374,
     401) and feed-trial (active) were untouched; host after: 1726 MB
     available, swap 1000 MB, disk 31%.
+  - **Updated to `main` cce331b on 2026-10-14 (deploy 7)** for #54 — the MCP
+    unit's PID 1 shell wrapper (also #52, tests). This deploy re-ran
+    `deploy/configure.sh` (no args) to apply the changed unit, at 15:00:36Z
+    (past the 14:46Z digest; no digest process running). Clean fast-forward
+    from 864ec20, `npm ci` (same 148, lockfile untouched), rebuild. Verified
+    read-only FIRST: no `package.json`/lock, `.env`, `src/mcp` or `src/policy`
+    change — the only `src` change is a comment in `src/cli/main.ts`;
+    `configure.sh` kept the existing Beeper token (no re-auth; the sign-in
+    surface stayed down). `.env` and `policy.json` sha256 **unchanged** across
+    the run. The unit now runs node under
+    `/bin/sh -c 'trap : TERM; "$$@"; exit'` (SuccessExitStatus=143,
+    SyslogIdentifier=claude-messenger-mcp): live on the box, MainPID is
+    `/bin/sh` (dash) with node its child, journal tagged
+    `claude-messenger-mcp`. doctor green — read true, **send false, markRead
+    false, startChat false**, 11 accounts; healthz ok. The responder stayed
+    code only (not installed/started); feed-trial, the assistant runtime
+    (23374, 401), and the owner's Beeper (23373, 401) untouched. Host after:
+    1169 MB available, swap 1026 MB — down from 1726 MB (deploy 6), mostly
+    from ~7 concurrent Claude sessions + their stdio servers (transient), not
+    the services; still over 1 GB, watch as concurrency rises.
 - **2026-10-13 23:05Z, the VPS — first digest.** Run by the thread's
   Remote Control session from the install at 9ceacaa: exit 0, posted in the
   thread. It covered 12 chats and 40 messages since the morning before and
@@ -237,7 +257,7 @@ and `docs/HOSTING-OPTIONS.md`._
 
 ## Daily digest (project thread "Daily message digest")
 
-- **On the VPS at `main` (864ec20) since 2026-10-13** (see VERIFIED
+- **On the VPS at `main` (cce331b) since 2026-10-13** (see VERIFIED
   LIVE). With Claude Code signed in to the owner's Max plan, each morning's
   run is:
   `cd ~/claude-messenger && node dist/cli/main.js digest --since "$(TZ=America/Los_Angeles date -d 'yesterday 07:46' -Iseconds)" --time-zone America/Los_Angeles`.
@@ -558,13 +578,13 @@ owner, each send approved in the Claude chat.
     Next: item 11.
 11. **Run the responder on the VPS — next, on the owner's go.** The command
     and its service are merged (item 3 of "@Claude assistant" above) and on
-    the VPS as code only (deploy 6, 864ec20; nothing installed). The
-    owner's go was asked for on 2026-10-14, on a card in the thread: for
-    Claude's policy, the chat, the Claude Code sign-in and the service, all
-    in item 3. After it starts, measure its memory (its unit caps it at
-    1 GB).
-12. **Give the MCP service the responder's PID 1 shell — merged; on the
-    VPS at the next `configure.sh`.** Under systemd 257+ its unit ran node
+    the VPS as code only (landed deploy 6 at 864ec20; checkout now cce331b
+    after deploy 7; nothing installed). The owner's go was asked for on
+    2026-10-14, on a card in the thread: for Claude's policy, the chat, the
+    Claude Code sign-in and the service, all in item 3. After it starts,
+    measure its memory (its unit caps it at 1 GB).
+12. **Give the MCP service the responder's PID 1 shell — DONE; on the VPS
+    since 2026-10-14 (deploy 7).** Under systemd 257+ its unit ran node
     as PID 1 of a PID namespace of its own, which gets only the signals it
     has a handler for: a stop that came as it started, before `serve`
     installed its handler, was dropped, and systemd waited out its 90 s
@@ -572,9 +592,9 @@ owner, each send approved in the Claude chat.
     restart, 2026-10-14). Both units now run node under
     `/bin/sh -c 'trap : TERM; "$$@"; exit'` (see the MCP unit's comment), and
     both sandbox tests stop their service as it runs and as it starts. The
-    VPS's MCP unit changes when `deploy/configure.sh` next runs there, which
-    rewrites it and restarts the service: ask the install thread with the
-    next deploy.
+    VPS's MCP unit got this when `deploy/configure.sh` re-ran there on
+    2026-10-14 (deploy 7): MainPID is now `/bin/sh` (dash) with node its
+    child (see VERIFIED LIVE).
 
 ### Hosting history (kept short)
 
