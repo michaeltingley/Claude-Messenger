@@ -16,6 +16,7 @@ import type {
 } from '../../core/types.js';
 import { AuthError, ConnectionError, NotFoundError, ProviderError } from '../../core/errors.js';
 import { watchByPolling } from '../watch-by-polling.js';
+import { openPushFeed } from './push.js';
 import { newestFirst, toAccount, toChat, toMessage, toPage } from './mapper.js';
 
 export interface BeeperMessengerOptions {
@@ -27,7 +28,10 @@ export interface BeeperMessengerOptions {
   baseUrl?: string;
   /** Transport-level retries for connection failures/5xx (default 2). */
   maxRetries?: number;
-  /** How often a message watch asks Beeper for new messages (default 5 s). */
+  /**
+   * How often a message watch asks Beeper for new messages (default 5 s),
+   * however many its push feed delivers sooner.
+   */
   pollIntervalMs?: number;
 }
 
@@ -131,14 +135,19 @@ export class BeeperMessenger implements Messenger {
   }
 
   /**
-   * Beeper's push events (`/v1/ws`) are experimental, so a watch polls message
-   * search instead: see watchByPolling for what it delivers, and how late.
+   * A watch searches Beeper's messages every `pollIntervalMs` (see
+   * watchByPolling for what that delivers, and how late), and delivers what
+   * Beeper's push feed pushes in between at once (see openPushFeed). The
+   * feed is experimental and misses messages, so the searches go on as
+   * without it.
    */
   watchMessages(query: MessageWatchQuery, signal: AbortSignal): AsyncIterable<Message> {
     return watchByPolling(
       {
         since: query.since,
         intervalMs: this.pollIntervalMs,
+        push: (feedSignal) =>
+          openPushFeed({ baseUrl: this.baseUrl, accessToken: this.accessToken, sender: query.sender }, feedSignal),
         fetchPage: (request) =>
           this.wrap(async () =>
             toPage(

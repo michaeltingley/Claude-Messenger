@@ -43,8 +43,8 @@ export function mentionsClaude(message: Message): boolean {
 
 /**
  * The user's messages that mention Claude, as they arrive after `since`
- * (ISO 8601, exclusive). The watch asks only for the user's own messages, so
- * nobody else's are ever read for it. Ends when `signal` aborts.
+ * (ISO 8601, exclusive). The watch hands on only the user's own messages, so
+ * nobody else's ever reach it. Ends when `signal` aborts.
  */
 export async function* watchMentions(
   messenger: Messenger,

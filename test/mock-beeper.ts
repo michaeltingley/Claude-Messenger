@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, STATUS_CODES, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { Duplex } from 'node:stream';
+import { WebSocketPeer } from './websocket-peer.js';
 
 /**
  * In-process HTTP stand-in for the Beeper Client API, faithful to the wire
@@ -35,9 +37,18 @@ export interface WireMessage {
   timestamp: string;
   text?: string;
   type?: string;
+  isUnread?: boolean;
   isDeleted?: boolean;
   isHidden?: boolean;
-  attachments?: Array<{ type: 'unknown' | 'img' | 'video' | 'audio'; fileName?: string }>;
+  linkedMessageID?: string;
+  attachments?: Array<{
+    type: 'unknown' | 'img' | 'video' | 'audio';
+    fileName?: string;
+    mimeType?: string;
+    fileSize?: number;
+    isVoiceNote?: boolean;
+    isSticker?: boolean;
+  }>;
   reactions?: Array<{ id: string; participantID: string; reactionKey: string }>;
 }
 
@@ -247,6 +258,22 @@ export class MockBeeperServer {
    * no cursor to it.
    */
   shapeMessageSearch: ((page: MessageSearchPage) => MessageSearchPage) | undefined;
+  /**
+   * Beeper's push feed (`/v1/ws`), as its developer docs describe it. Off
+   * unless a test turns it on, as in a Beeper without it, which answers the
+   * upgrade 404. On, a client is sent `ready`, subscribes with
+   * `subscriptions.set` (each replacing the last: `["*"]` for every chat,
+   * `[]` for none), and is pushed a `message.upserted` for each message
+   * `upsert` adds or changes in a chat it subscribes to.
+   */
+  pushFeed = false;
+  /**
+   * Whether a push carries its messages (`entries`), which Beeper gives
+   * best-effort: without them, a `message.upserted` names only their IDs.
+   */
+  pushEntries = true;
+  /** Every `subscriptions.set` a client sent, as it sent it, in order. */
+  subscriptions: unknown[] = [];
 
   /**
    * Where an account signed in here stands in setting up encryption, as GET
@@ -288,12 +315,15 @@ export class MockBeeperServer {
   private sessionTokens = new Map<string, SessionToken>();
   private baseUrl = '';
   private server: Server | undefined;
+  /** Push connections accepted and not yet ended by the mock, with what each subscribes to. */
+  private feeds = new Set<{ peer: WebSocketPeer; chatIDs: string[]; seq: number }>();
 
-  async start(): Promise<string> {
+  /** Listens on loopback, on `port` (by default, any free one), as Beeper starting up does on its own. */
+  async start(port = 0): Promise<string> {
     this.server = createServer((req, res) => void this.handle(req, res));
-    await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve));
-    const { port } = this.server!.address() as AddressInfo;
-    this.baseUrl = `http://127.0.0.1:${port}`;
+    this.server.on('upgrade', (req: IncomingMessage, socket: Duplex) => this.upgrade(req, socket));
+    await new Promise<void>((resolve, reject) => this.server!.once('error', reject).listen(port, '127.0.0.1', resolve));
+    this.baseUrl = `http://127.0.0.1:${(this.server!.address() as AddressInfo).port}`;
     return this.baseUrl;
   }
 
@@ -304,7 +334,114 @@ export class MockBeeperServer {
     if (!server) return;
     // An approval nobody answered holds its connection open; don't wait on it.
     server.closeAllConnections();
+    // Nor on a push connection, which the HTTP server no longer tracks.
+    this.dropFeeds();
     await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  }
+
+  /**
+   * Adds `message`, or replaces the one with its ID in its chat, as a
+   * message reaching Beeper or changing there does, and pushes it to every
+   * feed subscribed to its chat. A message put straight in `messages` is one
+   * Beeper doesn't push, as it doesn't one it can't read yet.
+   */
+  upsert(message: WireMessage): void {
+    const at = this.messages.findIndex((m) => m.chatID === message.chatID && m.id === message.id);
+    if (at === -1) this.messages.push(message);
+    else this.messages[at] = message;
+    for (const feed of this.feeds) {
+      if (!feed.chatIDs.includes('*') && !feed.chatIDs.includes(message.chatID)) continue;
+      feed.peer.send(
+        JSON.stringify({
+          type: 'message.upserted',
+          seq: ++feed.seq,
+          ts: Date.now(),
+          chatID: message.chatID,
+          ids: [message.id],
+          ...(this.pushEntries && { entries: [message] }),
+        }),
+      );
+    }
+  }
+
+  /** Sends every open push connection `frame` as it is, for frames `upsert` doesn't make. */
+  pushFrame(frame: string): void {
+    for (const feed of this.feeds) feed.peer.send(frame);
+  }
+
+  /** Push connections open now, subscribed or not. */
+  get feedsOpen(): number {
+    return [...this.feeds].filter((feed) => !feed.peer.closed).length;
+  }
+
+  /**
+   * Ends every push connection: cut, as Beeper quitting or a lost network
+   * cuts it, or with a close frame, as Beeper ending it on purpose would.
+   */
+  dropFeeds(how: 'cut' | 'close' = 'cut'): void {
+    for (const feed of this.feeds) {
+      if (how === 'cut') feed.peer.cut();
+      else feed.peer.close();
+    }
+    this.feeds.clear();
+  }
+
+  /**
+   * A request to upgrade to a WebSocket: refused as any route is, by the
+   * same rules in the same order, and accepted only at `/v1/ws` with the
+   * push feed on.
+   */
+  private upgrade(req: IncomingMessage, socket: Duplex): void {
+    const url = new URL(req.url ?? '/', 'http://mock');
+    const fullPath = decodeURIComponent(url.pathname);
+    const prefixed = fullPath.startsWith(`${this.pathPrefix}/`);
+    const path = prefixed ? fullPath.slice(this.pathPrefix.length) : fullPath;
+    this.requests.push({ method: req.method ?? '', path, query: url.searchParams, at: Date.now() });
+    const refuse = (status: number, payload: unknown) => {
+      const body = JSON.stringify(payload);
+      // Node's client drops the connection as soon as it reads a refusal,
+      // which can reset it under the answer: nothing to do but let it go.
+      socket.on('error', () => socket.destroy());
+      socket.end(
+        `HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\nContent-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+      );
+    };
+    const noRoute = { error: { code: 'not_found', message: `no route: ${req.method} ${fullPath}` } };
+    if (!prefixed) return refuse(404, noRoute);
+    if (this.apiDisabled) return refuse(404, { message: 'Beeper Client API is disabled', code: 'disabled' });
+    if (!this.authorized(req.headers.authorization)) {
+      return refuse(401, { error: { code: 'unauthorized', message: 'Invalid access token' } });
+    }
+    if (this.forcedError) {
+      const { status, code = 'forced', message = 'Forced test error' } = this.forcedError;
+      return refuse(status, { error: { code, message } });
+    }
+    if (path !== '/v1/ws' || !this.pushFeed) return refuse(404, noRoute);
+    const feed = { peer: undefined as unknown as WebSocketPeer, chatIDs: [] as string[], seq: 0 };
+    feed.peer = WebSocketPeer.accept(req, socket, (text) => this.subscribe(feed, text));
+    this.feeds.add(feed);
+    feed.peer.send(JSON.stringify({ type: 'ready', version: 1, chatIDs: [] }));
+  }
+
+  /** What a client sends on its push connection: only a `subscriptions.set` is understood. */
+  private subscribe(feed: { peer: WebSocketPeer; chatIDs: string[] }, text: string): void {
+    let frame: unknown;
+    try {
+      frame = JSON.parse(text);
+    } catch {
+      frame = undefined;
+    }
+    const { type, requestID, chatIDs } = (typeof frame === 'object' && frame !== null ? frame : {}) as Record<string, unknown>;
+    const refused = (message: string) =>
+      feed.peer.send(JSON.stringify({ type: 'error', requestID, code: 'INVALID_PAYLOAD', message }));
+    if (type !== 'subscriptions.set') return refused(`mock: unmodeled frame ${text}`);
+    this.subscriptions.push(frame);
+    const ids = Array.isArray(chatIDs) && chatIDs.every((id) => typeof id === 'string') ? (chatIDs as string[]) : undefined;
+    if (ids === undefined) return refused('chatIDs must be a list of chat IDs');
+    if (ids.includes('*') && ids.length > 1) return refused('"*" cannot be combined with chat IDs');
+    feed.chatIDs = ids;
+    feed.peer.send(JSON.stringify({ type: 'subscriptions.updated', requestID, chatIDs: ids }));
   }
 
   /** True if this token may call the API: the fixed test token, or an OAuth token not revoked. */

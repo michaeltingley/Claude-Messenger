@@ -79,9 +79,11 @@ and `docs/HOSTING-OPTIONS.md`._
   JSON line each. Nothing answers yet.
   - `Messenger.watchMessages` is the streaming extension point, landed with
     its Beeper implementation, guarded wrapper and first consumer.
-  - Beeper's WebSocket is experimental, so the provider polls message
-    search (`providers/watch-by-polling.ts`), with a 10-minute window for
-    messages that reach Beeper late.
+  - The provider searches Beeper's messages every 5 s
+    (`providers/watch-by-polling.ts`), with a 10-minute window for
+    messages that reach Beeper late, and since 2026-10-15 delivers what
+    Beeper's experimental push feed pushes in between at once
+    (`providers/beeper/push.ts`; NEXT ACTION 13).
   - The guard hands on only the owner's own messages and audits each one by
     ID, never its text.
   - Only what the owner wrote themselves triggers it, as far as the text
@@ -365,8 +367,8 @@ owner, each send approved in the Claude chat.
      messages sent in it: push a median 0.4 s after sending (slowest
      2.0 s), polling 5.0 s (slowest 5.4 s), push ahead by a median 3.6 s.
      Push's one connection never dropped, so a reconnect, where it would
-     miss messages, never came up. The listener moves to push, with its
-     polling kept behind it (NEXT ACTION 13).
+     miss messages, never came up. The listener now takes push, with its
+     searches kept behind it (NEXT ACTION 13, done).
 2. **Done 2026-10-14: Claude's own Beeper account**, so answers come from
    Claude, not from the owner, whose own token stays read-only. The owner
    chose to create it, with a plus address of their Gmail, Beeper's
@@ -598,14 +600,18 @@ owner, each send approved in the Claude chat.
     2026-10-14 (deploy 7): MainPID is now `/bin/sh` (dash) with node its
     child (see VERIFIED LIVE).
 
-13. **Move the listener to Beeper's push feed — next, in the thread.** The
-    trial (item 1 of "@Claude assistant") found push a median 3.6 s
-    sooner, missing nothing, on a small sample. Beeper's feed resends
+13. **Move the listener to Beeper's push feed — DONE 2026-10-15 (repo
+    only).** The trial (item 1 of "@Claude assistant") found push a median
+    3.6 s sooner, missing nothing, on a small sample. Beeper's feed resends
     nothing missed while it reconnects, and skips a message it can't read
-    yet, so the provider keeps polling behind it every
-    `BEEPER_POLL_INTERVAL_MS`, as now: a message push misses is no later
-    than today. A repo change only; it reaches the VPS with the responder
-    (item 11).
+    yet, so a watch now takes what the feed pushes at once and goes on
+    searching every `BEEPER_POLL_INTERVAL_MS`, as before: a message push
+    misses is no later than it was ("Beeper" under Extension points in
+    `docs/ARCHITECTURE.md`). Its tests found what the trial couldn't: Node
+    22's WebSocket reports a refused connection with `error` alone, never
+    `close`, so a feed that waited for `close` would have stopped for good
+    the first time Beeper was down. Nothing on the VPS watches yet; the
+    feed starts there with the responder (item 11).
 
 ### Hosting history (kept short)
 

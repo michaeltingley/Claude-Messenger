@@ -2,6 +2,7 @@ import { getEventListeners } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message, Page } from '../src/core/types.js';
 import { BacklogTooLargeError, ProviderError } from '../src/core/errors.js';
+import { PushedMessages } from '../src/providers/push-feed.js';
 import { watchByPolling, type WatchByPollingOptions } from '../src/providers/watch-by-polling.js';
 import { makeMessage } from './fake-messenger.js';
 
@@ -237,7 +238,7 @@ describe('watchByPolling', () => {
     });
     await elapse(100 * SECOND);
     expect(backend.requests.length).toBeGreaterThan(50);
-    // At most the wait between scans is listening.
+    // The watch's own listener, and nothing per scan or wait.
     expect(getEventListeners(watch.stop.signal, 'abort').length).toBeLessThanOrEqual(1);
     watch.stop.abort();
   });
@@ -314,4 +315,161 @@ describe('watchByPolling', () => {
       expect(backend.requests).toHaveLength(0);
     },
   );
+});
+
+describe('watchByPolling, with a push feed', () => {
+  let backend: Backend;
+  let pushed: PushedMessages;
+  /** The signal each feed was opened with, in order: aborted when its watch ends. */
+  let opened: AbortSignal[];
+  const push = (signal: AbortSignal) => {
+    opened.push(signal);
+    return pushed;
+  };
+  const mine = (id: string, at: number) => makeMessage({ id, timestamp: iso(at), isFromMe: true });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ now: T0 });
+    backend = new Backend();
+    pushed = new PushedMessages();
+    opened = [];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('delivers what the backend pushes between scans at once, oldest first within what comes together', async () => {
+    const watch = follow({ fetchPage: backend.fetchPage, intervalMs: MINUTE, push });
+    await elapse(0);
+    expect(backend.requests).toHaveLength(1);
+    pushed.push(mine('b', T0 + 2 * SECOND));
+    pushed.push(mine('a', T0 + SECOND));
+    await elapse(0);
+    expect(watch.ids()).toEqual(['a', 'b']);
+    // Delivered without a scan.
+    expect(backend.requests).toHaveLength(1);
+    watch.stop.abort();
+  });
+
+  it('delivers a message once, though it is pushed and found by a scan too, whichever comes first', async () => {
+    const watch = follow({ fetchPage: backend.fetchPage, push });
+    await elapse(0);
+    pushed.push(mine('pushed-first', T0 + 100));
+    backend.add('pushed-first', T0 + 100);
+    await elapse(0);
+    backend.add('found-first', T0 + 200);
+    await elapse(SECOND);
+    pushed.push(mine('found-first', T0 + 200)); // pushed late, as an edit is
+    await elapse(5 * SECOND);
+    expect(watch.ids()).toEqual(['pushed-first', 'found-first']);
+    watch.stop.abort();
+  });
+
+  it('delivers nothing pushed that a scan would not: dated at or before `since`, or older than the window', async () => {
+    const watch = follow({ since: iso(T0), fetchPage: backend.fetchPage, lateWindowMs: MINUTE, push });
+    await elapse(0);
+    pushed.push(mine('at-since', T0));
+    pushed.push(mine('before-since', T0 - SECOND));
+    await elapse(5 * MINUTE);
+    // A change to an old message is pushed as Beeper pushes any.
+    pushed.push(mine('older-than-the-window', Date.now() - 2 * MINUTE));
+    pushed.push(mine('new', Date.now()));
+    await elapse(0);
+    expect(watch.ids()).toEqual(['new']);
+    watch.stop.abort();
+  });
+
+  it('catches up first: what the first scan finds comes before anything pushed while it ran', async () => {
+    let answer: ((page: Page<Message>) => void) | undefined;
+    backend.nextAnswer = () => new Promise((resolve) => (answer = resolve));
+    const watch = follow({ fetchPage: backend.fetchPage, push });
+    await elapse(0);
+    pushed.push(mine('pushed', T0 + SECOND));
+    await elapse(0);
+    expect(watch.ids()).toEqual([]);
+    answer!({ items: [mine('caught-up', T0 - MINUTE)], hasMore: false });
+    await elapse(0);
+    expect(watch.ids()).toEqual(['caught-up', 'pushed']);
+    watch.stop.abort();
+  });
+
+  it('scans on time, however much is pushed in between, even for a consumer that falls behind', async () => {
+    const stop = new AbortController();
+    let pushes = 0;
+    const pusher = setInterval(() => pushed.push(mine(`p${pushes++}`, Date.now())), 100);
+    const finished = (async () => {
+      const options = { since: iso(T0 - MINUTE), intervalMs: SECOND, fetchPage: backend.fetchPage, push };
+      for await (const _ of watchByPolling(options, stop.signal)) {
+        await new Promise((resolve) => setTimeout(resolve, 150)); // slower than the pushes come
+      }
+    })();
+    await elapse(10 * SECOND);
+    clearInterval(pusher);
+    // About one a second, never put off by the pushes still waiting.
+    expect(backend.requests.length).toBeGreaterThanOrEqual(5);
+    // The watch's own listener, and nothing per push.
+    expect(getEventListeners(stop.signal, 'abort')).toHaveLength(1);
+    stop.abort();
+    await elapse(SECOND);
+    await finished;
+  });
+
+  it('opens the feed as it starts, and closes it as it ends, however it ends', async () => {
+    const stopped = follow({ fetchPage: backend.fetchPage, push });
+    await elapse(0);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]!.aborted).toBe(false);
+    stopped.stop.abort();
+    await stopped.finished;
+    expect(opened[0]!.aborted).toBe(true);
+
+    const failed = follow({ fetchPage: backend.fetchPage, push });
+    await elapse(0);
+    backend.nextAnswer = () => Promise.reject(new ProviderError('Beeper API error (500): boom'));
+    await elapse(SECOND);
+    expect(failed.state.error).toBeInstanceOf(ProviderError);
+    expect(opened[1]!.aborted).toBe(true);
+
+    backend.add('m', T0 - SECOND);
+    const options = { since: iso(T0 - MINUTE), intervalMs: SECOND, fetchPage: backend.fetchPage, push };
+    for await (const _ of watchByPolling(options, new AbortController().signal)) {
+      break; // a consumer that has what it wanted
+    }
+    expect(opened[2]!.aborted).toBe(true);
+  });
+});
+
+describe('PushedMessages', () => {
+  const pending = () => new AbortController().signal;
+
+  it('hands over everything pushed since it was last asked, at once', async () => {
+    const feed = new PushedMessages();
+    feed.push(makeMessage({ id: 'a' }));
+    feed.push(makeMessage({ id: 'b' }));
+    expect((await feed.next(pending())).map((m) => m.id)).toEqual(['a', 'b']);
+  });
+
+  it('waits for the next push, or for the wait to be called off, whichever comes first', async () => {
+    const feed = new PushedMessages();
+    const waiting = feed.next(pending());
+    feed.push(makeMessage({ id: 'a' }));
+    expect((await waiting).map((m) => m.id)).toEqual(['a']);
+
+    const until = new AbortController();
+    const calledOff = feed.next(until.signal);
+    until.abort();
+    expect(await calledOff).toEqual([]);
+    expect(getEventListeners(until.signal, 'abort')).toHaveLength(0);
+  });
+
+  it('holds at most 1,000 messages, letting further pushes go until they are taken', async () => {
+    const feed = new PushedMessages();
+    for (let i = 0; i < 1_001; i++) feed.push(makeMessage({ id: `m${i}` }));
+    const taken = await feed.next(pending());
+    expect(taken).toHaveLength(1_000);
+    expect(taken.at(-1)!.id).toBe('m999');
+    feed.push(makeMessage({ id: 'after' }));
+    expect((await feed.next(pending())).map((m) => m.id)).toEqual(['after']);
+  });
 });

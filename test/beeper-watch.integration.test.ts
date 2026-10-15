@@ -11,8 +11,9 @@ const WAIT = { timeout: 10_000 };
 
 /**
  * BeeperMessenger.watchMessages over real HTTP against the mock's model of
- * Beeper's message search: the requests a watch makes, and what it delivers
- * from what they return. The client keeps its default retries, as the app's
+ * Beeper's message search, and of its push feed when that is on: the
+ * requests a watch makes, and what it delivers from what they return and
+ * what Beeper pushes. The client keeps its default retries, as the app's
  * does, so these also show that a watch never waits on one.
  */
 describe('BeeperMessenger.watchMessages (HTTP integration)', { timeout: 30_000 }, () => {
@@ -36,8 +37,8 @@ describe('BeeperMessenger.watchMessages (HTTP integration)', { timeout: 30_000 }
   });
 
   /** Watches in the background until stopped, recording what arrives and how it ends. */
-  function follow(since: string, accessToken = mock.token) {
-    const messenger = new BeeperMessenger({ accessToken, baseUrl, pollIntervalMs: 50 });
+  function follow(since: string, { accessToken = mock.token, pollIntervalMs = 50 } = {}) {
+    const messenger = new BeeperMessenger({ accessToken, baseUrl, pollIntervalMs });
     const stop = new AbortController();
     const got: Message[] = [];
     const state: { error?: unknown; done: boolean } = { done: false };
@@ -140,7 +141,7 @@ describe('BeeperMessenger.watchMessages (HTTP integration)', { timeout: 30_000 }
   it('leaves nothing listening on the caller’s signal, however many polls it makes', async () => {
     const watch = follow(ago(0));
     await vi.waitFor(() => expect(searches().length).toBeGreaterThan(30), WAIT);
-    // At most the wait between polls; the HTTP client's listener on each request goes with it.
+    // The watch's own, and nothing per poll: the HTTP client's listener on each request goes with it.
     expect(getEventListeners(watch.stop.signal, 'abort').length).toBeLessThanOrEqual(1);
     watch.stop.abort();
     await watch.finished;
@@ -167,8 +168,89 @@ describe('BeeperMessenger.watchMessages (HTTP integration)', { timeout: 30_000 }
   });
 
   it("ends with Beeper's error translated, as when the token is rejected", async () => {
-    const watch = follow(ago(0), 'wrong-token');
+    const watch = follow(ago(0), { accessToken: 'wrong-token' });
     await watch.ended();
     expect(watch.state.error).toBeInstanceOf(AuthError);
+  });
+
+  describe("with Beeper's push feed on", () => {
+    beforeEach(() => {
+      mock.pushFeed = true;
+    });
+
+    const subscribed = (count: number) => vi.waitFor(() => expect(mock.subscriptions).toHaveLength(count), WAIT);
+
+    it('delivers what Beeper pushes at once, without waiting for the next search', async () => {
+      const watch = follow(ago(MINUTE), { pollIntervalMs: 60 * MINUTE });
+      await subscribed(1);
+      await vi.waitFor(() => expect(searches()).toHaveLength(1), WAIT);
+      mock.upsert(mine({ id: 'pushed', timestamp: ago(0) }));
+      await vi.waitFor(() => expect(watch.ids(), watch.seen()).toEqual(['pushed']), WAIT);
+      expect(searches()).toHaveLength(1);
+      // The feed listens on the watch's own signal, not the caller's.
+      expect(getEventListeners(watch.stop.signal, 'abort').length).toBeLessThanOrEqual(1);
+      watch.stop.abort();
+      await watch.finished;
+      expect(watch.state).toEqual({ done: true });
+    });
+
+    it('delivers by search what Beeper never pushes, and once what both push and search find', async () => {
+      const watch = follow(ago(MINUTE), { pollIntervalMs: 200 });
+      await subscribed(1);
+      mock.upsert(mine({ id: 'pushed', timestamp: ago(0) }));
+      await vi.waitFor(() => expect(watch.ids(), watch.seen()).toEqual(['pushed']), WAIT);
+      // Put straight in, as a message Beeper couldn't read yet when it came, which it never pushes.
+      mock.messages.push(mine({ id: 'unpushed', timestamp: ago(0) }));
+      await vi.waitFor(() => expect(watch.ids(), watch.seen()).toEqual(['pushed', 'unpushed']), WAIT);
+      // Every search since has found both.
+      const polls = searches().length;
+      await vi.waitFor(() => expect(searches().length).toBeGreaterThan(polls + 2), WAIT);
+      expect(watch.ids()).toEqual(['pushed', 'unpushed']);
+      watch.stop.abort();
+      await watch.finished;
+    });
+
+    it('delivers a message once, however often Beeper pushes it, as it does an edit', async () => {
+      const watch = follow(ago(MINUTE), { pollIntervalMs: 60 * MINUTE });
+      await subscribed(1);
+      const sent = mine({ id: 'edited', timestamp: ago(0), text: 'dinner at 8' });
+      mock.upsert(sent);
+      await vi.waitFor(() => expect(watch.ids(), watch.seen()).toEqual(['edited']), WAIT);
+      mock.upsert({ ...sent, text: 'dinner at 9' });
+      mock.upsert(mine({ id: 'next', timestamp: ago(0) }));
+      await vi.waitFor(() => expect(watch.ids(), watch.seen()).toEqual(['edited', 'next']), WAIT);
+      expect(watch.got[0]!.text).toBe('dinner at 8');
+      watch.stop.abort();
+      await watch.finished;
+    });
+
+    it('goes on searching while the feed is down, and takes pushes again once it is back', async () => {
+      const watch = follow(ago(MINUTE), { pollIntervalMs: 200 });
+      await subscribed(1);
+      mock.dropFeeds();
+      mock.messages.push(mine({ id: 'while-down', timestamp: ago(0) }));
+      await vi.waitFor(() => expect(watch.ids(), watch.seen()).toEqual(['while-down']), WAIT);
+      await subscribed(2);
+      mock.upsert(mine({ id: 'after', timestamp: ago(0) }));
+      await vi.waitFor(() => expect(watch.ids(), watch.seen()).toEqual(['while-down', 'after']), WAIT);
+      expect(watch.state.error).toBeUndefined();
+      watch.stop.abort();
+      await watch.finished;
+    });
+
+    it('closes its feed when it ends, stopped or failed', async () => {
+      const stopped = follow(ago(0));
+      await subscribed(1);
+      stopped.stop.abort();
+      await stopped.finished;
+      await vi.waitFor(() => expect(mock.feedsOpen).toBe(0), WAIT);
+
+      const failed = follow(ago(0));
+      await subscribed(2);
+      mock.forcedError = { status: 503 };
+      await failed.ended();
+      expect(failed.state.error).toBeInstanceOf(ProviderError);
+      await vi.waitFor(() => expect(mock.feedsOpen).toBe(0), WAIT);
+    });
   });
 });

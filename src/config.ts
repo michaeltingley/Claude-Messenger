@@ -38,9 +38,10 @@ const ConfigSchema = EndpointSchema.extend({
    */
   CLAUDE_MESSENGER_MCP_TOKEN: z.string().optional(),
   /**
-   * How often a message watch (`mentions`) asks Beeper for new messages.
-   * Lower notices a mention sooner and asks Beeper more often; more than
-   * once a second gains a person nothing.
+   * How often a message watch (`mentions`, `respond`) searches Beeper for
+   * new messages, besides taking what Beeper's push feed pushes at once:
+   * the latest it notices one the feed misses. Lower asks Beeper more
+   * often; more than once a second gains a person nothing.
    */
   BEEPER_POLL_INTERVAL_MS: z.preprocess(
     unsetIfEmpty,
