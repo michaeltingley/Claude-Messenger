@@ -64,7 +64,7 @@ built for hypothetical futures.
 
 ### Testing
 
-- CI's `npm test` must be green before any merge. Currently 870 tests / 46 files.
+- CI's `npm test` must be green before any merge. Currently 898 tests / 47 files.
 - Integration tests drive the **real CLI as a subprocess** and a **mock Beeper
   server** — they are the ones that catch actual regressions. New surface area
   gets an integration test, not just a unit test.
@@ -99,7 +99,11 @@ built for hypothetical futures.
   inbox is where a test reads it), an address that already has an account,
   a username taken, encryption set up afresh, and the first sync. A new
   account's encryption it sets up itself, as the real server did when the
-  assistant's account was created.
+  assistant's account was created. Its push feed (`/v1/ws`) follows
+  Beeper's developer docs, over a WebSocket of its own
+  (`test/websocket-peer.ts`): `ready`, the subscription, a
+  `message.upserted` with its message or its ID alone, a connection cut or
+  closed, an error, and a Beeper without the feed.
 - Security properties of the host get proven against the real binaries, not
   config greps. `test/display-isolation.integration.test.ts` starts Xvfb and
   x11vnc exactly as `deploy/systemd/` runs them, speaks X11 and RFB to
