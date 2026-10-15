@@ -1,6 +1,6 @@
 # Project Status & Session Handoff
 
-_Last updated: 2026-10-14. This file is the pick-up point for any new session,
+_Last updated: 2026-10-15. This file is the pick-up point for any new session,
 cloud or local. Read `CLAUDE.md` first, then this, then `docs/SHARED-HOST.md`
 and `docs/HOSTING-OPTIONS.md`._
 
@@ -357,14 +357,16 @@ owner's messages, Gmail and Calendar. Phase 3 "Acts for you" sends as the
 owner, each send approved in the Claude chat.
 
 1. **Done:** the read-only listener (#24, above).
-   - **Push or poll:** at the owner's ask, a read-only trial on the VPS
-     compares Beeper's push feed (`/v1/ws`, marked experimental, delivered
-     at most once with no replay) with the listener's 5-second polling,
-     timing when each sees the owner's own messages and what each misses.
-     It is a throwaway outside the repo (transient user unit `feed-trial`,
-     logging metadata only), from 2026-10-14 05:34Z for 24 hours; a reboot
-     ends it early. If push holds up, moving the listener to it is a repo
-     change like any other.
+   - **Push or poll: push, with polling behind it.** At the owner's ask, a
+     read-only trial on the VPS ran Beeper's push feed (`/v1/ws`, marked
+     experimental, delivered at most once with no replay) beside the
+     listener's 5-second polling for 24 hours from 2026-10-14 05:34Z,
+     logging metadata only, outside the repo. Both saw all 4 of the owner's
+     messages sent in it: push a median 0.4 s after sending (slowest
+     2.0 s), polling 5.0 s (slowest 5.4 s), push ahead by a median 3.6 s.
+     Push's one connection never dropped, so a reconnect, where it would
+     miss messages, never came up. The listener moves to push, with a
+     slower poll kept behind it (NEXT ACTION 13).
 2. **Done 2026-10-14: Claude's own Beeper account**, so answers come from
    Claude, not from the owner, whose own token stays read-only. The owner
    chose to create it, with a plus address of their Gmail, Beeper's
@@ -595,6 +597,14 @@ owner, each send approved in the Claude chat.
     VPS's MCP unit got this when `deploy/configure.sh` re-ran there on
     2026-10-14 (deploy 7): MainPID is now `/bin/sh` (dash) with node its
     child (see VERIFIED LIVE).
+
+13. **Move the listener to Beeper's push feed — next, in the thread.** The
+    trial (item 1 of "@Claude assistant") found push a median 3.6 s
+    sooner, missing nothing, on a small sample. Beeper's feed resends
+    nothing missed while it reconnects, and skips a message it can't read
+    yet, so the provider keeps polling behind it: slowly while push is
+    connected, every `BEEPER_POLL_INTERVAL_MS` while it isn't. A repo
+    change only; it reaches the VPS with the responder (item 11).
 
 ### Hosting history (kept short)
 
