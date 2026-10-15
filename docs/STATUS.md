@@ -365,8 +365,8 @@ owner, each send approved in the Claude chat.
      messages sent in it: push a median 0.4 s after sending (slowest
      2.0 s), polling 5.0 s (slowest 5.4 s), push ahead by a median 3.6 s.
      Push's one connection never dropped, so a reconnect, where it would
-     miss messages, never came up. The listener moves to push, with a
-     slower poll kept behind it (NEXT ACTION 13).
+     miss messages, never came up. The listener moves to push, with its
+     polling kept behind it (NEXT ACTION 13).
 2. **Done 2026-10-14: Claude's own Beeper account**, so answers come from
    Claude, not from the owner, whose own token stays read-only. The owner
    chose to create it, with a plus address of their Gmail, Beeper's
@@ -602,9 +602,10 @@ owner, each send approved in the Claude chat.
     trial (item 1 of "@Claude assistant") found push a median 3.6 s
     sooner, missing nothing, on a small sample. Beeper's feed resends
     nothing missed while it reconnects, and skips a message it can't read
-    yet, so the provider keeps polling behind it: slowly while push is
-    connected, every `BEEPER_POLL_INTERVAL_MS` while it isn't. A repo
-    change only; it reaches the VPS with the responder (item 11).
+    yet, so the provider keeps polling behind it every
+    `BEEPER_POLL_INTERVAL_MS`, as now: a message push misses is no later
+    than today. A repo change only; it reaches the VPS with the responder
+    (item 11).
 
 ### Hosting history (kept short)
 
