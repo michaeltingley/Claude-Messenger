@@ -279,8 +279,16 @@ and `docs/HOSTING-OPTIONS.md`._
     lapsed sign-in fails at once (`Failed to authenticate. API Error: 401
     …`: sign in again with `claude`, then `/login`). A rate limit Claude
     Code retries for about three minutes first; the run gives up after ten.
-- **Delivery, live since 2026-10-13:** each morning at 7:46 AM Pacific the
-  routine "Daily message digest" (`trig_01QEMFG4JEuAjwpTVFnuz78e`, cron
+- **Delivery, paused since 2026-10-14; waits on the owner.** The first
+  scheduled run was refused (below), and the owner hasn't yet given the
+  go-ahead the thread asked for, so on 2026-10-21 the thread disabled the
+  routine rather than have it refused each morning. Once the owner types it
+  in the thread: anchor `start_rc_session` on that message, so the owner's
+  own words are that session's task; run one digest with `--since` up to
+  seven days back to cover the gap; point the routine's `message_id` at
+  that message; and enable it again.
+- **How delivery works:** each morning at 7:46 AM Pacific the routine
+  "Daily message digest" (`trig_01QEMFG4JEuAjwpTVFnuz78e`, cron
   `CRON_TZ=America/Los_Angeles 46 7 * * *`) wakes the thread's session; its
   stored prompt is the whole procedure, so change it there. It hands the
   thread's Remote Control session on the VPS the morning's run, which pipes
@@ -293,11 +301,16 @@ and `docs/HOSTING-OPTIONS.md`._
     against what the owner asked in that session, and the morning's
     instructions come from another session, not from the owner. It let the
     digest run on 2026-10-13 but refused two other commands that day, one
-    of them a count of messages per chat ("PII Data Handling"), and it
-    treats a refusal as final. A morning it refuses gets a one-line notice
-    in the thread instead of the digest. The fix is the owner's alone: a
-    permission rule allowing the digest's command, in that session's
-    Claude Code settings.
+    of them a count of messages per chat ("PII Data Handling"), then the
+    first scheduled run on 2026-10-14 ("Auto-Mode Bypass": it read running
+    the digest at another session's request as a way around that refusal).
+    It treats a refusal as final, and a morning it refuses gets a one-line
+    notice in the thread instead of the digest. Only the owner can clear
+    it: a typed go-ahead, as above, or, if the check still refuses, a
+    permission rule in that session's Claude Code settings. A rule can't
+    allow the compound one-liner, so that needs the run to be one command
+    first, such as a script in `deploy/`. Never get around the check: no
+    fresh session to shed its transcript, and no other session on the box.
   - The session on the VPS has tools within reach of the token, so it never
     sees the digest as text, and a message can't steer it through the
     digest. The thread's session reads the digest to post it, so the words
