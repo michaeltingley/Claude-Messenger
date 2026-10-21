@@ -119,8 +119,8 @@ and `docs/HOSTING-OPTIONS.md`._
   then the rest. It runs on the owner's Claude subscription (Claude Code
   signed in on the host), never an API key, and its model has no tools and
   can't be made to read a file or act. Design: `docs/ARCHITECTURE.md`
-  (Language model, Daily digest). How it runs each morning and reaches the
-  owner: "Daily digest" below.
+  (Language model, Daily digest). How it reaches the owner each morning,
+  and why that is paused for now: "Daily digest" below.
 
 ## VERIFIED LIVE
 
@@ -558,9 +558,9 @@ owner, each send approved in the Claude chat.
    It's a production change, so it waits for the owner's go.
 8. **Schedule the digest on the VPS — DONE 2026-10-13** (thread "Daily
    message digest"). The checkout is on `main` and built (b146886);
-   the first digest ran there at 23:05Z and was posted in the thread; the
-   routine `trig_01QEMFG4JEuAjwpTVFnuz78e` runs it each morning at 7:46 AM
-   Pacific. See "Daily digest" above.
+   the first digest ran there at 23:05Z and was posted in the thread. The
+   routine `trig_01QEMFG4JEuAjwpTVFnuz78e` that runs it each morning at
+   7:46 AM Pacific is paused, waiting on the owner. See "Daily digest" above.
 9. **Claude's Beeper runtime on the VPS — DONE 2026-10-14: running, signed
    in as Claude's account (item 10).** Deploy 3 had hit a sandbox bug —
    Beeper Server unpacks its own code on first start with GNU `tar` 1.35,
